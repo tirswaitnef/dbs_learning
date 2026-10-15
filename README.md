@@ -1,6 +1,6 @@
 # AI sinh báo cáo kiểm thử và gợi ý sửa theo OWASP
 
-Package `owasp-report-rag` · phiên bản **0.11.0** · giao diện web: **AuditNote**.
+Package `owasp-report-rag` · phiên bản **0.11.1** · giao diện web: **AuditNote**.
 Project học RAG viết tay từng bước, không dùng LangChain.
 
 Project đọc **file kết quả đã xuất** từ công cụ kiểm thử (OWASP ZAP, Burp Suite,
@@ -241,6 +241,8 @@ python scripts/export_template_pdf.py --input data/reports/demo/report.json --cl
 
 Phạm vi đọc và giới hạn của từng adapter nằm trong [SCANNER_INPUTS.md](SCANNER_INPUTS.md).
 Các adapter mới được kiểm thử bằng fixture giả lập, chưa xác nhận với file export thật.
+Muốn có file export thật để chạy demo, kiểm chứng quy tắc CWE và gán nhãn: dựng lab
+trong `lab/` rồi quét theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md).
 
 JSON chuẩn hóa của project:
 
@@ -423,12 +425,14 @@ kho đi kèm.
 | `src/rag/config.py`, `schemas.py`, `pipeline.py` | Cấu hình, kiểu dữ liệu, điều phối chế độ `demo`/`gemini` |
 | `scripts/` | Các lệnh CLI |
 | `tests/`, `tests/fixtures/scanners/` | Unittest và 6 fixture scanner giả lập |
+| `lab/` | Compose dựng lab quét: DVWA + hai CSDL cấu hình yếu |
 | `data/raw/owasp/cards.json` | 2 thẻ hướng dẫn (SQLi, XSS) |
 | `data/raw/owasp/official/CheatSheetSeries-master/` | Bản sao OWASP Cheat Sheet Series (CC BY-SA 4.0) |
 | `data/raw/owasp/documents/` | 2 tài liệu minh họa tự viết cho Tập 02–04, không phải tài liệu OWASP |
 | `data/raw/scans/` | 2 file scan mẫu; các file khác bị ignore |
 | `data/processed/`, `data/reports/`, `data/web/` | Sinh tự động khi chạy, đã ignore |
 | `docs/lo-trinh-hoc-rag.md` | Các bài học Tập 01–04 |
+| `docs/lab-quet-csdl.md` | Dựng lab và quét để lấy dữ liệu đầu vào thật |
 
 ## Kiểm thử và CI
 

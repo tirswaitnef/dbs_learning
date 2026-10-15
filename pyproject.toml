@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "owasp-report-rag"
-version = "0.11.0"
+version = "0.11.1"
 description = "Evidence-first security reports with OWASP-grounded guidance"
 requires-python = ">=3.11"
 dependencies = ["reportlab>=4.2,<5"]

@@ -40,6 +40,10 @@ Các file trong tests/fixtures/scanners là giả lập, không phải bằng ch
 Các địa chỉ example.test và 192.0.2.10 chỉ nằm trong dữ liệu mẫu.
 Mỗi lệnh sinh `findings.json` và `import-summary.md`, hoàn toàn local, không gọi AI.
 
+Muốn **file thật** thay vì file mẫu: dựng lab trong `lab/` rồi quét bằng Nmap, sqlmap,
+ZAP và Nessus Essentials theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md). Tài liệu đó
+cũng ghi cách kiểm tra file đã vào đúng đường và mẫu biên bản quét.
+
 Với file thật, thay đường dẫn `--input`, chọn đúng `--format` và thư mục output riêng.
 Giữ file gốc bên cạnh bản chuẩn hóa để kiểm tra lại. Mỗi lần nhập ghi đè output
 trong thư mục được chọn; không ghi đè input. Không nạp output scanner vào corpus

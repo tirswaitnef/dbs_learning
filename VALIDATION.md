@@ -3,6 +3,36 @@
 File này ghi lại những gì đã thực sự được chạy và những gì chưa. Test pass không
 chứng minh chất lượng của AI.
 
+## Cập nhật 2026-10-15 — bản 0.11.1 (hướng dẫn lấy dữ liệu đầu vào thật)
+
+### Thay đổi
+
+- `docs/lab-quet-csdl.md`: quy trình dựng lab, chạy Nmap/sqlmap/ZAP/Nessus Essentials,
+  lấy file export, đưa file vào project, biên bản quét và mẫu gán nhãn.
+- `lab/docker-compose.yml`, `lab/README.md`: DVWA ở tầng ứng dụng, cộng hai CSDL cấu
+  hình yếu ở tầng máy chủ (MariaDB root không mật khẩu cho phép từ xa, PostgreSQL
+  `trust`). Không có thay đổi nào trong `src/`.
+
+### Đã chạy
+
+- File mô phỏng đúng dạng export của lab (do project tự tạo, **không phải** file quét
+  từ máy người dùng) đi qua `scripts/normalize_scan.py`:
+  - Nmap XML có `mysql-empty-password`: 4 bản ghi — 3 quan sát cổng/dịch vụ và finding
+    `NMAP-0-1-S0` với CWE-1393; `details.scanner_rule` là `nmap-mysql-empty-password`;
+    `import-summary.md` ghi "CWE gán theo quy tắc của dự án vì công cụ không ghi CWE: 1".
+  - Nessus `.nessus` có plugin 10481 và 10483, mức 4, không có thẻ `<cwe>`: 2 bản ghi,
+    cả hai nhận CWE-1393 từ quy tắc. Báo cáo `demo` xếp cả hai vào A07:2025 và để
+    trạng thái `no_supported_guidance` vì chưa có thẻ CSDL.
+- `python -m unittest discover -s tests`: 82 tests PASS (không đổi so với 0.11.0).
+
+### Chưa chạy
+
+- **Chưa có export thật từ lab.** Sandbox không có Docker, Nmap, sqlmap hay Nessus, và
+  việc quét phải thực hiện trên máy của người dùng. Quy trình: `docs/lab-quet-csdl.md`.
+- Chưa có file ZAP JSON thật từ ZAP Desktop để đối chiếu template report, và chưa xác
+  nhận được `Nessus Essentials` có bật sẵn *thorough checks* cho plugin 10483 hay không.
+- Chưa có bộ finding gán nhãn; mẫu CSV trong mục 9 của tài liệu lab mới chỉ là khung.
+
 ## Cập nhật 2026-10-15 — bản 0.11.0 (finding nhiều CWE, quy tắc CWE cho kiểm tra CSDL)
 
 ### Thay đổi
