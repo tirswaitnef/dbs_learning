@@ -1,8 +1,12 @@
-# Đọc output của công cụ kiểm thử — bản 0.5
+# Đọc output của công cụ kiểm thử
 
-Mục tiêu hiện tại: đọc file kết quả đã xuất, lấy đúng từng bản ghi và bằng chứng,
-chuẩn hóa để kiểm tra trước khi dùng AI. Chưa cần API, model embedding hoặc kho OWASP.
-Project không chạy scanner, không truy cập mục tiêu và không sửa hệ thống được quét.
+Các adapter được thêm từ bản 0.5 (`findings.json` ghi `parser_version` 0.5.0) và vẫn
+được dùng ở bản 0.10 cho mọi chế độ báo cáo lẫn web UI.
+
+Mục tiêu: đọc file kết quả đã xuất, lấy đúng từng bản ghi và bằng chứng, chuẩn hóa
+để kiểm tra trước khi dùng AI. Bước chuẩn hóa không cần API, model embedding hay kho
+OWASP. Project không chạy scanner, không truy cập mục tiêu và không sửa hệ thống được
+quét.
 
 ## Các định dạng đã có adapter
 
@@ -81,7 +85,10 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
 - ZAP: chưa đọc SARIF, HTML, PDF hoặc JSON API khác cấu trúc traditional.
   Diagnostics/automation sections không được chuyển thành finding.
 - Burp: đọc issue XML, không đọc project .burp hoặc XML HTTP history có root items.
-  Hỗ trợ CWE dạng thẻ cwe hoặc mã CWE trong HTML classification. Event OAST/infiltrator
+  Hỗ trợ CWE dạng thẻ cwe hoặc mã CWE trong HTML classification. Issue Burp thật
+  thường liệt kê nhiều CWE (ví dụ SQL injection: CWE-89, CWE-94, CWE-116), nên CWE
+  dùng cho gợi ý thành unknown và finding không được gắn hướng dẫn khắc phục (xem
+  mục "Giới hạn đã biết" trong README). Event OAST/infiltrator
   và trường phụ vẫn có thể được giữ trong raw_xml, chưa diễn giải thành evidence riêng.
   Base64 lỗi bị từ chối; byte HTTP không phải UTF-8 được hiển thị bằng replacement
   character, bản Base64 gốc vẫn nằm trong raw_xml để khôi phục khi cần.
@@ -96,7 +103,8 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
 - Nessus: .nessus v2, chưa đọc .db, CSV, HTML/PDF hoặc cấu trúc scanner khác.
 - Nmap: chỉ XML, không đọc normal text/grepable. Cổng closed/filtered không tạo
   finding; port/host scripts được giữ, chưa suy luận mức độ hoặc CWE từ script text.
-- Giới hạn import: 10 MiB và 10000 bản ghi/file. Báo cáo Gemini giới hạn 100 bản ghi/lần gọi.
+- Giới hạn import: 10 MiB và 10000 bản ghi/file. Chế độ `gemini`, `owasp` và web UI
+  nhận tối đa 100 bản ghi mỗi báo cáo.
 - XML cho phép internal DTD khai báo element như Burp, nhưng chặn entity/external DTD.
 - File malformed/sai định dạng báo lỗi, không trả giả một kết quả sạch. Không có
   findings chỉ có nghĩa adapter không nhận bản ghi phù hợp từ input đó, không kết
@@ -111,7 +119,9 @@ python scripts/generate_report.py --input data/processed/demo-imports/zap/findin
 ```
 
 Hoặc truyền file native cùng --format tương ứng. Chế độ demo dùng thẻ đã duyệt
-theo luật, không có AI. Việc xây kho OWASP đầy đủ đang để sau theo yêu cầu hiện tại.
+theo luật, không có AI. Chế độ `owasp` và web UI dùng kho OWASP Cheat Sheet Series
+và gửi một phần dữ liệu lên Gemini; xem README, mục "Dữ liệu gửi lên Gemini". Web UI
+tự nhận diện định dạng; CLI cần `--format`.
 
 ## Nguồn cấu trúc tham khảo
 
