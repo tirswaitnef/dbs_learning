@@ -1,6 +1,6 @@
 # AI sinh báo cáo kiểm thử và gợi ý sửa theo OWASP
 
-Package `owasp-report-rag` · phiên bản **0.11.1** · giao diện web: **AuditNote**.
+Package `owasp-report-rag` · phiên bản **0.12.0** · giao diện web: **AuditNote**.
 Project học RAG viết tay từng bước, không dùng LangChain.
 
 Project đọc **file kết quả đã xuất** từ công cụ kiểm thử (OWASP ZAP, Burp Suite,
@@ -22,11 +22,13 @@ chứng, phân loại theo **OWASP Top 10:2025** bằng bảng ánh xạ CWE, r�
 | Chế độ | Chạy bằng | Cần thêm | Gọi Gemini | Nguồn khắc phục |
 |---|---|---|---|---|
 | `demo` | `scripts/demo.py`, `generate_report.py --mode demo`, `web.py --demo` | Chỉ `reportlab` | Không | 2 thẻ trong `data/raw/owasp/cards.json` (SQLi, XSS), ghép theo CWE |
-| `gemini` (nhánh thẻ) | `generate_report.py --mode gemini` | Index E5 của thẻ (`ingest.py`), API key | 1 lần mỗi báo cáo | Thẻ đã duyệt; Gemini chọn ID thẻ |
+| `gemini` (nhánh thẻ) | `generate_report.py --mode gemini` | Index E5 của thẻ (`ingest.py`), API key | 1 lần chọn thẻ mỗi báo cáo, cộng 2 lần diễn giải mỗi bản ghi | Thẻ đã duyệt; Gemini chọn ID thẻ |
 | `owasp` (luồng chính) | `web.py`, `generate_report.py --mode owasp` | Vector store E5 của Cheat Sheet Series, API key | Nhiều lần, xem [Dữ liệu gửi lên Gemini](#dữ-liệu-gửi-lên-gemini) | Trích nguyên văn Cheat Sheet Series; Gemini chọn đoạn và viết diễn giải |
 
-Cả ba chế độ dùng chung parser, cổng phạm vi Top 10:2025 và bộ dựng báo cáo, và
-luôn sinh đủ `report.json`, `report.md`, `report.pdf`.
+Cả ba chế độ dùng chung parser, cổng phạm vi Top 10:2025, khung suy luận CSDL và bộ
+dựng báo cáo, và luôn sinh đủ `report.json`, `report.md`, `report.pdf`. Hai chế độ
+`gemini` và `owasp` đều sinh diễn giải AI theo từng bản ghi; chế độ `demo` thì không
+gọi AI nên phần văn bản đặc thù do code sinh.
 
 ## Chạy thử nhanh, không cần AI
 
@@ -383,6 +385,56 @@ không phải HTTPS, tên Cheat Sheet sai dạng, hoặc biểu thức output kh
 còn kiểm tra mỗi quy tắc có nguồn từ công cụ, MITRE và OWASP, và Cheat Sheet có trong
 kho đi kèm.
 
+## Suy luận theo đầu vào
+
+Mục tiêu: báo cáo phải bám dữ liệu của lần kiểm thử đó, không phải một bản mẫu điền
+tên vào. Có hai cơ chế, cả hai đều chạy bằng code nên kiểm tra lại được.
+
+### Khung suy luận CSDL (K1)
+
+Trước khi gọi AI, `src/rag/db_scope.py` đọc chính bản ghi và trả về một khung: mức liên
+quan CSDL, tầng, engine và kiểm soát đang có vấn đề. Nguồn dữ liệu của khung chỉ gồm
+những thứ có trong đầu vào:
+
+| Căn cứ | Ví dụ | Cho ra |
+|---|---|---|
+| Cổng/dịch vụ trong trường `location` | `...:3306/tcp` | engine MySQL/MariaDB, tầng máy chủ CSDL |
+| `details.scanner_rule` (quy tắc trong `scanner-rules.json`) | `nessus-10481` | engine do quy tắc nêu; tầng máy chủ CSDL |
+| `details.dbms` (dòng `back-end DBMS` của sqlmap) | `MySQL >= 5.0.12` | engine theo log |
+| CWE do công cụ hoặc quy tắc cung cấp | `CWE-1393` | kiểm soát: xác thực / mật khẩu mặc định |
+
+Không suy đoán từ tên lỗi hay mô tả. CWE không có trong bảng kiểm soát thì khung ghi
+"chưa xác định", và quy tắc luôn thắng cổng khi hai thứ mâu thuẫn (plugin PostgreSQL
+báo trên cổng 3306 vẫn là PostgreSQL, và cổng đó không được in ra như thể xác nhận).
+Nhiều CWE chỉ cho ra một kiểm soát khi mọi CWE cùng một nhóm.
+
+Khung này đi vào báo cáo ở hai chỗ: mục 2 (bảng đếm theo tầng, engine, kiểm soát) và
+mục 4 của từng bản ghi. Nó cũng được gửi cho AI dưới mã nguồn `K1`, kèm câu "không do
+AI suy đoán", và lượt rà soát thứ hai phải trả thêm cờ `database_specific`: chỉ đúng khi
+mọi câu có nhắc tầng, engine hay kiểm soát CSDL đều khớp K1 và không tự thêm tầng hay
+engine khác. Cờ này sai thì diễn giải bị từ chối, không in ra. *(có test cho cả hai
+nhánh: khớp thì hiện, sai thì `rejected_output`)*
+
+### Kiểm tra trùng lặp văn bản (`prose_check`)
+
+`src/rag/report_variety.py` tách ba loại văn bản, vì chỉ một loại phải khác nhau giữa
+các bản ghi:
+
+- **văn bản AI** (`ai_analysis`): phải khác nhau → đây là thứ được đo;
+- **câu do code sinh** (`analysis_vi` ở nhánh corpus): giống nhau là đúng thiết kế → chỉ
+  đếm, không coi là lỗi;
+- **bằng chứng và trích OWASP**: sao từ đầu vào/nguồn, giống nhau nghĩa là dữ liệu giống.
+
+Kết quả nằm trong `report.json` ở khóa `prose_check` và in ra mục 2 của báo cáo: nhóm
+bản ghi nào có diễn giải AI gần giống nhau (Jaccard theo tập từ, ngưỡng 0,7), hay lần
+chạy này không có diễn giải AI để so. Khi cần so hai lần chạy, `compare_reports` trả về
+bốn tỉ lệ riêng: văn bản AI, câu do code sinh, bằng chứng, để thấy phần nào giống nhau
+và vì sao.
+
+Đây là phép đo từ vựng, không phải đánh giá đúng/sai: nó chứng minh hai báo cáo không
+phải bản sao của nhau, không chứng minh nội dung chính xác. Ngưỡng 0,7 chưa được hiệu
+chỉnh trên dữ liệu gán nhãn.
+
 ## Kết quả đầu ra
 
 - `report.json`: dữ liệu đầy đủ, gồm finding, phân loại Top 10, kết quả truy xuất,
@@ -415,6 +467,7 @@ kho đi kèm.
 | `src/rag/parsers/` | Adapter: JSON chuẩn hóa và ZAP (`__init__.py`); Burp, Nuclei, sqlmap, Nessus, Nmap (`native.py`) |
 | `src/rag/top10.py`, `src/rag/data/top10-2025.json` | Cổng phạm vi OWASP Top 10:2025 |
 | `src/rag/scanner_rules.py`, `src/rag/data/scanner-rules.json` | Quy tắc CWE viết tay cho kiểm tra CSDL của Nessus/Nmap |
+| `src/rag/db_scope.py`, `report_variety.py` | Khung suy luận CSDL (K1) và phép đo trùng lặp văn bản |
 | `src/rag/retriever.py`, `vector_store.py`, `validators.py`, `llm.py` | Nhánh thẻ: truy xuất theo CWE + E5, Gemini chọn ID, kiểm tra kế hoạch |
 | `src/rag/official_report.py` | Chế độ `owasp`: tách đoạn Cheat Sheet, chọn nguồn, dựng báo cáo |
 | `src/rag/analysis.py` | Diễn giải AI, lượt rà soát, che dữ liệu nhạy cảm |
@@ -449,10 +502,14 @@ sentence-transformers hay google-genai: E5 và Gemini đều được mock, khô
 GitHub Actions (`.github/workflows/tests.yml`) chạy bộ test trên Ubuntu và Windows
 với Python 3.11 và 3.14, sau đó chạy thử `demo.py` và hai lệnh xuất PDF.
 
-Bộ test hiện phủ parser và quy tắc CWE, cổng Top 10 (kể cả finding nhiều CWE), nhánh
-`demo`/`gemini`, bước truy xuất và chọn nguồn của chế độ `owasp` (với retriever và
-model giả), corpus và vector store, hỏi đáp có trích dẫn, và PDF theo mẫu. **Chưa có
-test tự động:** diễn giải AI và che dữ liệu (`analysis.py`), web server
+Bộ test hiện có 112 test, phủ parser và quy tắc CWE, cổng Top 10 (kể cả finding nhiều
+CWE), nhánh `demo`/`gemini` (có diễn giải AI với model giả), bước truy xuất và chọn
+nguồn của chế độ `owasp` (retriever và model giả), khung suy luận CSDL, phép đo trùng
+lặp văn bản, corpus và vector store, hỏi đáp có trích dẫn, và PDF theo mẫu. Quy trình
+diễn giải AI được kiểm tra thêm bằng 6 đột biến cố ý: bỏ điều kiện cùng nhóm CWE, cho
+cổng thắng quy tắc, so cả câu do code sinh, bỏ câu ràng buộc trong K1, bỏ cờ
+`database_specific`, và bỏ nhánh tầng ứng dụng — cả 6 đều bị test phát hiện. **Chưa có
+test tự động:** bước che dữ liệu trong `analysis.py` (phần regex), web server
 (`web_server.py`), và bước ingest/E5 thật của chế độ `owasp`.
 
 Test pass chỉ cho biết code chạy đúng với các trường hợp đã viết, không chứng minh
@@ -477,15 +534,19 @@ chất lượng gợi ý hay diễn giải của AI. Xem [VALIDATION.md](VALIDAT
    Trong các lần chạy thật, mọi ứng viên đều có điểm từ 0,843 đến 0,880, kể cả các
    sheet không liên quan. Cần hiệu chỉnh ngưỡng trên dữ liệu gán nhãn.
 4. **Che dữ liệu bằng regex có giới hạn**, xem [Dữ liệu gửi lên Gemini](#dữ-liệu-gửi-lên-gemini).
-5. **Gọi API tuần tự, không thử lại khi lỗi.** Mỗi finding tốn khoảng 2–3 lần gọi;
+5. **Khung CSDL phụ thuộc thứ có trong đầu vào.** Không có cổng, quy tắc hay CWE thì
+   khung ghi "unrelated"/"chưa xác định" thay vì suy đoán, nên tin nhắn NSE bị đổi định
+   dạng hoặc plugin không có trong bảng quy tắc sẽ không được gán tầng CSDL. Kiểm tra
+   trùng lặp cũng chỉ so từ ngữ, chưa hiệu chỉnh ngưỡng trên dữ liệu gán nhãn.
+6. **Gọi API tuần tự, không thử lại khi lỗi.** Mỗi finding tốn khoảng 2–3 lần gọi;
    lỗi quota làm báo cáo thành `partial`.
-6. Code chỉ xét **có hay không có bằng chứng**: không đánh giá độ mạnh của bằng
+7. Code chỉ xét **có hay không có bằng chứng**: không đánh giá độ mạnh của bằng
    chứng, không phân biệt true/false positive, không tự tính CVSS, không retest.
-7. Bản sao Cheat Sheet Series chưa ghi lại commit nguồn; hash chỉ bảo đảm corpus không
+8. Bản sao Cheat Sheet Series chưa ghi lại commit nguồn; hash chỉ bảo đảm corpus không
    đổi so với lúc ingest. `cards.json` chỉ có 2 thẻ.
-8. Bộ lọc chính tả của `export_template_pdf.py` có thể ẩn nhầm câu đúng có chứa tên
+9. Bộ lọc chính tả của `export_template_pdf.py` có thể ẩn nhầm câu đúng có chứa tên
    kiểu CamelCase (JavaScript, PostgreSQL...).
-9. Chưa nhận PDF/HTML/CSV làm đầu vào. Với corpus tài liệu, PDF dạng ảnh chưa có OCR.
+10. Chưa nhận PDF/HTML/CSV làm đầu vào. Với corpus tài liệu, PDF dạng ảnh chưa có OCR.
 
 ## Lộ trình học RAG
 

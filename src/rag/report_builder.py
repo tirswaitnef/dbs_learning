@@ -91,13 +91,23 @@ def render_markdown(report):
         for line in narrative_lines(report['ai_summary']):add(line)
     lines+=['','## 2. Phạm vi và phương pháp']
     add('Phân tích kiểm thử được cung cấp; không quét lại hoặc xác minh độc lập. Ánh xạ CWE với OWASP Top 10:2025.')
+    from .db_scope import scope_lines
+    db_scope=report.get('db_scope') or {}
+    for line in (db_scope.get('lines') or scope_lines(report['findings'])):add(line)
     for row in report['findings']:add(row['tool']+' — '+row['location'])
+    probe=report.get('prose_check') or {}
+    if probe:
+        from .report_variety import prose_line
+        add(prose_line(probe))
     lines+=['','## 3. Tổng hợp phát hiện theo OWASP']
     for row in category_rows(report):add(' | '.join(row))
     lines+=['','## 4. Chi tiết phát hiện']
     for f in report['findings']:
         lines+=['','### '+md_text(f['id']+' — '+f['title'])]
         for key in ['severity','cwe','location','tool','kind','source_ref']:add(key+': '+(cwe_text(f) if key=='cwe' else str(f.get(key,MISSING))))
+        if f.get('db_frame'):
+            from .db_scope import frame_line
+            add('Phạm vi CSDL: '+frame_line(f['db_frame']))
         t=technical_fields(f)
         for key in ['method','parameter','cvss','cvss_vector']:add(key+': '+str(t[key]))
         add(f['owasp_top10']['reason']);add(t['description'] or fallback_description(f))

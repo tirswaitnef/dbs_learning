@@ -237,6 +237,9 @@ def parse_sqlmap_log(content, source):
     """Classic sqlmap confirmed injection-point blocks only; no heuristic parsing."""
     clean = re.sub(r"\x1b\[[0-9;]*m", "", content)
     blocks = list(re.finditer(r"^Parameter:\s*(.+?)\s*\(([^\n]+)\)\s*$", clean, re.M))
+    # The documented "back-end DBMS:" line states the engine sqlmap fingerprinted.
+    # Kept as a recorded fact; no CWE, severity or target is derived from it.
+    dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean)
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -256,6 +259,7 @@ def parse_sqlmap_log(content, source):
                                 f"parameter={match.group(1)} ({match.group(2)}); target URL not established by parser",
                                 (block.rstrip(),), "sqlmap", f"{source}#line={line_number}",
                                 details={"parameter": match.group(1), "place": match.group(2), "techniques": techniques,
+                                         **({"dbms": dbms.group(1)} if dbms else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
                                          "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
     if not findings:

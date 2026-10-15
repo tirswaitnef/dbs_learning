@@ -103,7 +103,9 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
   character, bản Base64 gốc vẫn nằm trong raw_xml để khôi phục khi cần.
 - Nuclei: JSONL findings, chưa đọc JSON array, SARIF, console màu hoặc statistics JSONL.
   Chưa tự đánh giá matcher/template có chính xác hay không.
-- sqlmap: classic SQLi log, chưa đọc --report-json/API JSON, HAR, session.sqlite,
+- sqlmap: dòng `back-end DBMS` được ghi vào `details.dbms` và dùng làm engine trong khung
+  suy luận CSDL; không sinh CWE, mức độ hay vị trí từ dòng này. Adapter đọc classic SQLi
+  log, chưa đọc --report-json/API JSON, HAR, session.sqlite,
   database dump CSV hoặc chế độ LDAP/XPath/NoSQL/GraphQL. Dòng heuristic/might be
   injectable không được chấp nhận là kết quả cuối. Log phải riêng một target/lần
   chạy, không nối nhiều log. Không tự đoán URL từ log; trường location ghi tham số

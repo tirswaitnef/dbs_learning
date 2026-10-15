@@ -3,6 +3,47 @@
 File này ghi lại những gì đã thực sự được chạy và những gì chưa. Test pass không
 chứng minh chất lượng của AI.
 
+## Cập nhật 2026-10-15 — bản 0.12.0 (suy luận theo đầu vào: khung CSDL và kiểm tra trùng lặp)
+
+### Thay đổi
+
+- `src/rag/db_scope.py`: khung CSDL cho từng bản ghi, tính bằng code từ cổng/dịch vụ,
+  `details.scanner_rule`, `details.dbms` và CWE do công cụ/quy tắc cung cấp. Không suy
+  đoán từ tên lỗi. Quy tắc thắng cổng; nhiều CWE chỉ cho một kiểm soát khi cùng nhóm.
+- `src/rag/report_variety.py`: tách văn bản AI, câu do code sinh và bằng chứng;
+  `prose_check` ghi vào `report.json`, `compare_reports` so hai lần chạy.
+- `src/rag/analysis.py`: gửi khung cho AI dưới mã nguồn `K1`; lượt rà soát thêm cờ
+  `database_specific` (thiếu hoặc sai thì diễn giải bị từ chối).
+- `src/rag/pipeline.py`: nhánh thẻ (`--mode gemini`) nay cũng sinh diễn giải AI theo
+  từng bản ghi, không chỉ chọn thẻ.
+- `src/rag/parsers/native.py`: adapter sqlmap ghi `details.dbms` từ dòng `back-end DBMS`.
+- Báo cáo: mục 2 có bảng phạm vi CSDL và dòng kết quả kiểm tra trùng lặp; mục 4 có dòng
+  "Phạm vi CSDL" cho từng bản ghi; PDF in cùng nội dung.
+
+### Đã chạy
+
+- `python -m unittest discover -s tests`: **112 tests PASS** (82 test cũ, 30 test mới cho
+  khung CSDL, phép đo trùng lặp và luồng diễn giải có model giả).
+- Kiểm tra đột biến trên bản sao repo (baseline 112 OK): 6/6 đột biến bị phát hiện — bỏ
+  điều kiện cùng nhóm CWE, cho cổng thắng quy tắc, so cả câu do code sinh, bỏ câu ràng
+  buộc trong K1, bỏ cờ `database_specific`, bỏ nhánh tầng ứng dụng.
+- Luồng thật không cần API: `scripts/demo.py`, `scripts/export_pdf.py`,
+  `scripts/export_template_pdf.py` — chạy được với báo cáo demo.
+- Khung CSDL chạy trên các fixture và trên file mô phỏng đúng dạng export của lab:
+  Nmap + `mysql-empty-password` → máy chủ CSDL, MySQL/MariaDB, xác thực; Nessus 10481 →
+  máy chủ CSDL, MySQL/MariaDB; sqlmap có dòng `back-end DBMS` → tầng ứng dụng, xử lý truy
+  vấn, engine theo log; finding XSS → ngoài phạm vi CSDL.
+
+### Chưa chạy
+
+- **Chưa gọi Gemini thật** với khung mới và cờ `database_specific`; toàn bộ luồng diễn
+  giải được kiểm tra bằng model giả. Cần `GEMINI_API_KEY` và một lần chạy thật để biết
+  model có tuân thủ khung hay không, và tỉ lệ diễn giải bị từ chối là bao nhiêu.
+- **Ngưỡng trùng lặp 0,7 chưa hiệu chỉnh** trên dữ liệu gán nhãn; chưa đo tỉ lệ dương
+  tính giả trên báo cáo thật.
+- Chưa có export thật từ lab (xem mục 0.11.1) nên khung chưa được đối chiếu với file do
+  scanner thật sinh ra.
+
 ## Cập nhật 2026-10-15 — bản 0.11.1 (hướng dẫn lấy dữ liệu đầu vào thật)
 
 ### Thay đổi
