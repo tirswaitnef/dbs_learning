@@ -17,3 +17,5 @@ data/reports/*
 data/raw/scans/*
 !data/raw/scans/example.json
 !data/raw/scans/zap-example.json
+# Web UI jobs: uploaded scan files and generated reports. May contain client data.
+data/web/
