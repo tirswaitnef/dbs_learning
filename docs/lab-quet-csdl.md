@@ -62,14 +62,52 @@ danh riêng trong Bộ luật Hình sự (Điều 289), không phải lỗi hàn
 
 ## 3. Dựng lab
 
+### 3.1 Mở terminal đúng chỗ
+
+Ba lệnh dưới đây gõ trong terminal, **mỗi dòng một lần Enter**; phần dấu nhắc
+(`PS C:\Users\...>` trên PowerShell, `$` trên Linux/macOS) là của terminal, không gõ theo.
+
+- **Windows:** mở thư mục project bằng File Explorer, bấm vào thanh địa chỉ, gõ
+  `powershell` rồi Enter — terminal mở ra ngay tại thư mục đó. Hoặc trong VS Code:
+  **Terminal → New Terminal**.
+- **Linux/macOS:** mở terminal rồi `cd` tới thư mục project.
+
+Thư mục project là nơi có `README.md` và thư mục `lab`; kiểm tra bằng `ls` (PowerShell
+cũng hiểu `ls`). Nếu chưa thấy thư mục `lab`, thường là đang ở nhánh `main`: chạy
+`git fetch origin` rồi `git switch arena/e28181c3-dbs-learning`, hoặc tải bản zip của
+nhánh tại <https://github.com/tirswaitnef/dbs_learning/archive/refs/heads/arena%2Fe28181c3-dbs-learning.zip>.
+
+Điều kiện trước khi chạy: Docker Desktop (hoặc Docker Engine) đã cài và **đang chạy**.
+Kiểm tra bằng hai lệnh:
+
+```bash
+docker version          # phải in ra cả Client và Server
+docker compose version  # phải là v2.x
+```
+
+Nếu terminal báo không nhận lệnh `docker`, hoặc báo không kết nối được daemon, thì Docker
+chưa cài / chưa chạy / terminal được mở từ trước khi cài — mở Docker Desktop rồi mở một
+terminal mới.
+
+### 3.2 Chạy lab
+
 ```bash
 cd lab
 docker compose up -d
 docker compose ps
 ```
 
-Kết quả mong đợi: 4 container `dvwa`, `db`, `weak-mysql`, `weak-postgres` ở trạng thái
-`running`. Sau đó mở `http://127.0.0.1:4280`:
+Không muốn `cd` thì chạy từ thư mục gốc project:
+
+```bash
+docker compose -f lab/docker-compose.yml up -d
+```
+
+Lần đầu chạy, `up -d` sẽ tải 4 image (DVWA, MariaDB 10, MariaDB 11.4, PostgreSQL 16) —
+vài trăm MB, mất vài phút. Kết quả mong đợi: 4 container `dvwa`, `db`, `weak-mysql`,
+`weak-postgres` ở trạng thái `Up`; trong đó ba dòng có cổng `127.0.0.1:4280->80/tcp`,
+`127.0.0.1:3306->3306/tcp`, `127.0.0.1:5432->5432/tcp`, còn `db` không có cổng nào (đúng
+thiết kế). Sau đó mở `http://127.0.0.1:4280`:
 nếu DVWA hiện trang setup thì bấm **Create / Reset Database**, nếu hiện trang đăng nhập
 thì vào bằng `admin` / `password`, rồi vào **DVWA Security** chọn **Low** (mức thấp có
 lỗi SQLi rõ nhất để làm demo).
@@ -333,7 +371,11 @@ truy xuất (xem giới hạn #3 trong README).
 
 | Hiện tượng | Nguyên nhân thường gặp | Cách xử lý |
 |---|---|---|
-| `docker compose` không tìm thấy | Docker Desktop chưa chạy, hoặc còn compose v1 | Mở Docker Desktop; cài plugin compose v2 |
+| `'docker' is not recognized` / `command not found` | Chưa cài Docker, hoặc terminal mở từ trước khi cài | Cài Docker Desktop; mở terminal mới |
+| `error during connect ... daemon is not running` | Docker Desktop chưa chạy | Mở Docker Desktop, chờ engine báo running |
+| `no configuration file provided: not found` | Đang đứng sai thư mục, không phải chỗ có `docker-compose.yml` | `cd lab` từ thư mục gốc project, hoặc `docker compose -f lab/docker-compose.yml up -d` |
+| `permission denied ... docker.sock` (Linux) | Tài khoản chưa thuộc nhóm `docker` | `sudo usermod -aG docker $USER` rồi đăng nhập lại, hoặc tạm dùng `sudo docker compose up -d` |
+| `docker compose` không tìm thấy, chỉ có `docker-compose` | Máy còn compose v1 | Dùng `docker-compose up -d`, hoặc cài plugin compose v2 |
 | Báo cổng đã bị dùng | Máy đã có MySQL/PostgreSQL/Apache | Đổi cổng bên trái trong `docker-compose.yml` (ví dụ `"127.0.0.1:3307:3306"`) rồi `up -d` lại, nhớ đổi cả lệnh quét |
 | MariaDB vẫn đòi mật khẩu | Volume cũ đã khởi tạo trước đó — biến môi trường chỉ có tác dụng ở lần khởi tạo đầu | `docker compose down -v` rồi `up -d` |
 | PostgreSQL vẫn đòi mật khẩu | Như trên, `pg_hba.conf` đã sinh từ trước | `docker compose down -v` rồi `up -d` |
