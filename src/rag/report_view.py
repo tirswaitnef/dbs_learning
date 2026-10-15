@@ -83,9 +83,26 @@ def technical_fields(row):
             'requests':requests}
 
 
+def cwe_origin(row):
+    """Where the CWE came from: the input, several CWEs from the tool, or a project rule."""
+    from .top10 import finding_cwes
+    cwes=finding_cwes(row)
+    details=row.get('details') if isinstance(row.get('details'),dict) else {}
+    if not cwes:return 'không có CWE trong đầu vào'
+    if details.get('cwe_mapping'):return 'gán theo quy tắc ánh xạ của dự án; công cụ không ghi CWE'
+    if len(cwes)>1:return 'công cụ gắn nhiều CWE'
+    return 'đầu vào'
+
+
+def cwe_text(row, missing='unknown'):
+    from .top10 import cwe_label
+    label=cwe_label(row,missing);origin=cwe_origin(row)
+    return label if origin in ('đầu vào','không có CWE trong đầu vào') else f'{label} ({origin})'
+
+
 def fallback_description(row):
     return (f"{row['tool']} ghi nhận “{row['title']}” tại {row['location']}. "
-            f"Phân loại đầu vào: {row['cwe']}; mức độ đầu vào: {row['severity']}. "
+            f"CWE: {cwe_text(row)}; mức độ đầu vào: {row['severity']}. "
             f"Có {len(row.get('evidence',[]))} mục bằng chứng đính kèm.")
 
 

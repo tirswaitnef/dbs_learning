@@ -66,7 +66,7 @@ def render_template_pdf(report, path, *, client='[Chưa cung cấp]', tester='[C
     from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle, CondPageBreak
     from .analysis import redact
     from .report_builder import guidance_reason, sample_notice
-    from .top10 import enforce
+    from .top10 import cwe_label, enforce
 
     enforce(report)
     fonts = Path(__file__).parent / 'fonts'
@@ -193,13 +193,14 @@ def render_template_pdf(report, path, *, client='[Chưa cung cấp]', tester='[C
         details = r.get('details') or {}
         story.append(CondPageBreak(260))
         P(f"W-{index:03d} ({safe(r['id'])}): {safe(r['title'])}", h2)
-        cwe = r['cwe'] if r['cwe'] != 'unknown' else MISSING
+        cwe = cwe_label(r, MISSING)
+        cwe_tag = RULE if (details.get('cwe_mapping') and cwe != MISSING) else IN
         categories = ', '.join(c['id'] + ' - ' + c['title'] for c in r['owasp_top10']['categories']) or r['owasp_top10']['reason']
         cvss = details.get('cvss_score')
         data = [['Mức độ', safe(r['severity']) + tag(IN)],
                 ['CVSS 3.1', (safe(cvss) + tag(IN)) if cvss else MISSING + ' (dự án không tự tính CVSS)'],
                 ['Nhóm OWASP', safe(categories) + tag(RULE)],
-                ['CWE', safe(cwe) + tag(IN)],
+                ['CWE', safe(cwe) + tag(cwe_tag)],
                 ['URL bị ảnh hưởng', safe(r['location']) + (f" (tham số: {safe(details['parameter'])})" if details.get('parameter') else '') + tag(IN)],
                 ['Phương thức HTTP', (safe(details['method']) + tag(IN)) if details.get('method') else MISSING]]
         table(data, [120, 395], header=False, raw=True)

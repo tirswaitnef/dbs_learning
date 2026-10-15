@@ -1,6 +1,6 @@
 # AI sinh báo cáo kiểm thử và gợi ý sửa theo OWASP
 
-Package `owasp-report-rag` · phiên bản **0.10.0** · giao diện web: **AuditNote**.
+Package `owasp-report-rag` · phiên bản **0.11.0** · giao diện web: **AuditNote**.
 Project học RAG viết tay từng bước, không dùng LangChain.
 
 Project đọc **file kết quả đã xuất** từ công cụ kiểm thử (OWASP ZAP, Burp Suite,
@@ -146,12 +146,14 @@ chạy công khai hay cho nhiều người dùng.
 ### Luồng xử lý của chế độ `owasp`
 
 1. Parser đọc file thành danh sách finding, giữ nguyên mức độ, CWE và bằng chứng.
-2. Code tra bảng CWE để xếp nhóm Top 10:2025. Chỉ finding có **đúng một CWE nằm
-   trong bảng**, **có bằng chứng** và **không phải quan sát** mới được tìm hướng dẫn.
+2. Code tra bảng CWE để xếp nhóm Top 10:2025. Chỉ finding có **CWE nằm trong bảng**
+   (nếu có nhiều CWE thì tất cả phải cùng một nhóm), **có bằng chứng** và **không
+   phải quan sát** mới được tìm hướng dẫn.
 3. E5 truy xuất các chunk Cheat Sheet (lấy ít nhất 12, lọc theo `RAG_MIN_SCORE`),
    rồi mở rộng thành nguyên đoạn Markdown kèm tiêu đề mục. Code bỏ khối code, danh
    sách tham khảo, mục ví dụ và kịch bản tấn công. Với CWE-89/CWE-79, các sheet về
-   SQLi/XSS được xếp trước.
+   SQLi/XSS được xếp trước; với finding nhận CWE từ
+   [quy tắc CSDL](#quy-tắc-cwe-cho-kiểm-tra-csdl), sheet của quy tắc được xếp trước.
 4. Gemini chọn tối đa 3 ID đoạn. Code kiểm tra ID rồi chép nguyên văn đoạn đó (tiếng
    Anh), gắn nhãn "chưa duyệt thủ công".
 5. Với **mọi** finding, Gemini viết diễn giải (tối đa 3 ý mỗi phần). Mỗi ý phải kèm
@@ -278,6 +280,8 @@ JSON chuẩn hóa của project:
   nhập 5 khóa đầu; giá trị không rỗng nhập trên web sẽ ghi đè giá trị trong file.
 - Không tự đặt bằng chứng hoặc CWE khi công cụ không có căn cứ. Khi không biết CWE,
   để `unknown` hoặc bỏ trường này; hệ thống không đoán CWE theo tên lỗi.
+- Công cụ ghi nhiều CWE: để `cwe` là `unknown` và đặt cả danh sách vào
+  `details.cwes`, ví dụ `["CWE-89", "CWE-94"]`. `normalize_scan.py` xuất đúng dạng này.
 
 ## Phạm vi OWASP Top 10:2025 và các rào chắn
 
@@ -286,20 +290,29 @@ CWEs) trong repo [OWASP/Top10](https://github.com/OWASP/Top10), commit `3a31f353
 lấy ngày 2026-10-02, giấy phép CC BY 3.0. Code tra bảng chính xác theo mã CWE; không
 dùng AI, tên lỗi hay độ tương đồng để phân loại.
 
-Một finding chỉ được gắn hướng dẫn khắc phục khi thỏa cả ba điều kiện: có đúng một
-CWE nằm trong bảng, có bằng chứng, và không phải quan sát (Nmap, Nessus severity 0).
+Một finding chỉ được gắn hướng dẫn khắc phục khi thỏa cả ba điều kiện:
+
+- **CWE nằm trong bảng.** Nếu công cụ gắn nhiều CWE cho một finding (Burp gắn
+  CWE-89, CWE-94, CWE-116 cho SQL injection), thì mọi CWE phải cùng thuộc một nhóm Top
+  10; code không chọn hay bỏ bớt CWE nào. Có CWE ngoài bảng, hoặc các CWE thuộc nhiều
+  nhóm khác nhau, thì finding bị chặn.
+- **Có bằng chứng** đính kèm.
+- **Không phải quan sát** (cổng/dịch vụ của Nmap, Nessus severity 0).
+
 Các finding khác vẫn có trong báo cáo, kèm lý do (`scope_blocked`,
 `missing_evidence`, `no_supported_guidance`...).
 
 Các rào chắn khác:
 
-- Parser không đoán CWE theo tên lỗi. Ngoại lệ duy nhất, có ghi rõ: khối SQLi của
-  sqlmap được gán CWE-89. Finding có nhiều CWE thành `unknown`. Payload/request không
-  được tính là bằng chứng. Mức độ giữ nguyên như công cụ báo. *(có test)*
+- Parser không đoán CWE theo tên lỗi. Khi công cụ không ghi CWE, CWE chỉ có thể đến
+  từ quy tắc viết tay, khóa theo định danh ổn định của công cụ: khối SQLi của sqlmap
+  được gán CWE-89, và [bảng quy tắc cho kiểm tra CSDL](#quy-tắc-cwe-cho-kiểm-tra-csdl).
+  Báo cáo ghi rõ CWE nào do quy tắc gán. Payload/request không được tính là bằng
+  chứng. Mức độ giữ nguyên như công cụ báo. *(có test)*
 - AI chỉ được trả ID nằm trong danh sách ứng viên của đúng finding đó. ID lạ, ID
-  trùng, thiếu finding hoặc có trường văn bản tự do đều bị từ chối. *(có test cho
-  nhánh thẻ, `validators.py`; bước chọn đoạn của chế độ `owasp` trong
-  `official_report.py` kiểm tra tương tự nhưng chưa có test)*
+  trùng, thiếu finding hoặc có trường văn bản tự do đều bị từ chối. *(có test cho cả
+  nhánh thẻ, `validators.py`, và bước chọn đoạn của chế độ `owasp`,
+  `official_report.py`, với model giả)*
 - Văn bản khắc phục và URL do code lấy từ nguồn, không do AI viết. Thẻ phải dùng URL
   HTTPS thuộc `owasp.org`. *(có test)*
 - Diễn giải AI phải trích dẫn nguyên văn nguồn đầu vào có ID, không được chứa khuyến
@@ -311,6 +324,62 @@ Các rào chắn khác:
 
 Các rào chắn này giảm việc bịa nội dung nhưng không bảo đảm chọn đúng hướng dẫn. Xem
 [Giới hạn đã biết](#giới-hạn-đã-biết).
+
+## Quy tắc CWE cho kiểm tra CSDL
+
+Nessus và Nmap thường báo lỗi cấu hình CSDL mà không kèm CWE. Ví dụ, trang plugin
+10481 (MySQL có tài khoản không mật khẩu) của Tenable không ghi CWE nào. Không có CWE
+thì finding bị chặn ở cổng Top 10, nên báo cáo kiểm thử CSDL sẽ không có gợi ý cho
+chính các lỗi CSDL phổ biến nhất.
+
+`src/rag/data/scanner-rules.json` bổ sung CWE cho các kiểm tra này, theo đúng kiểu quy
+tắc sqlmap → CWE-89:
+
+- Khóa bằng định danh ổn định của công cụ: `pluginID` của Nessus, hoặc tên script NSE
+  của Nmap cộng một mẫu output lấy từ mã nguồn script. Không so khớp theo tên hay mô
+  tả.
+- Chỉ áp dụng khi công cụ không ghi CWE. CWE do công cụ ghi luôn được giữ.
+- Finding ghi `details.scanner_rule` và `details.cwe_mapping`. Báo cáo hiển thị "gán
+  theo quy tắc ánh xạ của dự án"; PDF theo mẫu gắn nhãn `[Quy tắc]` thay cho
+  `[Đầu vào]`.
+- Với Nmap, bản ghi cổng/dịch vụ vẫn là quan sát. Mỗi script có output khớp quy tắc
+  sinh thêm một finding riêng, mức độ `unknown` vì Nmap không chấm mức độ.
+- Ở chế độ `owasp`, Cheat Sheet của quy tắc được xếp trước trong các kết quả truy xuất
+  (giống cách sheet SQLi được ưu tiên cho CWE-89). Việc ưu tiên chỉ sắp xếp lại, không
+  thêm sheet không được truy xuất. Ở chế độ thẻ, 2 thẻ có sẵn chỉ dành cho SQLi và XSS,
+  nên các finding này nằm trong phạm vi nhưng ghi "chưa có hướng dẫn".
+
+| Công cụ | Định danh | Kiểm tra | CWE | Nhóm |
+|---|---|---|---|---|
+| Nessus | 10481 | MySQL: tài khoản không mật khẩu | CWE-1393 | A07 |
+| Nessus | 10483 | PostgreSQL: tài khoản mặc định không mật khẩu | CWE-1393 | A07 |
+| Nessus | 10673 | SQL Server: tài khoản `sa` mặc định để trống mật khẩu | CWE-1393 | A07 |
+| Nessus | 81777 | MongoDB không yêu cầu xác thực | CWE-306 | A07 |
+| Nessus | 100634 | Redis không có mật khẩu | CWE-306 | A07 |
+| Nessus | 57558, 63347, 55786, 64784, 73756 | MySQL, PostgreSQL, Oracle, SQL Server (2 plugin) hết hỗ trợ | CWE-1104 | A03 |
+| Nmap | `mysql-empty-password` | Dòng `<tài khoản> account has empty password` | CWE-1393 | A07 |
+| Nmap | `ms-sql-empty-password` | Dòng `sa:<empty> => ...` | CWE-1393 | A07 |
+
+Mỗi dòng trong file JSON ghi lý do và nguồn: trang plugin của Tenable hoặc tài liệu và
+mã nguồn NSE (ghim theo commit), định nghĩa CWE của MITRE, và trang Top 10:2025.
+A03:2025 ghi rõ phần mềm "unsupported, or out of date" gồm cả DBMS; A07:2025 nêu việc
+cho phép mật khẩu mặc định. Với MongoDB 5.0 trở lên, Tenable khuyên tự xác nhận lại kết
+quả của plugin 81777.
+
+Chưa có quy tắc, có chủ ý:
+
+- Script NSE dò mật khẩu (`mysql-brute`, `pgsql-brute`...): output chứa mật khẩu dạng
+  rõ, sẽ đi vào báo cáo và có thể bị gửi lên Gemini.
+- `mongodb-databases`, `redis-info`: script có thể chạy kèm thông tin đăng nhập, nên
+  output thành công không chứng minh dịch vụ thiếu xác thực.
+- Các plugin khác trong họ Databases của Nessus (khoảng 680 plugin): chỉ thêm sau khi
+  kiểm chứng từng plugin.
+
+Thêm quy tắc: sửa file JSON rồi chạy test. `scanner_rules.validate` từ chối file khi
+thiếu hoặc thừa trường, trùng ID hoặc plugin, CWE không nằm trong bảng Top 10, nguồn
+không phải HTTPS, tên Cheat Sheet sai dạng, hoặc biểu thức output không hợp lệ. Test
+còn kiểm tra mỗi quy tắc có nguồn từ công cụ, MITRE và OWASP, và Cheat Sheet có trong
+kho đi kèm.
 
 ## Kết quả đầu ra
 
@@ -343,6 +412,7 @@ Các rào chắn này giảm việc bịa nội dung nhưng không bảo đảm 
 |---|---|
 | `src/rag/parsers/` | Adapter: JSON chuẩn hóa và ZAP (`__init__.py`); Burp, Nuclei, sqlmap, Nessus, Nmap (`native.py`) |
 | `src/rag/top10.py`, `src/rag/data/top10-2025.json` | Cổng phạm vi OWASP Top 10:2025 |
+| `src/rag/scanner_rules.py`, `src/rag/data/scanner-rules.json` | Quy tắc CWE viết tay cho kiểm tra CSDL của Nessus/Nmap |
 | `src/rag/retriever.py`, `vector_store.py`, `validators.py`, `llm.py` | Nhánh thẻ: truy xuất theo CWE + E5, Gemini chọn ID, kiểm tra kế hoạch |
 | `src/rag/official_report.py` | Chế độ `owasp`: tách đoạn Cheat Sheet, chọn nguồn, dựng báo cáo |
 | `src/rag/analysis.py` | Diễn giải AI, lượt rà soát, che dữ liệu nhạy cảm |
@@ -375,20 +445,24 @@ sentence-transformers hay google-genai: E5 và Gemini đều được mock, khô
 GitHub Actions (`.github/workflows/tests.yml`) chạy bộ test trên Ubuntu và Windows
 với Python 3.11 và 3.14, sau đó chạy thử `demo.py` và hai lệnh xuất PDF.
 
-Bộ test hiện phủ parser, nhánh `demo`/`gemini`, corpus và vector store, hỏi đáp có
-trích dẫn, và PDF theo mẫu. **Luồng chính chưa có test tự động:** chế độ `owasp`
-(`official_report.py`), diễn giải AI và che dữ liệu (`analysis.py`), web server
-(`web_server.py`). Cổng Top 10 (`top10.py`) chỉ được kiểm gián tiếp qua luồng demo.
+Bộ test hiện phủ parser và quy tắc CWE, cổng Top 10 (kể cả finding nhiều CWE), nhánh
+`demo`/`gemini`, bước truy xuất và chọn nguồn của chế độ `owasp` (với retriever và
+model giả), corpus và vector store, hỏi đáp có trích dẫn, và PDF theo mẫu. **Chưa có
+test tự động:** diễn giải AI và che dữ liệu (`analysis.py`), web server
+(`web_server.py`), và bước ingest/E5 thật của chế độ `owasp`.
 
 Test pass chỉ cho biết code chạy đúng với các trường hợp đã viết, không chứng minh
 chất lượng gợi ý hay diễn giải của AI. Xem [VALIDATION.md](VALIDATION.md).
 
 ## Giới hạn đã biết
 
-1. **Nhiều CWE thì không có gợi ý.** Burp thường gắn nhiều CWE cho một issue (ví dụ
-   SQL injection: CWE-89, CWE-94, CWE-116), nên issue Burp điển hình thành
-   `cwe=unknown` và không được gợi ý khắc phục. Cách tạm thời: chuyển sang JSON chuẩn
-   hóa, chọn một trong các CWE do chính công cụ cung cấp và ghi lý do vào `details`.
+1. **Nhiều finding vẫn không có CWE dùng được.** Finding nhiều CWE giờ được xét nếu
+   mọi CWE cùng một nhóm, đủ cho các issue Burp như SQLi, XSS, XPath injection. Nhưng
+   trên 10 file Nessus công khai đã thử, chỉ 3/112 finding mức từ low trở lên đủ điều
+   kiện: 95 finding không có CWE; các finding nhiều CWE thì gộp lỗi của nhiều nhóm
+   (như "PHP Multiple Vulnerabilities"), hoặc kèm mã View/Category của MITRE như
+   CWE-928, CWE-930, vốn bị MITRE cấm dùng để ánh xạ lỗ hổng. Quy tắc CSDL chỉ phủ
+   12 kiểm tra (xem [mục trên](#quy-tắc-cwe-cho-kiểm-tra-csdl)).
 2. **Chất lượng AI chưa được đánh giá.** Chưa có bộ finding gán nhãn để đo. Các lần
    chạy thật ghi trong [VALIDATION.md](VALIDATION.md) cho thấy: có diễn giải sai chính
    tả hoặc mất dấu vẫn qua lượt AI rà soát; hướng dẫn được chọn có lúc thuộc một

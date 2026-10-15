@@ -13,7 +13,7 @@ def render_pdf(report, path):
     from reportlab.platypus import BaseDocTemplate, PageTemplate, Frame, Paragraph, PageBreak, Spacer, Table, TableStyle, CondPageBreak
     from reportlab.platypus.tableofcontents import TableOfContents
     from .report_builder import guidance_reason, sample_notice
-    from .report_view import MISSING, overview, category_rows, severity_counts, SEVERITIES, technical_fields, fallback_description, STATUS_LABELS
+    from .report_view import MISSING, overview, category_rows, severity_counts, SEVERITIES, technical_fields, fallback_description, STATUS_LABELS, cwe_text
     from .analysis import narrative_lines
     from .top10 import enforce
     enforce(report)
@@ -71,7 +71,7 @@ def render_pdf(report, path):
     story.append(PageBreak());section(4,'Chi tiết phát hiện')
     for row in rows:
         story.append(CondPageBreak(180));add(f"{row['id']} — {row['title']}",sub);tech=technical_fields(row)
-        for label,value in [('Vị trí / URL',row.get('location',MISSING)),('Mức độ / CWE',f"{row.get('severity',MISSING)} / {row.get('cwe',MISSING)}"),('Loại bản ghi / công cụ',f"{row.get('kind',MISSING)} / {row.get('tool',MISSING)}"),('HTTP method / tham số',tech['method']+' / '+str(tech['parameter'])),('CVSS score / vector',tech['cvss']+' / '+tech['cvss_vector'])]:field(label,value)
+        for label,value in [('Vị trí / URL',row.get('location',MISSING)),('Mức độ / CWE',f"{row.get('severity',MISSING)} / {cwe_text(row)}"),('Loại bản ghi / công cụ',f"{row.get('kind',MISSING)} / {row.get('tool',MISSING)}"),('HTTP method / tham số',tech['method']+' / '+str(tech['parameter'])),('CVSS score / vector',tech['cvss']+' / '+tech['cvss_vector'])]:field(label,value)
         field('OWASP Top 10:2025','; '.join(c['title'] for c in row['owasp_top10']['categories']) or row['owasp_top10']['reason'])
         add('Mô tả phát hiện',sub);evidence(tech['description'] or fallback_description(row))
         if row.get('ai_analysis'):

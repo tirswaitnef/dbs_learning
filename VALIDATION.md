@@ -3,6 +3,60 @@
 File này ghi lại những gì đã thực sự được chạy và những gì chưa. Test pass không
 chứng minh chất lượng của AI.
 
+## Cập nhật 2026-10-15 — bản 0.11.0 (finding nhiều CWE, quy tắc CWE cho kiểm tra CSDL)
+
+### Thay đổi
+
+- Cổng Top 10 xét cả danh sách CWE do công cụ gắn: finding được gợi ý khi mọi CWE
+  cùng thuộc một nhóm. Trước đây mọi finding nhiều CWE đều bị chặn.
+- `src/rag/data/scanner-rules.json`: 12 quy tắc viết tay cho kiểm tra CSDL, gồm 10
+  plugin Nessus và 2 script NSE của Nmap. Quy tắc chỉ áp dụng khi công cụ không ghi CWE.
+
+### Nguồn đã đối chiếu khi viết quy tắc
+
+- Trang plugin Tenable 10481, 10483, 10673, 81777, 100634, 57558, 63347, 55786, 64784,
+  73756: tên, ID và họ plugin khớp với file quy tắc. Các trang 10481 và 10483 không ghi
+  CWE nào.
+- Mã nguồn `mysql-empty-password.nse` và `ms-sql-empty-password.nse` (repo
+  nmap/nmap): mẫu output lấy từ dòng `string.format` của script. `mongodb-databases`
+  và `redis-info` không được thêm vì có thể chạy kèm thông tin đăng nhập.
+- MITRE: CWE-1393, CWE-306, CWE-1104 đều là mức Base và được phép dùng để ánh xạ
+  (ALLOWED).
+- OWASP Top 10:2025 (repo OWASP/Top10, commit `3a31f353`): A03 nêu phần mềm
+  "unsupported, or out of date" gồm cả DBMS; A07 nêu việc cho phép mật khẩu mặc định.
+
+### Đã chạy
+
+- `python -m unittest discover -s tests`: **82 tests PASS** (56 test cũ, 10 test
+  nhiều CWE và chế độ `owasp`, 16 test quy tắc). Test mới chạy chế độ `owasp` với
+  retriever và model giả, không gọi E5 hay Gemini thật.
+- Kiểm tra đột biến trên bản sao repo: 11/11 lỗi cố ý bị test phát hiện, gồm bỏ quy
+  tắc nhiều CWE, dùng hợp thay vì "cùng một nhóm", để quy tắc ghi đè CWE của công cụ,
+  bỏ finding NSE, bỏ ưu tiên Cheat Sheet, và cho validator nhận CWE ngoài Top 10.
+- Kịch bản lab CSDL tự dựng (sqlmap, ZAP, Burp, Nmap, Nessus) qua parser và cổng Top 10:
+
+  | Phát hiện | Trước | Sau |
+  |---|---|---|
+  | Burp SQL injection (CWE-89, 94, 116) | Bị chặn | A05, có thẻ SQLi |
+  | Nmap `mysql-empty-password` báo root không mật khẩu | Chỉ là quan sát | Thêm finding CWE-1393, A07 |
+  | Nessus 10481, 10483 (không kèm CWE) | Bị chặn | CWE-1393, A07 |
+  | sqlmap, ZAP SQL injection | A05 | Không đổi |
+
+- 10 file `.nessus` công khai (bộ test của DefectDojo và vài repo khác): vẫn chỉ 3/112
+  finding mức từ low trở lên đủ điều kiện, vì các file này không có plugin CSDL nào.
+  14 finding nhiều CWE đều thuộc nhiều nhóm, hoặc kèm mã View/Category như CWE-928,
+  CWE-930 mà MITRE cấm dùng để ánh xạ.
+- `demo.py`, `export_pdf.py`, `export_template_pdf.py`, và `normalize_scan.py` với
+  file Nmap CSDL.
+
+### Chưa kiểm tra
+
+- Chưa có file export Nessus/Nmap thật từ một lab CSDL. Fixture trong test được dựng
+  theo tài liệu và mã nguồn của công cụ.
+- Chưa chạy E5 và Gemini thật với finding CSDL, nên chưa biết Database Security Cheat
+  Sheet có lọt vào kết quả truy xuất hay không. Việc ưu tiên chỉ có tác dụng khi sheet
+  đó được truy xuất.
+
 ## Cập nhật 2026-10-15 — bản 0.10.0 (dọn repo, CI, cập nhật tài liệu)
 
 ### Đã chạy

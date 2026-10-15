@@ -56,7 +56,7 @@ Một finding có các trường:
 | kind | scanner_alert hoặc observation |
 | tool | Công cụ nguồn |
 | severity | Mức độ do tool cung cấp; không có thì unknown |
-| cwe | CWE rõ ràng, duy nhất; thiếu/nhiều mã thì unknown |
+| cwe | CWE rõ ràng, duy nhất; thiếu hoặc nhiều mã thì unknown (danh sách nằm ở details.cwes) |
 | location | URL hoặc host/port; không tự đoán vị trí chưa biết |
 | evidence | Các mẩu thông tin được tool báo làm căn cứ hoặc phản hồi quan sát được |
 | source_ref | Đường dẫn logic hoặc số dòng trong file gốc, không phải XPath chạy trực tiếp |
@@ -73,11 +73,16 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
 - ZAP response và Burp issueDetail/response có thể cung cấp thông tin dù evidence riêng không có.
 - Nuclei response/extracted-results được giữ; matcher-status=false bị bỏ qua.
 - Lời khuyên của tool nằm ở details.scanner_solution, không trở thành nguồn OWASP.
-- Nmap được đánh dấu observation, chưa phân loại NSE output thành lỗ hổng/CVE tự động.
+- Cổng/dịch vụ Nmap được đánh dấu observation. Chỉ output NSE khớp một quy tắc trong
+  `src/rag/data/scanner-rules.json` mới sinh thêm finding riêng (xem dưới).
 - Nessus severity=0 được đánh dấu observation. Severity là mức tool báo, không phải project tính lại.
-- Không suy luận CWE theo tên finding. Ngoại lệ ghi rõ: khối classic SQLi được
-  parser sqlmap nhận diện gán CWE-89 bằng quy tắc adapter, không phải CWE có sẵn trong log.
-- Có nhiều CWE thì giữ toàn bộ ở details.cwes và để CWE dùng cho gợi ý là unknown.
+- Không suy luận CWE theo tên finding. CWE không có sẵn trong output chỉ đến từ quy
+  tắc ghi rõ: khối classic SQLi của sqlmap → CWE-89 (quy tắc adapter), và các quy
+  tắc cho kiểm tra CSDL của Nessus/Nmap trong `src/rag/data/scanner-rules.json`. Quy
+  tắc chỉ áp dụng khi tool không ghi CWE, và được ghi ở details.scanner_rule và
+  details.cwe_mapping.
+- Có nhiều CWE thì giữ toàn bộ ở details.cwes và để trường cwe là unknown. Cổng Top 10
+  xét cả danh sách: finding chỉ được gợi ý khi mọi CWE cùng thuộc một nhóm.
 - Không gộp trùng giữa các tool hoặc các lần quét trong bản này; ID nội bộ chỉ duy nhất trong một import.
 
 ## Giới hạn cụ thể
@@ -86,9 +91,9 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
   Diagnostics/automation sections không được chuyển thành finding.
 - Burp: đọc issue XML, không đọc project .burp hoặc XML HTTP history có root items.
   Hỗ trợ CWE dạng thẻ cwe hoặc mã CWE trong HTML classification. Issue Burp thật
-  thường liệt kê nhiều CWE (ví dụ SQL injection: CWE-89, CWE-94, CWE-116), nên CWE
-  dùng cho gợi ý thành unknown và finding không được gắn hướng dẫn khắc phục (xem
-  mục "Giới hạn đã biết" trong README). Event OAST/infiltrator
+  thường liệt kê nhiều CWE (ví dụ SQL injection: CWE-89, CWE-94, CWE-116). Cả ba
+  thuộc A05:2025 nên finding vẫn được gợi ý; danh sách trải trên nhiều nhóm thì bị
+  chặn. Event OAST/infiltrator
   và trường phụ vẫn có thể được giữ trong raw_xml, chưa diễn giải thành evidence riêng.
   Base64 lỗi bị từ chối; byte HTTP không phải UTF-8 được hiển thị bằng replacement
   character, bản Base64 gốc vẫn nằm trong raw_xml để khôi phục khi cần.
@@ -100,9 +105,14 @@ không phải điểm độ tin cậy. Chuẩn hóa không xác nhận true posi
   chạy, không nối nhiều log. Không tự đoán URL từ log; trường location ghi tham số
   và trạng thái chưa xác định URL. Có thể bổ sung URL đã biết trong JSON chuẩn hóa
   và ghi nguồn bổ sung trong details trước khi viết báo cáo.
-- Nessus: .nessus v2, chưa đọc .db, CSV, HTML/PDF hoặc cấu trúc scanner khác.
+- Nessus: .nessus v2, chưa đọc .db, CSV, HTML/PDF hoặc cấu trúc scanner khác. CWE lấy
+  từ thẻ `<cwe>`. Phần lớn plugin không có thẻ này; 10 plugin CSDL được gán CWE theo
+  quy tắc của dự án, khóa theo pluginID (danh sách trong README, mục "Quy tắc CWE cho
+  kiểm tra CSDL").
 - Nmap: chỉ XML, không đọc normal text/grepable. Cổng closed/filtered không tạo
-  finding; port/host scripts được giữ, chưa suy luận mức độ hoặc CWE từ script text.
+  finding; port/host scripts được giữ. Không suy luận mức độ. CWE chỉ được gán khi
+  script và output khớp quy tắc: `mysql-empty-password` (dòng `... account has empty
+  password`) và `ms-sql-empty-password` (dòng `sa:<empty> => ...`), mức độ `unknown`.
 - Giới hạn import: 10 MiB và 10000 bản ghi/file. Chế độ `gemini`, `owasp` và web UI
   nhận tối đa 100 bản ghi mỗi báo cáo.
 - XML cho phép internal DTD khai báo element như Burp, nhưng chặn entity/external DTD.

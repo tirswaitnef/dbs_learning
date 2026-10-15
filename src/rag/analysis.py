@@ -7,6 +7,8 @@ import json
 import re
 from collections import Counter
 from .llm import GeminiLLM
+from .report_view import cwe_origin, cwe_text
+from .top10 import cwe_label
 
 SECTIONS = ('observations', 'potential_impacts', 'limitations')
 LABELS = {'observations':'Diễn giải phát hiện', 'potential_impacts':'Tác động có điều kiện', 'limitations':'Thông tin còn thiếu / giới hạn'}
@@ -58,7 +60,7 @@ def input_sources(row):
     # Never send raw details/request collections or full reports to the model.
     sources={
         'M1':redact('Tên phát hiện do kiểm thử cung cấp: '+row['title'])[:1200],
-        'M2':redact(f"CWE từ đầu vào: {row['cwe']}; mức độ từ đầu vào: {row['severity']}; loại bản ghi: {row.get('kind','scanner_alert')}")[:1200],
+        'M2':redact(f"CWE: {cwe_label(row)} (nguồn CWE: {cwe_origin(row)}); mức độ từ đầu vào: {row['severity']}; loại bản ghi: {row.get('kind','scanner_alert')}")[:1200],
         'M3':redact('Vị trí do kiểm thử cung cấp: '+row['location'])[:1200],
         'M4':f"Bằng chứng đầu vào: {len(row['evidence'])} mục. Chưa xác minh độc lập. Phạm vi khắc phục: {row['owasp_top10']['status']}.",
     }
@@ -138,7 +140,7 @@ def enrich_report(report,settings,*,llm=None,progress=None):
     # Summary source IDs refer to deterministic original records, not unchecked AI prose.
     summary_sources={}
     for i,row in enumerate(rows,1):
-        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {row['cwe']}; mức độ do kiểm thử cung cấp {row['severity']}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:800]}.")
+        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:800]}.")
     summary_sources['TOTAL']=json.dumps(report['statistics'],ensure_ascii=False)
     if progress:progress('AI summary...')
     report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo từ các bản ghi; không thêm mức độ tổng thể hoặc lời khuyên. Tác động không có bằng chứng thì để trống.')
