@@ -1,0 +1,97 @@
+{
+  "id": "7c5ab596c4f2227e384f5afc51226a3a",
+  "filename": "fake-mixed.json",
+  "format": "normalized",
+  "note": "",
+  "status": "partial",
+  "stage": "Đã tạo PDF; có phần AI chưa hoàn tất",
+  "created_at": "2026-10-10T07:06:57.525555+00:00",
+  "updated_at": "2026-10-10T07:08:24.150950+00:00",
+  "count": 8,
+  "size": 4041,
+  "input_sha256": "6d90d294e249d10236b75d1b273eea2e19b84b01b1695414a15e191feb6ec1ba",
+  "demo": false,
+  "events": [
+    {
+      "at": "2026-10-10T07:07:54.940170+00:00",
+      "text": "Đang phân tích phát hiện 1/8"
+    },
+    {
+      "at": "2026-10-10T07:07:59.285838+00:00",
+      "text": "Đang phân tích phát hiện 1/8"
+    },
+    {
+      "at": "2026-10-10T07:07:59.297802+00:00",
+      "text": "Đang phân tích phát hiện 2/8"
+    },
+    {
+      "at": "2026-10-10T07:08:01.480584+00:00",
+      "text": "Đang phân tích phát hiện 2/8"
+    },
+    {
+      "at": "2026-10-10T07:08:01.480584+00:00",
+      "text": "Đang phân tích phát hiện 3/8"
+    },
+    {
+      "at": "2026-10-10T07:08:06.940982+00:00",
+      "text": "Đang phân tích phát hiện 3/8"
+    },
+    {
+      "at": "2026-10-10T07:08:06.952826+00:00",
+      "text": "Đang phân tích phát hiện 4/8"
+    },
+    {
+      "at": "2026-10-10T07:08:08.956331+00:00",
+      "text": "Đang phân tích phát hiện 4/8"
+    },
+    {
+      "at": "2026-10-10T07:08:08.956331+00:00",
+      "text": "Đang phân tích phát hiện 5/8"
+    },
+    {
+      "at": "2026-10-10T07:08:12.665459+00:00",
+      "text": "Đang phân tích phát hiện 5/8"
+    },
+    {
+      "at": "2026-10-10T07:08:12.665459+00:00",
+      "text": "Đang phân tích phát hiện 6/8"
+    },
+    {
+      "at": "2026-10-10T07:08:16.688878+00:00",
+      "text": "Đang phân tích phát hiện 6/8"
+    },
+    {
+      "at": "2026-10-10T07:08:16.704905+00:00",
+      "text": "Đang phân tích phát hiện 7/8"
+    },
+    {
+      "at": "2026-10-10T07:08:20.564042+00:00",
+      "text": "Đang phân tích phát hiện 7/8"
+    },
+    {
+      "at": "2026-10-10T07:08:20.571236+00:00",
+      "text": "Đang phân tích phát hiện 8/8"
+    },
+    {
+      "at": "2026-10-10T07:08:22.897843+00:00",
+      "text": "Đang phân tích phát hiện 8/8"
+    },
+    {
+      "at": "2026-10-10T07:08:22.898986+00:00",
+      "text": "Đang viết và rà soát tổng quan"
+    },
+    {
+      "at": "2026-10-10T07:08:23.850716+00:00",
+      "text": "Đang viết và rà soát tổng quan"
+    }
+  ],
+  "error": null,
+  "summary": {
+    "findings": 8,
+    "with_guidance": 2,
+    "scope_blocked": 4,
+    "ai_unavailable": 3,
+    "selection_failures": 0,
+    "summary_status": "api_error"
+  }
+}

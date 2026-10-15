@@ -1,0 +1,28 @@
+[
+  {
+    "id": "OWASP-SQLI-PARAM",
+    "cwe": "CWE-89",
+    "title": "SQL Injection Prevention Cheat Sheet",
+    "section": "Prepared Statements (with Parameterized Queries)",
+    "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html#defense-option-1-prepared-statements-with-parameterized-queries",
+    "reviewed_on": "2026-09-28",
+    "reviewed_by": "Initial starter source check; researcher review required before evaluation",
+    "approved": true,
+    "source_excerpt": "Prepared Statements (with Parameterized Queries)",
+    "guidance_vi": "Dùng prepared statements với truy vấn tham số hóa để tách dữ liệu đầu vào khỏi cấu trúc câu SQL.",
+    "applicability_vi": "Áp dụng khi xử lý giá trị đầu vào trong truy vấn SQL. Cần xác định thư viện truy cập dữ liệu thực tế trước khi sửa code; không suy ra file hoặc dòng lỗi từ báo cáo quét."
+  },
+  {
+    "id": "OWASP-XSS-ENCODE",
+    "cwe": "CWE-79",
+    "title": "Cross Site Scripting Prevention Cheat Sheet",
+    "section": "Output Encoding",
+    "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html#output-encoding",
+    "reviewed_on": "2026-09-28",
+    "reviewed_by": "Initial starter source check; researcher review required before evaluation",
+    "approved": true,
+    "source_excerpt": "Output Encoding",
+    "guidance_vi": "Khi hiển thị dữ liệu dưới dạng văn bản, dùng cơ chế output encoding phù hợp với ngữ cảnh HTML, thuộc tính, JavaScript, CSS hoặc URL; tận dụng cơ chế escaping mặc định của framework đúng cách.",
+    "applicability_vi": "Phải xác định vị trí dữ liệu được chèn vào trang trước khi chọn cách encoding. Không áp dụng một kiểu encoding cho mọi ngữ cảnh; trường hợp cần cho phép nội dung HTML cần hướng dẫn sanitization riêng."
+  }
+]

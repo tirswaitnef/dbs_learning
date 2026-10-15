@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AuditNote — Trợ lý báo cáo pentest</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z"/></symbol>
+<symbol id="i-paper" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7L13 2M7 14l7-7"/></symbol>
+<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M13 3H5v18h14V9l-6-6Zm0 0v6h6M8 13h8M8 17h5"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 2 8 3v7c0 5-8 10-8 10S4 17 4 12V5l8-3Z"/><path d="m8 11 3 3 5-5"/></symbol>
+</defs></svg>
+<button class="scrim" id="scrim" aria-label="Đóng thanh bên" hidden></button>
+<aside id="sidebar">
+  <a class="brand" href="/" aria-label="AuditNote trang chủ"><span class="brand-icon"><svg><use href="#i-shield"/></svg></span>AuditNote<span class="beta">LOCAL</span></a>
+  <button class="new-chat" id="new-chat"><svg><use href="#i-plus"/></svg> Báo cáo mới <span>+</span></button>
+  <div class="sidebar-label">CUỘC TRÒ CHUYỆN</div>
+  <nav id="history" aria-label="Lịch sử báo cáo"><p class="history-empty">Các báo cáo của bạn sẽ xuất hiện ở đây.</p></nav>
+  <div class="sidebar-bottom"><div class="policy-icon"><svg><use href="#i-shield"/></svg></div><div><strong>Có căn cứ. Có nguồn.</strong><p>Khắc phục trong phạm vi<br>OWASP Top 10:2025.</p></div></div>
+  <div class="profile"><span class="avatar">B</span><div><strong>Không gian của bạn</strong><span>Lưu trên máy này</span></div><span class="green-dot"></span></div>
+</aside>
+<main>
+  <header><div class="header-left"><button class="icon-button mobile-menu" id="menu" aria-label="Mở lịch sử"><svg><use href="#i-menu"/></svg></button><span class="header-title">Trợ lý báo cáo pentest</span><span class="header-sep">/</span><span class="header-sub">OWASP RAG</span></div><span class="local-badge"><span class="green-dot"></span> Web local</span></header>
+  <div id="config-notice" class="config-notice" hidden></div>
+  <div id="viewport" class="viewport">
+    <section id="welcome" class="welcome">
+      <div class="eyebrow"><span></span> TỪ KIỂM THỬ ĐẾN BÁO CÁO</div>
+      <div class="hero-mark"><svg><use href="#i-file"/></svg><span><svg><use href="#i-check"/></svg></span></div>
+      <h1>Bạn có kết quả kiểm thử.<br><em>Để mình viết báo cáo.</em></h1>
+      <p class="intro">Gửi file pentest, nhận báo cáo PDF với phân tích tiếng Việt<br class="desktop-break"> và hướng dẫn khắc phục có nguồn từ OWASP.</p>
+      <div class="steps"><div><span>01</span> Đính kèm kiểm thử</div><i>→</i><div><span>02</span> AI phân tích</div><i>→</i><div><span>03</span> Nhận PDF</div></div>
+    </section>
+    <section id="messages" class="messages" aria-label="Cuộc trò chuyện" hidden></section>
+    <section class="compose-zone" id="compose-zone">
+      <form id="upload-form" class="composer">
+        <div class="file-chip" id="file-chip" hidden><svg><use href="#i-file"/></svg><div><strong id="file-name"></strong><span id="file-size"></span></div><button id="remove-file" type="button" aria-label="Bỏ file đính kèm">×</button></div>
+        <textarea id="note" rows="2" maxlength="1000" aria-label="Ghi chú cho lần kiểm thử" placeholder="Đính kèm kết quả pentest để bắt đầu…"></textarea>
+        <div class="composer-actions"><div class="attach-group"><button type="button" class="attach" id="attach" aria-label="Đính kèm file kiểm thử"><svg><use href="#i-plus"/></svg><span>Đính kèm file</span></button><span class="divider"></span><label for="format">Định dạng</label><select id="format"><option value="auto">Tự nhận diện</option><option value="normalized">JSON chuẩn hóa</option><option value="zap">ZAP JSON</option><option value="burp">Burp XML</option><option value="nuclei">Nuclei JSONL</option><option value="sqlmap-log">sqlmap log</option><option value="nessus">Nessus XML</option><option value="nmap">Nmap XML</option></select></div><button class="send" type="submit" id="send" aria-label="Gửi file và tạo báo cáo"><svg><use href="#i-arrow"/></svg></button></div>
+        <details class="report-options"><summary>Thông tin trên bìa báo cáo (tùy chọn)</summary><div class="report-fields">
+        <label>Ứng dụng / hệ thống<input id="meta-application" maxlength="180"></label>
+        <label>Khách hàng<input id="meta-client" maxlength="180"></label>
+        <label>Người lập báo cáo<input id="meta-prepared_by" maxlength="180"></label>
+        <label>Thời gian kiểm thử<input id="meta-assessment_period" maxlength="180" placeholder="Theo kiểm thử thực tế"></label>
+        <label>Phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="Ví dụ: Nội bộ"></label>
+        </div></details>
+        <input id="file" type="file" accept=".json,.xml,.jsonl,.log,.txt,.nessus" hidden>
+        <div class="drop-label">Thả file kiểm thử vào đây</div>
+      </form>
+      <p class="form-error" id="form-error" role="alert" hidden></p>
+      <p class="input-help">JSON, XML, JSONL, LOG · Tối đa 10 MB / 100 phát hiện · Có thể kéo thả file</p>
+      <div class="info-cards"><div><svg><use href="#i-shield"/></svg><div><strong>Đúng phạm vi OWASP</strong><p>Ngoài Top 10 vẫn được phân tích,<br>không đề xuất khắc phục.</p></div></div><div><svg><use href="#i-file"/></svg><div><strong>Một báo cáo, đủ căn cứ</strong><p>Phát hiện, bằng chứng và trích dẫn<br>được giữ cùng báo cáo PDF.</p></div></div></div>
+      <p class="privacy" id="privacy">File và lịch sử lưu trên máy. Nội dung cần thiết được gửi Gemini để phân tích.<br>Ghi chú dùng để đặt ngữ cảnh cuộc trò chuyện; không thay đổi quy tắc báo cáo.</p>
+    </section>
+  </div>
+  <footer>AuditNote <span>·</span> Phân tích có căn cứ, quyết định có đối chiếu.</footer>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+</body></html>

@@ -1,0 +1,2 @@
+# Full RAG/AI setup. Dependencies have one source of truth in pyproject.toml.
+-e .[ai,pdf,dev]

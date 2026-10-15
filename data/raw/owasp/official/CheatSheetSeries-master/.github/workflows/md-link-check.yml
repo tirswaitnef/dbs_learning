@@ -1,0 +1,53 @@
+name: Markdown Link Check
+
+on:
+  push:
+  pull_request:
+    branches:
+    - master
+
+permissions: {}
+
+jobs:
+  link-check:
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    env:
+      CI: true
+    steps:
+    - name: Setup Action
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+    - name: Setup Node
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: 20.x
+    - name: Install dependencies
+      run: npm ci --ignore-scripts
+    - name: Run link check
+      id: link_check
+      run: npm run link-check
+    - name: Prepare link check diagnostics
+      id: link_check_diagnostics
+      if: always()
+      env:
+        LINK_CHECK_EVENT_NAME: ${{ github.event_name }}
+        LINK_CHECK_HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        LINK_CHECK_OUTCOME: ${{ steps.link_check.outcome }}
+        LINK_CHECK_REPOSITORY: ${{ github.repository }}
+      run: node scripts/Prepare_Link_Check_Diagnostics.js
+    - name: Preserve link check diagnostics
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: link-check-diagnostics
+        path: .link-check/
+        include-hidden-files: true
+        if-no-files-found: warn
+    - name: Send comment with unexpected broken links
+      if: always() && steps.link_check_diagnostics.outputs.should_comment == 'true'
+      uses: thollander/actions-comment-pull-request@24bffb9b452ba05a4f3f77933840a6a841d1b32b # v3.0.1
+      with:
+        file-path: .link-check/unexpected.md
+        github-token: ${{ github.token }}

@@ -1,0 +1,23 @@
+{
+  "@version": "synthetic-fixture",
+  "site": [
+    {
+      "@name": "https://example.test",
+      "alerts": [
+        {
+          "alert": "Cross Site Scripting (Reflected)",
+          "cweid": "79",
+          "riskcode": "3",
+          "instances": [
+            {
+              "uri": "https://example.test/search?q=demo",
+              "param": "q",
+              "attack": "DEMO marker",
+              "evidence": "SYNTHETIC ONLY: marker reflected in HTML response."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

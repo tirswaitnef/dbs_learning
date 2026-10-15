@@ -1,0 +1,9 @@
+SYNTHETIC PARSER FIXTURE, NOT REAL SCAN RESULTS
+sqlmap identified the following injection point(s):
+---
+Parameter: q (GET)
+    Type: boolean-based blind
+    Title: AND boolean-based blind - WHERE or HAVING clause
+    Payload: q=SYNTHETIC_TEST_VALUE
+---
+back-end DBMS: synthetic

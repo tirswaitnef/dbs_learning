@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "tool": "Synthetic scanner — DEMO ONLY",
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "SQL Injection",
+      "cwe": "CWE-89",
+      "severity": "high",
+      "location": "https://example.test/search?q=book",
+      "evidence": [
+        "DỮ LIỆU GIẢ LẬP: scanner báo phản hồi truy vấn kiểm tra phù hợp với dấu hiệu SQL Injection. Chưa xác minh độc lập."
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Cross-site scripting",
+      "cwe": "CWE-79",
+      "severity": "medium",
+      "location": "https://example.test/search",
+      "evidence": []
+    },
+    {
+      "id": "F-003",
+      "title": "Unclassified finding",
+      "cwe": "unknown",
+      "severity": "unknown",
+      "location": "https://example.test/",
+      "evidence": [
+        "DỮ LIỆU GIẢ LẬP: có cảnh báo chưa phân loại."
+      ]
+    }
+  ]
+}
