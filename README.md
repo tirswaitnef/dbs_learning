@@ -245,7 +245,9 @@ Phạm vi đọc và giới hạn của từng adapter nằm trong [SCANNER_INPU
 Các adapter mới được kiểm thử bằng fixture giả lập, chưa xác nhận với file export thật.
 Muốn có file export thật để chạy demo, kiểm chứng quy tắc CWE và gán nhãn: dựng lab
 trong `lab/` rồi quét theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md); số file và
-kiểu tình huống cần có nằm ở [docs/ke-hoach-du-lieu.md](docs/ke-hoach-du-lieu.md).
+kiểu tình huống cần có, và cách có một đầu vào "thực tế" mà vẫn hợp pháp (VPS của chính
+bạn, VM của khoa có giấy phép, phòng lab được phép tấn công), nằm ở
+[docs/ke-hoach-du-lieu.md](docs/ke-hoach-du-lieu.md).
 
 JSON chuẩn hóa của project:
 

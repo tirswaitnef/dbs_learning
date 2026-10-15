@@ -58,7 +58,12 @@ Không cần cài tất cả trong một lần. Thứ tự ít tốn công nhấ
 
 **Phạm vi hợp pháp:** chỉ quét máy của mình. Cả lab này lẫn các IP công cộng đều không
 phải mục tiêu hợp pháp. Truy cập trái phép hệ thống thông tin của người khác là tội
-danh riêng trong Bộ luật Hình sự (Điều 289), không phải lỗi hành chính.
+danh riêng trong Bộ luật Hình sự (Điều 289), không phải lỗi hành chính — khung cơ bản
+đã là phạt tiền 50–300 triệu đồng hoặc tù 1–5 năm, và Nghị quyết của Ủy ban Thường vụ
+Quốc hội năm 2022 nêu rõ hành vi vượt qua cảnh báo/tường lửa cũng thuộc điều luật. Muốn
+đầu vào "thực tế" hơn lab nội bộ mà vẫn hợp pháp — VPS của chính bạn, VM của khoa có
+giấy phép, hoặc phòng lab được phép tấn công — xem
+[ke-hoach-du-lieu.md](ke-hoach-du-lieu.md), mục 6.
 
 ## 3. Dựng lab
 
