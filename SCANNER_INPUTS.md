@@ -42,7 +42,9 @@ Mỗi lệnh sinh `findings.json` và `import-summary.md`, hoàn toàn local, kh
 
 Muốn **file thật** thay vì file mẫu: dựng lab trong `lab/` rồi quét bằng Nmap, sqlmap,
 ZAP và Nessus Essentials theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md). Tài liệu đó
-cũng ghi cách kiểm tra file đã vào đúng đường và mẫu biên bản quét.
+cũng ghi cách kiểm tra file đã vào đúng đường và mẫu biên bản quét. Số file và kiểu tình
+huống cần có — cộng cặp quét trước/sau để có đối chứng âm — ở
+[docs/ke-hoach-du-lieu.md](docs/ke-hoach-du-lieu.md).
 
 Với file thật, thay đường dẫn `--input`, chọn đúng `--format` và thư mục output riêng.
 Giữ file gốc bên cạnh bản chuẩn hóa để kiểm tra lại. Mỗi lần nhập ghi đè output

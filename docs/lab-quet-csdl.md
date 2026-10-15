@@ -402,7 +402,12 @@ Danh sách giới hạn của từng adapter (đọc gì, bỏ qua gì) nằm �
   chứa mật khẩu dạng rõ, sẽ đi vào báo cáo và có thể bị gửi lên Gemini.
 - **Định dạng khác:** PDF/HTML/CSV chưa được nhận; `.db` của Nessus cũng không.
 
-## 12. Nguồn tham khảo
+## 12. Cần bao nhiêu file?
+
+Xem [ke-hoach-du-lieu.md](ke-hoach-du-lieu.md): bảy tình huống cần có, ba mức ngân sách
+thời gian, cặp quét trước/sau khi siết cấu hình, và phân bổ bộ gán nhãn.
+
+## 13. Nguồn tham khảo
 
 - DVWA và cách chạy bằng compose: <https://github.com/digininja/DVWA>
 - Nmap: <https://nmap.org/book/output-formats-xml-output.html>,

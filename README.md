@@ -244,7 +244,8 @@ python scripts/export_template_pdf.py --input data/reports/demo/report.json --cl
 Phạm vi đọc và giới hạn của từng adapter nằm trong [SCANNER_INPUTS.md](SCANNER_INPUTS.md).
 Các adapter mới được kiểm thử bằng fixture giả lập, chưa xác nhận với file export thật.
 Muốn có file export thật để chạy demo, kiểm chứng quy tắc CWE và gán nhãn: dựng lab
-trong `lab/` rồi quét theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md).
+trong `lab/` rồi quét theo [docs/lab-quet-csdl.md](docs/lab-quet-csdl.md); số file và
+kiểu tình huống cần có nằm ở [docs/ke-hoach-du-lieu.md](docs/ke-hoach-du-lieu.md).
 
 JSON chuẩn hóa của project:
 
@@ -486,6 +487,7 @@ chỉnh trên dữ liệu gán nhãn.
 | `data/processed/`, `data/reports/`, `data/web/` | Sinh tự động khi chạy, đã ignore |
 | `docs/lo-trinh-hoc-rag.md` | Các bài học Tập 01–04 |
 | `docs/lab-quet-csdl.md` | Dựng lab và quét để lấy dữ liệu đầu vào thật |
+| `docs/ke-hoach-du-lieu.md` | Bao nhiêu file/kiểu đầu vào là đủ, cặp trước–sau, kế hoạch gán nhãn |
 
 ## Kiểm thử và CI
 
