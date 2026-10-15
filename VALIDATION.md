@@ -27,6 +27,10 @@ Môi trường: Linux, Python 3.11, `pip install -e ".[dev]"` (reportlab 4.5.1, 
 - File Burp dựng theo cấu trúc export thật (issue SQL injection có CWE-89, CWE-94,
   CWE-116): parser cho `cwe=unknown`, finding bị chặn phạm vi, không có hướng dẫn.
 - `.github/workflows/tests.yml` hợp lệ theo schema (kiểm bằng action-validator).
+- GitHub Actions, lần chạy đầu tiên
+  ([run 38707407843](https://github.com/tirswaitnef/dbs_learning/actions/runs/38707407843)):
+  cả 4 job PASS: Ubuntu và Windows, Python 3.11 và 3.14, gồm bộ unittest và bước
+  chạy thử demo/xuất PDF.
 
 ### Quan sát từ các job web chạy thật ngày 2026-10-09 và 2026-10-10
 
