@@ -28,6 +28,11 @@ def run_report(scan_path, cards_path, output, settings, *, format_="normalized",
                           mode="gemini-constrained" if mode == "gemini" else "demo-no-ai",
                           scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest(),
                           model=settings.chat_model if mode == "gemini" else "")
+    if mode == "gemini":
+        # Cards mode selects approved guidance; the same reasoning frame gives the model
+        # the finding-specific prose, so the report is not the same text for every input.
+        from .analysis import enrich_report
+        enrich_report(report, settings, mode="gemini-constrained-analysis")
     from .report_view import attach_context
     attach_context(report,scan_path,format_,report_metadata,display_filename)
     return write_report(report, output)

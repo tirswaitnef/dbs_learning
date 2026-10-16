@@ -1,13 +1,15 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
 from rag.config import Settings
 from rag.pipeline import run_report
 from rag.template_report import readable_vi, render_template_pdf
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class TemplateReportTests(unittest.TestCase):

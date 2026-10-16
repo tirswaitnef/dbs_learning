@@ -1,5 +1,7 @@
 import json
 
+from .top10 import cwe_label
+
 
 class GeminiLLM:
     """All Gemini calls live here. Import SDK only when a real call is needed."""
@@ -38,7 +40,7 @@ def gemini_plan(findings, candidates, cards, settings):
     # Evidence and response bodies stay local. Only finding metadata and approved
     # candidate guidance are sent; do not put secrets into titles/tool labels.
     card_map = {c.id: c for c in cards}
-    payload = [{"finding_id": f.id, "title": f.title, "cwe": f.cwe,
+    payload = [{"finding_id": f.id, "title": f.title, "cwe": cwe_label(f),
                 "has_evidence": bool(f.evidence),
                 "candidates": [{"id": c["card_id"],
                                 "guidance": card_map[c["card_id"]].guidance_vi,

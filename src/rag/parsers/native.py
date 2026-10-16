@@ -6,6 +6,7 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 
+from ..scanner_rules import nessus_rule, nmap_rule, rule_details
 from ..schemas import Finding
 from . import normalize_cwe
 
@@ -158,19 +159,36 @@ def parse_nessus(content, source):
         for ri, item in enumerate(host.findall("ReportItem")):
             cw = cwes([n.text or "" for n in item.findall("cwe")])
             outputs = ["".join(n.itertext()).strip() for n in item.findall("plugin_output")]
+            plugin_id = item.get("pluginID", "")
+            # A CWE supplied by Nessus always wins; the project rule only fills a missing one.
+            rule = None if cw else nessus_rule(plugin_id)
+            details = {"rule_id": plugin_id, "cwes": cw,
+                       "cves": [n.text for n in item.findall("cve") if n.text],
+                       "cvss_score": text(item, "cvss3_base_score") or text(item, "cvss_base_score"),
+                       "scanner_solution": text(item, "solution"),
+                       "description": text(item, "description"),
+                       "raw_xml": ET.tostring(item, encoding="unicode")}
+            if rule:
+                details.update(rule_details(rule, f"Nessus pluginID {plugin_id}"))
             findings.append(Finding(f"NESSUS-{hi}-{ri}", item.get("pluginName") or text(item, "plugin_name") or "Unnamed plugin",
-                                    primary_cwe(cw), severity.get(item.get("severity"), "unknown"),
+                                    rule["cwe"] if rule else primary_cwe(cw), severity.get(item.get("severity"), "unknown"),
                                     f"{host.get('name', 'unknown')}:{item.get('port', '0')}/{item.get('protocol', 'unknown')}",
                                     tuple(value for value in outputs if value), "Nessus",
                                     f"{source}#/Report/ReportHost[{hi}]/ReportItem[{ri}]",
                                     kind="observation" if item.get("severity") == "0" else "scanner_alert",
-                                    details={"rule_id": item.get("pluginID", ""), "cwes": cw,
-                                             "cves": [n.text for n in item.findall("cve") if n.text],
-                                             "cvss_score": text(item, "cvss3_base_score") or text(item, "cvss_base_score"),
-                                             "scanner_solution": text(item, "solution"),
-                                             "description": text(item, "description"),
-                                             "raw_xml": ET.tostring(item, encoding="unicode")}))
+                                    details=details))
     return findings
+
+
+def nse_finding(rule, script, finding_id, location, source_ref, extra):
+    """Finding for an NSE script whose output matches a project rule. Nmap gives no severity."""
+    output = script.get("output", "").strip()
+    return Finding(finding_id, f"{rule['title']} (Nmap {rule['script_id']})", rule["cwe"], "unknown", location,
+                   (f"NSE {rule['script_id']}: {output}",), "Nmap", source_ref,
+                   details={"rule_id": rule["script_id"], **extra,
+                            **rule_details(rule, f"Nmap NSE {rule['script_id']} output"),
+                            "evidence_type": "NSE script output reported by Nmap; not independently verified",
+                            "raw_xml": ET.tostring(script, encoding="unicode")})
 
 
 def parse_nmap(content, source):
@@ -187,17 +205,30 @@ def parse_nmap(content, source):
             observation = f"port_state={state}; service={json.dumps(service_details, ensure_ascii=False)}"
             scripts = [{"id": s.get("id"), "output": s.get("output", ""),
                         "raw_xml": ET.tostring(s, encoding="unicode")} for s in port.findall("script")]
+            location = f"{address}:{port.get('portid')}/{port.get('protocol')}"
             findings.append(Finding(f"NMAP-{hi}-{pi}", f"Service observation: {service_details.get('name', 'unknown')}",
-                                    "unknown", "informational", f"{address}:{port.get('portid')}/{port.get('protocol')}",
+                                    "unknown", "informational", location,
                                     (observation,) + tuple("NSE: " + s["output"] for s in scripts if s["output"]),
                                     "Nmap", f"{source}#/host[{hi}]/ports/port[{pi}]", kind="observation",
                                     details={"state": state, "service": service_details, "scripts": scripts,
                                              "raw_xml": ET.tostring(port, encoding="unicode")}))
+            # The port record stays an observation; a script result that matches a rule is a finding of its own.
+            for si, script in enumerate(port.findall("script")):
+                rule = nmap_rule(script.get("id"), script.get("output", ""))
+                if rule:
+                    findings.append(nse_finding(rule, script, f"NMAP-{hi}-{pi}-S{si}", location,
+                                                f"{source}#/host[{hi}]/ports/port[{pi}]/script[{si}]",
+                                                {"state": state, "service": service_details}))
         for si, script in enumerate(host.findall("hostscript/script")):
             output = script.get("output", "")
+            ref = f"{source}#/host[{hi}]/hostscript/script[{si}]"
+            rule = nmap_rule(script.get("id"), output)
+            if rule:
+                findings.append(nse_finding(rule, script, f"NMAP-H{hi}-S{si}", address, ref, {}))
+                continue
             findings.append(Finding(f"NMAP-H{hi}-S{si}", f"NSE observation: {script.get('id', 'unknown')}",
                                     "unknown", "unknown", address, (output,) if output else (), "Nmap",
-                                    f"{source}#/host[{hi}]/hostscript/script[{si}]", kind="observation",
+                                    ref, kind="observation",
                                     details={"raw_xml": ET.tostring(script, encoding="unicode")}))
     return findings
 
@@ -206,6 +237,9 @@ def parse_sqlmap_log(content, source):
     """Classic sqlmap confirmed injection-point blocks only; no heuristic parsing."""
     clean = re.sub(r"\x1b\[[0-9;]*m", "", content)
     blocks = list(re.finditer(r"^Parameter:\s*(.+?)\s*\(([^\n]+)\)\s*$", clean, re.M))
+    # The documented "back-end DBMS:" line states the engine sqlmap fingerprinted.
+    # Kept as a recorded fact; no CWE, severity or target is derived from it.
+    dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean)
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -225,6 +259,7 @@ def parse_sqlmap_log(content, source):
                                 f"parameter={match.group(1)} ({match.group(2)}); target URL not established by parser",
                                 (block.rstrip(),), "sqlmap", f"{source}#line={line_number}",
                                 details={"parameter": match.group(1), "place": match.group(2), "techniques": techniques,
+                                         **({"dbms": dbms.group(1)} if dbms else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
                                          "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
     if not findings:

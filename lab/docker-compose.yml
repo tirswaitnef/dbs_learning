@@ -1,0 +1,75 @@
+# Phòng lab cho phần "kiểm thử bảo mật CSDL" của đồ án.
+#
+# CẢNH BÁO: weak-mysql và weak-postgres được cấu hình CỐ Ý để không có mật khẩu hoặc
+# không xác thực, và DVWA là ứng dụng cố ý có lỗ hổng. Chỉ chạy trên máy của bạn, không
+# mở các cổng này ra Internet. Xong việc thì chạy:  docker compose down -v
+#
+# Hướng dẫn quét và lấy file đầu vào nằm ở docs/lab-quet-csdl.md
+name: dbs-learning-lab
+
+services:
+  # --- Tầng ứng dụng: DVWA, để lấy bằng chứng SQL injection ở tầng ứng dụng ---
+  dvwa:
+    image: ghcr.io/digininja/dvwa:latest
+    pull_policy: always
+    environment:
+      - DB_SERVER=db
+    depends_on:
+      - db
+    ports:
+      - "127.0.0.1:4280:80"
+    restart: unless-stopped
+
+  # CSDL riêng của DVWA: chỉ nằm trong mạng nội bộ compose, không mở cổng ra host.
+  # Có mật khẩu riêng nên không phải mục tiêu quét, nhưng cũng không che mục tiêu thật.
+  db:
+    image: mariadb:10
+    environment:
+      - MYSQL_ROOT_PASSWORD=dvwa
+      - MYSQL_DATABASE=dvwa
+      - MYSQL_USER=dvwa
+      - MYSQL_PASSWORD=p@ssw0rd
+    volumes:
+      - dvwa-db:/var/lib/mysql
+    restart: unless-stopped
+
+  # --- Tầng CSDL: mục tiêu cho Nessus 10481 và nmap mysql-empty-password ---
+  # root không mật khẩu, cho phép đăng nhập từ mọi host (MARIADB_ROOT_HOST=%), cổng 3306
+  # mở ra host. Cố ý sai cấu hình; không dùng cho việc gì khác ngoài lab.
+  weak-mysql:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ALLOW_EMPTY_ROOT_PASSWORD: "1"
+      MARIADB_ROOT_HOST: "%"
+    ports:
+      - "127.0.0.1:3306:3306"
+    restart: unless-stopped
+
+  # --- Tầng CSDL: mục tiêu cho Nessus 10483 ---
+  # POSTGRES_HOST_AUTH_METHOD=trust làm entrypoint ghi luật trust vào pg_hba.conf,
+  # nên mọi kết nối TCP đều được chấp nhận mà không cần mật khẩu.
+  weak-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+
+  # --- Tùy chọn: MySQL 5.7 đã hết hỗ trợ (EOL 10/2023), để thử quy tắc CWE-1104 ---
+  # Bỏ dấu # ở khối dưới để dùng. Image chỉ có linux/amd64 nên trên Apple Silicon cần
+  # platform; máy x86_64 thì bỏ dòng platform đi.
+  # old-mysql:
+  #   image: mysql:5.7
+  #   platform: linux/amd64
+  #   environment:
+  #     MYSQL_ALLOW_EMPTY_PASSWORD: "1"
+  #   ports:
+  #     - "127.0.0.1:3307:3306"
+  #   restart: unless-stopped
+
+# Dữ liệu của DVWA được giữ lại giữa các lần chạy. weak-mysql/weak-postgres cố ý
+# không có volume: mỗi lần `down` rồi `up` là CSDL mới, đúng lại trạng thái không mật
+# khẩu, không phải nhớ xoá dữ liệu cũ.
+volumes:
+  dvwa-db:

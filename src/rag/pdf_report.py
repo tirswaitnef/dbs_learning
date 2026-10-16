@@ -13,7 +13,7 @@ def render_pdf(report, path):
     from reportlab.platypus import BaseDocTemplate, PageTemplate, Frame, Paragraph, PageBreak, Spacer, Table, TableStyle, CondPageBreak
     from reportlab.platypus.tableofcontents import TableOfContents
     from .report_builder import guidance_reason, sample_notice
-    from .report_view import MISSING, overview, category_rows, severity_counts, SEVERITIES, technical_fields, fallback_description, STATUS_LABELS
+    from .report_view import MISSING, overview, category_rows, severity_counts, SEVERITIES, technical_fields, fallback_description, STATUS_LABELS, cwe_text
     from .analysis import narrative_lines
     from .top10 import enforce
     enforce(report)
@@ -64,6 +64,12 @@ def render_pdf(report, path):
     field('Định dạng kiểm thử',report.get('input_format',MISSING))
     field('Các vị trí được ghi nhận','\n'.join(dict.fromkeys(str(r.get('location',MISSING)) for r in rows)) or MISSING)
     field('Vai trò / tài khoản kiểm thử',meta.get('roles',MISSING));field('Ngoài phạm vi',meta.get('excluded_areas',MISSING))
+    from .db_scope import frame_line, scope_lines
+    for line in (report.get('db_scope') or {}).get('lines') or scope_lines(rows):evidence(line)
+    probe=report.get('prose_check') or {}
+    if probe:
+        from .report_variety import prose_line
+        add('Kiểm tra trùng lặp văn bản',sub);evidence(prose_line(probe))
     add('Phương pháp: đọc kết quả công cụ, giữ bằng chứng, ánh xạ CWE được cung cấp với OWASP Top 10:2025, phân tích và chọn hướng dẫn có nguồn. Danh sách vị trí ở trên không chứng minh đã kiểm thử đầy đủ ứng dụng hoặc toàn bộ OWASP Top 10.')
     section(3,'Tổng hợp phát hiện theo OWASP')
     table(['Nhóm OWASP Top 10:2025','Số bản ghi','Mức cao nhất từ đầu vào'],category_rows(report) or [['Không có phát hiện','0','Không áp dụng']],[width*.59,width*.14,width*.27])
@@ -71,8 +77,9 @@ def render_pdf(report, path):
     story.append(PageBreak());section(4,'Chi tiết phát hiện')
     for row in rows:
         story.append(CondPageBreak(180));add(f"{row['id']} — {row['title']}",sub);tech=technical_fields(row)
-        for label,value in [('Vị trí / URL',row.get('location',MISSING)),('Mức độ / CWE',f"{row.get('severity',MISSING)} / {row.get('cwe',MISSING)}"),('Loại bản ghi / công cụ',f"{row.get('kind',MISSING)} / {row.get('tool',MISSING)}"),('HTTP method / tham số',tech['method']+' / '+str(tech['parameter'])),('CVSS score / vector',tech['cvss']+' / '+tech['cvss_vector'])]:field(label,value)
+        for label,value in [('Vị trí / URL',row.get('location',MISSING)),('Mức độ / CWE',f"{row.get('severity',MISSING)} / {cwe_text(row)}"),('Loại bản ghi / công cụ',f"{row.get('kind',MISSING)} / {row.get('tool',MISSING)}"),('HTTP method / tham số',tech['method']+' / '+str(tech['parameter'])),('CVSS score / vector',tech['cvss']+' / '+tech['cvss_vector'])]:field(label,value)
         field('OWASP Top 10:2025','; '.join(c['title'] for c in row['owasp_top10']['categories']) or row['owasp_top10']['reason'])
+        if row.get('db_frame'):field('Phạm vi CSDL',frame_line(row['db_frame']))
         add('Mô tả phát hiện',sub);evidence(tech['description'] or fallback_description(row))
         if row.get('ai_analysis'):
             add('Diễn giải AI',sub)

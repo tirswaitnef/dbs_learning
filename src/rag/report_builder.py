@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .schemas import card_digest
-from .top10 import classify, enforce
+from .top10 import classify, enforce, finding_cwes
 from .validators import validate_plan
 
 
@@ -20,7 +20,7 @@ def build_report(findings, candidates, cards, plan, *, mode, scan_sha256, model=
         # Defense in depth if this function is used outside the standard pipeline.
         for id_ in ids:
             card = card_map[id_]
-            if not card.approved or card.cwe != finding.cwe:
+            if not card.approved or card.cwe not in finding_cwes(finding):
                 raise ValueError("Guidance not approved or CWE mismatch")
         status = ("missing_evidence" if not finding.evidence else
                   "guidance_available" if ids else "no_supported_guidance")
@@ -61,7 +61,7 @@ def guidance_reason(finding):
         return "Đây là quan sát dịch vụ; chưa được xác định là lỗ hổng để gắn hướng dẫn khắc phục."
     if not finding.get("evidence"):
         return "Thiếu bằng chứng kiểm thử đính kèm; chưa chọn hướng dẫn khắc phục."
-    if finding.get("cwe", "unknown") == "unknown":
+    if not finding_cwes(finding):
         return "Chưa xác định được CWE duy nhất từ kiểm thử; chưa chọn hướng dẫn khắc phục."
     if finding.get("generation_status") == "api_error":
         return "Không chọn được hướng dẫn do lỗi gọi model; dữ liệu kiểm thử vẫn được giữ."
@@ -77,7 +77,7 @@ def md_text(value):
 
 
 def render_markdown(report):
-    from .report_view import overview,category_rows,severity_counts,SEVERITIES,technical_fields,fallback_description,MISSING
+    from .report_view import overview,category_rows,severity_counts,SEVERITIES,technical_fields,fallback_description,MISSING,cwe_text
     from .analysis import narrative_lines
     enforce(report)
     lines=['# Báo cáo phân tích kiểm thử bảo mật','',md_text(sample_notice(report)),
@@ -91,13 +91,23 @@ def render_markdown(report):
         for line in narrative_lines(report['ai_summary']):add(line)
     lines+=['','## 2. Phạm vi và phương pháp']
     add('Phân tích kiểm thử được cung cấp; không quét lại hoặc xác minh độc lập. Ánh xạ CWE với OWASP Top 10:2025.')
+    from .db_scope import scope_lines
+    db_scope=report.get('db_scope') or {}
+    for line in (db_scope.get('lines') or scope_lines(report['findings'])):add(line)
     for row in report['findings']:add(row['tool']+' — '+row['location'])
+    probe=report.get('prose_check') or {}
+    if probe:
+        from .report_variety import prose_line
+        add(prose_line(probe))
     lines+=['','## 3. Tổng hợp phát hiện theo OWASP']
     for row in category_rows(report):add(' | '.join(row))
     lines+=['','## 4. Chi tiết phát hiện']
     for f in report['findings']:
         lines+=['','### '+md_text(f['id']+' — '+f['title'])]
-        for key in ['severity','cwe','location','tool','kind','source_ref']:add(key+': '+str(f.get(key,MISSING)))
+        for key in ['severity','cwe','location','tool','kind','source_ref']:add(key+': '+(cwe_text(f) if key=='cwe' else str(f.get(key,MISSING))))
+        if f.get('db_frame'):
+            from .db_scope import frame_line
+            add('Phạm vi CSDL: '+frame_line(f['db_frame']))
         t=technical_fields(f)
         for key in ['method','parameter','cvss','cvss_vector']:add(key+': '+str(t[key]))
         add(f['owasp_top10']['reason']);add(t['description'] or fallback_description(f))

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "owasp-report-rag"
-version = "0.10.0"
+version = "0.12.0"
 description = "Evidence-first security reports with OWASP-grounded guidance"
 requires-python = ">=3.11"
 dependencies = ["reportlab>=4.2,<5"]
@@ -13,7 +13,8 @@ dependencies = ["reportlab>=4.2,<5"]
 retrieval = ["numpy>=1.26,<3", "sentence-transformers>=3,<6", "python-dotenv>=1,<2"]
 ai = ["numpy>=1.26,<3", "sentence-transformers>=3,<6", "google-genai>=1,<2", "python-dotenv>=1,<2"]
 pdf = ["pypdf>=4,<7"]
-dev = ["pytest>=8,<10"]
+# numpy runs the vector-store tests; E5 and Gemini are mocked, so no AI stack is needed.
+dev = ["pytest>=8,<10", "numpy>=1.26,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

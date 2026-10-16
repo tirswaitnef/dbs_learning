@@ -13,7 +13,8 @@ from pathlib import Path
 from .llm import GeminiLLM
 from .loader import load_documents
 from .report_builder import write_report, guidance_reason
-from .top10 import classify, enforce
+from .scanner_rules import cheatsheets_for
+from .top10 import classify, cwe_label, enforce, finding_cwes
 
 PREFERRED = {
     'CWE-89': {'SQL_Injection_Prevention_Cheat_Sheet.md','Query_Parameterization_Cheat_Sheet.md','Injection_Prevention_Cheat_Sheet.md'},
@@ -70,10 +71,25 @@ def blocks(document):
     return result
 
 
-def source_candidates(results, documents, cwe, *, max_chars=14000):
+def preferred_sources(finding):
+    """Sheets ranked first: curated per CWE, plus the Cheat Sheets of the project scanner rule.
+
+    Sheet names come from the bundled rule file, looked up by the rule id the parser recorded;
+    an input file cannot inject other names. Preference only reorders retrieved results and
+    never adds a sheet that was not retrieved.
+    """
+    names=set()
+    for cwe in finding_cwes(finding):names|=PREFERRED.get(cwe,set())
+    details=finding.details if isinstance(finding.details,dict) else {}
+    names.update(cheatsheets_for(details.get('scanner_rule')))
+    return names
+
+
+def source_candidates(results, documents, preferred, *, max_chars=14000):
     by_source={d.source:d for d in documents}
     candidates=[];seen=set()
-    ranked=sorted(results,key=lambda r:(r['source'] not in PREFERRED.get(cwe,set()),-r['score']))
+    preferred=set(preferred)
+    ranked=sorted(results,key=lambda r:(r['source'] not in preferred,-r['score']))
     for hit in ranked:
         name=hit['source']
         # Official English archive stores sheets directly in cheatsheets/, not arbitrary paths.
@@ -94,7 +110,7 @@ def source_candidates(results, documents, cwe, *, max_chars=14000):
 
 def select_sources(finding, candidates, settings, *, llm=None):
     if classify(finding)['status']!='in_scope' or not finding.evidence or not candidates:return [],'not_requested'
-    prompt=json.dumps({'finding':{'title':finding.title,'cwe':finding.cwe,'has_evidence':True,
+    prompt=json.dumps({'finding':{'title':finding.title,'cwe':cwe_label(finding),'has_evidence':True,
                                   'top10':classify(finding)['categories']},'candidates':candidates},ensure_ascii=False)
     model=llm or GeminiLLM(settings)
     data=json.loads(model.generate(prompt,system=SYSTEM,schema=SELECT_SCHEMA))
@@ -122,9 +138,9 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
         if scope['status']=='in_scope' and finding.evidence:
-            query=f'{finding.cwe} {finding.title[:240]} prevention remediation security best practices'
+            query=f"{' '.join(finding_cwes(finding))} {finding.title[:240]} prevention remediation security best practices"
             results=get_results(query)
-            candidates=source_candidates(results,documents,finding.cwe)
+            candidates=source_candidates(results,documents,preferred_sources(finding))
             row['retrieval']=candidates
             row['status']='no_supported_guidance'
             if candidates:
@@ -136,7 +152,7 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
                 except RuntimeError:
                     selected=[];state='api_error'
                 row['generation_status']=state
-                row['guidance']=[guidance_from_source(s,finding.cwe) for s in selected]
+                row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
                 if selected:row['status']='guidance_available'
         elif scope['status']=='in_scope':row['status']='missing_evidence'
         row['analysis_vi']=(f"Kiểm thử cung cấp {len(finding.evidence)} mục bằng chứng. "

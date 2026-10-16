@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 if not exist ".venv\Scripts\python.exe" (
-  echo Virtual environment missing. See UPGRADE_V09.md for setup.
+  echo Virtual environment missing. See README.md, section "Cai dat day du".
   pause
   exit /b 1
 )

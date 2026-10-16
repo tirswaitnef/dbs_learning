@@ -1,0 +1,50 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.14"]
+    defaults:
+      run:
+        # bash also on Windows, so a failing command in a multi-line step fails the step.
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Core (reportlab) + dev (pytest, numpy). No sentence-transformers or
+      # google-genai: tests mock E5 and Gemini, so CI never calls an API.
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Smoke test - demo report and PDF exports (no AI, no network)
+        run: |
+          python scripts/demo.py
+          python scripts/export_pdf.py --input data/reports/demo/report.json --output data/reports/demo/export.pdf
+          python scripts/export_template_pdf.py --input data/reports/demo/report.json --output data/reports/demo/template.pdf
