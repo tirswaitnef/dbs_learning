@@ -1,14 +1,14 @@
-# Temporary workflow: run don-lich-su-git.bat on a real Windows runner against a
-# throwaway local "origin", then assert that the purge really happened.
-# The captured output is pushed to a ci-debug branch because the Actions log
-# host is not reachable from the machine that wrote this script.
-# Deleted again once the script is verified.
-name: Test the history-cleanup script (temporary)
+# Temporary workflow: run the two .bat helpers on a real Windows runner, against
+# a throwaway local "origin", and assert the results. The captured output goes to
+# a ci-debug branch because the Actions log host is not reachable from the machine
+# that wrote these scripts. Deleted again once the scripts are verified.
+name: Test the .bat helpers (temporary)
 
 on:
   push:
     paths:
       - 'don-lich-su-git.bat'
+      - 'cap-nhat.bat'
       - '.github/workflows/test-don-lich-su.yml'
   workflow_dispatch:
 
@@ -30,21 +30,30 @@ jobs:
           git branch -f main origin/main
           git clone --bare . "$env:RUNNER_TEMP\origin.git"
           git -C "$env:RUNNER_TEMP\origin.git" branch -a
+          git -C "$env:RUNNER_TEMP\origin.git" rev-parse --short HEAD
 
-      - name: Run the script against that origin
+      - name: Run cap-nhat.bat and don-lich-su-git.bat against that origin
         continue-on-error: true
         shell: pwsh
         run: |
           git clone "$env:RUNNER_TEMP\origin.git" "$env:RUNNER_TEMP\work"
-          Copy-Item don-lich-su-git.bat "$env:RUNNER_TEMP\work\"
+          Copy-Item don-lich-su-git.bat,cap-nhat.bat "$env:RUNNER_TEMP\work\"
           Set-Location "$env:RUNNER_TEMP\work"
           $env:DBS_AUTO = "1"
-          $env:DBS_URL  = "$env:RUNNER_TEMP\origin.git"
-          $out = & cmd /c don-lich-su-git.bat 2>&1
-          $code = $LASTEXITCODE
-          $out | Out-File -Encoding utf8 "$env:RUNNER_TEMP\script-output.txt"
-          Add-Content -Encoding utf8 "$env:RUNNER_TEMP\script-output.txt" "EXITCODE=$code"
-          Get-Content "$env:RUNNER_TEMP\script-output.txt" | Select-Object -Last 25 | ForEach-Object { Write-Host $_ }
+          $log = "$env:RUNNER_TEMP\script-output.txt"
+
+          "=== cap-nhat.bat ===" | Out-File -Encoding utf8 $log
+          $c = & cmd /c cap-nhat.bat 2>&1
+          $c | ForEach-Object { Add-Content -Encoding utf8 $log $_ }
+          Add-Content -Encoding utf8 $log "CAPNHAT_EXITCODE=$LASTEXITCODE"
+
+          "=== don-lich-su-git.bat ===" | Out-File -Append -Encoding utf8 $log
+          $env:DBS_URL = "$env:RUNNER_TEMP\origin.git"
+          $o = & cmd /c don-lich-su-git.bat 2>&1
+          $o | ForEach-Object { Add-Content -Encoding utf8 $log $_ }
+          Add-Content -Encoding utf8 $log "DONLICHSU_EXITCODE=$LASTEXITCODE"
+
+          Get-Content $log | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
 
       - name: Publish the captured output to a ci-debug branch
         if: always()
@@ -57,12 +66,18 @@ jobs:
           git checkout -q -B ci-debug
           git add ci-debug.txt
           git commit -q -m "CI debug output from run $env:GITHUB_RUN_ID"
-          git push -q --force origin ci-debug
+          git push --force origin ci-debug
+          if ($LASTEXITCODE -ne 0) { throw "could not publish the debug output" }
           Write-Host "debug output published"
 
-      - name: Assert the history is clean and the code survived
+      - name: Assert both scripts succeeded and the history is clean
         shell: pwsh
         run: |
+          $txt = Get-Content "$env:RUNNER_TEMP\script-output.txt" -Raw
+          if ($txt -match "unexpected at this time") { throw "batch parse error in the output" }
+          if ($txt -notmatch "CAPNHAT_EXITCODE=0") { throw "cap-nhat.bat did not exit 0" }
+          if ($txt -notmatch "DONLICHSU_EXITCODE=0") { throw "don-lich-su-git.bat did not exit 0" }
+
           $o = "$env:RUNNER_TEMP\origin.git"
           $left = git -C $o rev-list --all --objects | Select-String "CheatSheetSeries-master/assets"
           if ($left) { throw "assets still reachable in history: $($left.Count) hits" }
@@ -72,7 +87,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "branch lost db_scope.py" }
           git -C $o cat-file -e "arena/e28181c3-dbs-learning:lab/docker-compose.yml"
           if ($LASTEXITCODE -ne 0) { throw "branch lost lab/" }
-          Write-Host "PURGE OK: assets gone, zip gone from main, branch intact"
+          Write-Host "PURGE OK: assets gone, zip gone from main, branch intact, both scripts exit 0"
 
       - name: Measure the origin after the rewrite
         shell: pwsh

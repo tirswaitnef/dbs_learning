@@ -19,14 +19,14 @@ set "PAUSE=pause"
 if "%DBS_AUTO%"=="1" set "PAUSE=echo."
 
 echo ==============================================
-echo   DON LICH SU GIT (xoa file nang khoi moi commit)
+echo   DON LICH SU GIT - xoa file nang khoi moi commit
 echo ==============================================
 echo.
 echo Repo dich    : %URL%
 echo Se force-push: %MAIN% va %BRANCH%
 echo.
 echo CANH BAO: buoc nay doi ma moi commit va ghi de lich su tren GitHub.
-echo Sau khi xong, ban clone tren may ban can fetch va reset lai (script in lenh).
+echo Sau khi xong, ban clone tren may ban can fetch va reset lai - script in lenh.
 echo.
 
 git rev-parse --git-dir >nul 2>&1
@@ -62,7 +62,7 @@ echo Python dung de chay: "%PY%" %PYA%
 
 "%PY%" %PYA% -c "import git_filter_repo" >nul 2>&1
 if errorlevel 1 (
-  echo Dang cai git-filter-repo (can mang)...
+  echo Dang cai git-filter-repo - can mang...
   "%PY%" %PYA% -m pip install -q git-filter-repo
   if errorlevel 1 (
     "%PY%" %PYA% -m pip install -q --user git-filter-repo
@@ -161,7 +161,7 @@ echo ==============================================
 echo   XONG. Lich su tren GitHub da sach.
 echo ==============================================
 echo.
-echo Cap nhat ban clone tren may ban (bat buoc, vi ma commit da doi):
+echo Cap nhat ban clone tren may ban - bat buoc, vi ma commit da doi:
 echo   git fetch origin --prune
 echo   git reset --hard origin/%BRANCH%
 echo.

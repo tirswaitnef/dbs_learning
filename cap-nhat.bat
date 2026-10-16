@@ -5,6 +5,10 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+rem DBS_AUTO=1 de chay tu dong, khong dung cho nguoi xem
+set "PAUSE=pause"
+if "%DBS_AUTO%"=="1" set "PAUSE=echo."
+
 echo ============================================
 echo   CAP NHAT CODE DU AN
 echo ============================================
@@ -16,7 +20,7 @@ if errorlevel 1 (
   echo       Chua cai Git: https://git-scm.com/download/win
   echo       Dang dung ban ZIP: hay dung git clone, xem README.md.
   echo.
-  pause
+  %PAUSE%
   exit /b 1
 )
 
@@ -30,7 +34,7 @@ git fetch origin
 if errorlevel 1 (
   echo [LOI] Khong ket noi duoc GitHub. Kiem tra mang roi chay lai.
   echo.
-  pause
+  %PAUSE%
   exit /b 1
 )
 
@@ -52,10 +56,10 @@ if errorlevel 1 (
   git status --short
   echo.
   echo   Chon 1 trong 2 lenh sau roi chay lai:
-  echo     git stash          ^(tam cat, lay lai bang git stash pop^)
-  echo     git checkout -- .  ^(bo het thay doi, khong lay lai duoc^)
+  echo     git stash          : tam cat thay doi, lay lai bang git stash pop
+  echo     git checkout -- .  : bo het thay doi, khong lay lai duoc
   echo.
-  pause
+  %PAUSE%
   exit /b 1
 )
 
@@ -68,7 +72,7 @@ if not "!NOW!"=="!TARGET!" (
   if errorlevel 1 (
     echo [LOI] Khong chuyen duoc nhanh. Chay tay: git switch !TARGET!
     echo.
-    pause
+    %PAUSE%
     exit /b 1
   )
 )
@@ -80,7 +84,7 @@ if errorlevel 1 (
   echo       Thuong gap: mang chap chon, hoac lich su nhanh da doi tren GitHub.
   echo       Khi do chay: git fetch origin  roi  git reset --hard origin/!TARGET!
   echo.
-  pause
+  %PAUSE%
   exit /b 1
 )
 
@@ -99,9 +103,19 @@ echo ============================================
 echo.
 echo .env, data\ va .venv KHONG bi thay doi.
 
-set "DEPCHANGED="
 if not "!BEFORE!"=="!AFTER!" (
-  for /f "delims=" %%l in ('git diff "!BEFORE!" "!AFTER!" -- pyproject.toml requirements.txt 2^>nul ^| findstr /b /r "^[+-][^+-]" ^| findstr /v /c:"version ="') do set "DEPCHANGED=1"
+  rem So danh sach thu vien, bo qua dong "version = " - doi so phien ban khong can cai lai
+  set "D1=%TEMP%\dbs-dep-1.txt"
+  set "D2=%TEMP%\dbs-dep-2.txt"
+  set "DEPCHANGED="
+  git show "!BEFORE!:pyproject.toml" 2>nul | findstr /v /c:"version =" > "!D1!"
+  git show "!AFTER!:pyproject.toml" 2>nul | findstr /v /c:"version =" > "!D2!"
+  fc /b "!D1!" "!D2!" >nul
+  if errorlevel 1 set "DEPCHANGED=1"
+  git show "!BEFORE!:requirements.txt" 2>nul > "!D1!"
+  git show "!AFTER!:requirements.txt" 2>nul > "!D2!"
+  fc /b "!D1!" "!D2!" >nul
+  if errorlevel 1 set "DEPCHANGED=1"
   if defined DEPCHANGED (
     echo.
     echo   [CAN LAM] Danh sach thu vien da doi. Chay lenh sau:
@@ -111,4 +125,4 @@ if not "!BEFORE!"=="!AFTER!" (
   )
 )
 echo.
-pause
+%PAUSE%
