@@ -1,0 +1,58 @@
+# Temporary workflow: run don-lich-su-git.bat on a real Windows runner against a
+# throwaway local "origin", then assert that the purge really happened.
+# Deleted again once the script is verified.
+name: Test the history-cleanup script (temporary)
+
+on:
+  push:
+    paths:
+      - 'don-lich-su-git.bat'
+      - '.github/workflows/test-don-lich-su.yml'
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build a throwaway origin holding both branches
+        shell: pwsh
+        run: |
+          git fetch --all
+          git branch -f main origin/main
+          git clone --bare . "$env:RUNNER_TEMP\origin.git"
+          git -C "$env:RUNNER_TEMP\origin.git" branch -a
+
+      - name: Run the script against that origin
+        shell: pwsh
+        run: |
+          git clone "$env:RUNNER_TEMP\origin.git" "$env:RUNNER_TEMP\work"
+          Copy-Item don-lich-su-git.bat "$env:RUNNER_TEMP\work\"
+          Set-Location "$env:RUNNER_TEMP\work"
+          $env:DBS_AUTO = "1"
+          & cmd /c "don-lich-su-git.bat ""$env:RUNNER_TEMP\origin.git"""
+          if ($LASTEXITCODE -ne 0) { throw "script exited with $LASTEXITCODE" }
+
+      - name: Assert the history is clean and the code survived
+        shell: pwsh
+        run: |
+          $o = "$env:RUNNER_TEMP\origin.git"
+          $left = git -C $o rev-list --all --objects | Select-String "CheatSheetSeries-master/assets"
+          if ($left) { throw "assets still reachable in history: $($left.Count) hits" }
+          git -C $o cat-file -e "main:data/raw/owasp/official/CheatSheetSeries.zip" 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "main still has the zip" }
+          git -C $o cat-file -e "arena/e28181c3-dbs-learning:src/rag/db_scope.py"
+          if ($LASTEXITCODE -ne 0) { throw "branch lost db_scope.py" }
+          git -C $o cat-file -e "arena/e28181c3-dbs-learning:lab/docker-compose.yml"
+          if ($LASTEXITCODE -ne 0) { throw "branch lost lab/" }
+          Write-Host "PURGE OK: assets gone, zip gone from main, branch intact"
+
+      - name: Measure the origin before and after
+        shell: pwsh
+        run: |
+          $o = "$env:RUNNER_TEMP\origin.git"
+          git -C $o count-objects -vH | Select-String "size-pack"
+          git -C $o rev-list --all --count | ForEach-Object { Write-Host "commits kept: $_" }
