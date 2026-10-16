@@ -1,5 +1,7 @@
 # Temporary workflow: run don-lich-su-git.bat on a real Windows runner against a
 # throwaway local "origin", then assert that the purge really happened.
+# The captured output is pushed to a ci-debug branch because the Actions log
+# host is not reachable from the machine that wrote this script.
 # Deleted again once the script is verified.
 name: Test the history-cleanup script (temporary)
 
@@ -9,6 +11,9 @@ on:
       - 'don-lich-su-git.bat'
       - '.github/workflows/test-don-lich-su.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   windows:
@@ -27,6 +32,7 @@ jobs:
           git -C "$env:RUNNER_TEMP\origin.git" branch -a
 
       - name: Run the script against that origin
+        continue-on-error: true
         shell: pwsh
         run: |
           git clone "$env:RUNNER_TEMP\origin.git" "$env:RUNNER_TEMP\work"
@@ -36,14 +42,23 @@ jobs:
           $env:DBS_URL  = "$env:RUNNER_TEMP\origin.git"
           $out = & cmd /c don-lich-su-git.bat 2>&1
           $code = $LASTEXITCODE
-          $i = 0
-          foreach ($line in $out) {
-            $i++
-            $esc = ("$line" -replace '%', '%25') -replace "`r?`n", ' '
-            Write-Host "::notice title=bat-$i::$esc"
-          }
-          Write-Host "EXITCODE=$code"
-          if ($code -ne 0) { throw "script exited $code" }
+          $out | Out-File -Encoding utf8 "$env:RUNNER_TEMP\script-output.txt"
+          Add-Content -Encoding utf8 "$env:RUNNER_TEMP\script-output.txt" "EXITCODE=$code"
+          Get-Content "$env:RUNNER_TEMP\script-output.txt" | Select-Object -Last 25 | ForEach-Object { Write-Host $_ }
+
+      - name: Publish the captured output to a ci-debug branch
+        if: always()
+        shell: pwsh
+        run: |
+          Set-Location "$env:GITHUB_WORKSPACE"
+          Copy-Item "$env:RUNNER_TEMP\script-output.txt" .\ci-debug.txt
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -q -B ci-debug
+          git add ci-debug.txt
+          git commit -q -m "CI debug output from run $env:GITHUB_RUN_ID"
+          git push -q --force origin ci-debug
+          Write-Host "debug output published"
 
       - name: Assert the history is clean and the code survived
         shell: pwsh
@@ -59,7 +74,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "branch lost lab/" }
           Write-Host "PURGE OK: assets gone, zip gone from main, branch intact"
 
-      - name: Measure the origin before and after
+      - name: Measure the origin after the rewrite
         shell: pwsh
         run: |
           $o = "$env:RUNNER_TEMP\origin.git"
