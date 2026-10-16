@@ -63,6 +63,18 @@ python scripts/normalize_scan.py --input tests/fixtures/scanners/zap.json --form
 Kết quả: `data/processed/scan-import/findings.json` và `import-summary.md`.
 Chi tiết từng định dạng: [SCANNER_INPUTS.md](SCANNER_INPUTS.md).
 
+Mở giao diện web để thử ngay, không cần API key: `pip install -e .` ở trên là đủ.
+
+```powershell
+.\.venv\Scripts\python.exe scripts\web.py --demo
+```
+
+Trình duyệt tự mở `http://127.0.0.1:8765`; kéo thả một file trong
+`tests/fixtures/scanners/` để xem luồng upload → báo cáo → tải PDF. Chế độ `--demo`
+ghép 2 thẻ có sẵn nên finding SQLi/XSS có gợi ý, còn finding CSDL sẽ ghi "chưa có
+hướng dẫn". Muốn bản đầy đủ (AI + Cheat Sheet Series) thì xem
+[Web UI (luồng chính)](#web-ui-luồng-chính).
+
 ## Cài đặt đầy đủ
 
 ```powershell
