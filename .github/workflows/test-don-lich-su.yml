@@ -36,11 +36,14 @@ jobs:
           $env:DBS_URL  = "$env:RUNNER_TEMP\origin.git"
           $out = & cmd /c don-lich-su-git.bat 2>&1
           $code = $LASTEXITCODE
-          $out | ForEach-Object { Write-Host $_ }
-          if ($code -ne 0) {
-            $tail = ($out | Select-Object -Last 14) -join " || "
-            throw "script exited $code :: $tail"
+          $i = 0
+          foreach ($line in $out) {
+            $i++
+            $esc = ("$line" -replace '%', '%25') -replace "`r?`n", ' '
+            Write-Host "::notice title=bat-$i::$esc"
           }
+          Write-Host "EXITCODE=$code"
+          if ($code -ne 0) { throw "script exited $code" }
 
       - name: Assert the history is clean and the code survived
         shell: pwsh
