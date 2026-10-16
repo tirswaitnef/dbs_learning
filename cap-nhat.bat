@@ -50,8 +50,13 @@ echo Nhanh se cap nhat: !TARGET!
 echo.
 
 rem File ma git quan ly dang bi sua doi thi canh bao, khong tu y xoa
-git diff-index --quiet HEAD -- >nul 2>&1
-if errorlevel 1 (
+rem Dung git status: git diff-index khong tu lam moi stat cache nen bao nham.
+set "DIRTY="
+for /f "delims=" %%i in ('git status --porcelain 2^>nul') do (
+  set "LINE=%%i"
+  if not "!LINE:~0,2!"=="??" set "DIRTY=1"
+)
+if defined DIRTY (
   echo [CANH BAO] Ban co thay doi trong file ma git quan ly:
   git status --short
   echo.

@@ -33,7 +33,9 @@ TARGET=main
 echo "Nhánh sẽ cập nhật: $TARGET"
 echo
 
-if ! git diff-index --quiet HEAD --; then
+# git status chứ không phải git diff-index: diff-index không tự làm mới stat cache
+DIRTY=$(git status --porcelain | grep -v '^??' || true)
+if [ -n "$DIRTY" ]; then
   echo "[CẢNH BÁO] Bạn có thay đổi trong file mà git quản lý:"
   git status --short
   echo
