@@ -9,7 +9,7 @@ set -u
 set -o pipefail
 cd "$(dirname "$0")" || exit 1
 
-URL="${1:-https://github.com/tirswaitnef/dbs_learning.git}"
+URL="${1:-${DBS_URL:-https://github.com/tirswaitnef/dbs_learning.git}}"
 MAIN=main
 BRANCH=arena/e28181c3-dbs-learning
 
@@ -41,8 +41,8 @@ fi
 PY=""
 for c in .venv/bin/python python3 python; do
   if command -v "$c" >/dev/null 2>&1 || [ -x "$c" ]; then
-    PY="$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
-    break
+    ABS="$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
+    if "$ABS" -c "import sys" >/dev/null 2>&1; then PY="$ABS"; break; fi
   fi
 done
 if [ -z "$PY" ]; then

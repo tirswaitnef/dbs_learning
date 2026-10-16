@@ -4,13 +4,14 @@ rem   - data/raw/owasp/official/CheatSheetSeries.zip            (16 MB, unused)
 rem   - data/raw/owasp/official/CheatSheetSeries-master/assets/ (19 MB of images)
 rem   - tests/bao-cao-theo-mau-demo.pdf                        (orphan artefact)
 rem Run it once. It changes every commit hash and force-pushes main and the
-rem session branch. Escape hatch: it never touches your working clone.
-rem Usage: don-lich-su-git.bat [repo-url]
+rem session branch. Your working clone is never touched.
+rem Usage: don-lich-su-git.bat [repo-url]   (or set DBS_URL / DBS_AUTO=1)
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set "URL=%~1"
+if "%URL%"=="" set "URL=%DBS_URL%"
 if "%URL%"=="" set "URL=https://github.com/tirswaitnef/dbs_learning.git"
 set "MAIN=main"
 set "BRANCH=arena/e28181c3-dbs-learning"
@@ -44,32 +45,30 @@ if not "%DBS_AUTO%"=="1" (
   )
 )
 
-rem Tim Python va dung duong dan TUYET DOI (script se cd sang thu muc tam).
+rem Tim Python nao THUC SU chay duoc: thu venv, roi "python", roi "py -3".
 set "PY="
-if exist "%~dp0.venv\Scripts\python.exe" set "PY=%~dp0.venv\Scripts\python.exe"
+set "PYA="
+call :try_python "%~dp0.venv\Scripts\python.exe" ""
+call :try_python "python" ""
+call :try_python "py" "-3"
 if not defined PY (
-  for /f "delims=" %%p in ('where python 2^>nul') do if not defined PY set "PY=%%p"
-)
-if not defined PY (
-  for /f "delims=" %%p in ('where py 2^>nul') do if not defined PY set "PY=%%p"
-)
-if not defined PY (
-  echo [LOI] Khong tim thay Python de chay git-filter-repo. Cai Python 3 roi chay lai.
+  echo [LOI] Khong tim thay Python chay duoc de goi git-filter-repo.
+  echo       Cai Python 3 tu https://www.python.org/downloads/windows/ roi chay lai.
   echo.
   %PAUSE%
   exit /b 1
 )
-echo Python dung de chay: %PY%
+echo Python dung de chay: "%PY%" %PYA%
 
-"%PY%" -c "import git_filter_repo" >nul 2>&1
+"%PY%" %PYA% -c "import git_filter_repo" >nul 2>&1
 if errorlevel 1 (
   echo Dang cai git-filter-repo (can mang)...
-  "%PY%" -m pip install -q git-filter-repo
+  "%PY%" %PYA% -m pip install -q git-filter-repo
   if errorlevel 1 (
-    "%PY%" -m pip install -q --user git-filter-repo
+    "%PY%" %PYA% -m pip install -q --user git-filter-repo
     if errorlevel 1 (
       echo [LOI] Khong cai duoc git-filter-repo. Chay tay:
-      echo       "%PY%" -m pip install git-filter-repo
+      echo       "%PY%" %PYA% -m pip install git-filter-repo
       echo.
       %PAUSE%
       exit /b 1
@@ -100,10 +99,7 @@ if errorlevel 1 (
 pushd "%TMP%\work.git"
 echo.
 echo Dang viet lai lich su...
-"%PY%" -m git_filter_repo --force --invert-paths ^
-  --path data/raw/owasp/official/CheatSheetSeries.zip ^
-  --path data/raw/owasp/official/CheatSheetSeries-master/assets/ ^
-  --path tests/bao-cao-theo-mau-demo.pdf > "%TMP%\log.txt" 2>&1
+"%PY%" %PYA% -m git_filter_repo --force --invert-paths --path "data/raw/owasp/official/CheatSheetSeries.zip" --path "data/raw/owasp/official/CheatSheetSeries-master/assets/" --path "tests/bao-cao-theo-mau-demo.pdf" > "%TMP%\log.txt" 2>&1
 if errorlevel 1 (
   echo [LOI] git-filter-repo that bai:
   type "%TMP%\log.txt"
@@ -173,3 +169,21 @@ echo Hoac don gian la xoa thu muc cu roi clone lai:
 echo   git clone %URL%
 echo.
 %PAUSE%
+exit /b 0
+
+rem ---------------------------------------------------------------
+rem Thu mot ung vien Python; dung luon neu no chay duoc.
+:try_python
+if defined PY goto :eof
+set "CAND=%~1"
+set "CANDARG=%~2"
+if "%CANDARG%"=="" (
+  "%CAND%" -c "import sys" >nul 2>&1
+) else (
+  "%CAND%" %CANDARG% -c "import sys" >nul 2>&1
+)
+if not errorlevel 1 (
+  set "PY=%CAND%"
+  set "PYA=%CANDARG%"
+)
+goto :eof

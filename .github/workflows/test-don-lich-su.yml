@@ -33,8 +33,14 @@ jobs:
           Copy-Item don-lich-su-git.bat "$env:RUNNER_TEMP\work\"
           Set-Location "$env:RUNNER_TEMP\work"
           $env:DBS_AUTO = "1"
-          & cmd /c "don-lich-su-git.bat ""$env:RUNNER_TEMP\origin.git"""
-          if ($LASTEXITCODE -ne 0) { throw "script exited with $LASTEXITCODE" }
+          $env:DBS_URL  = "$env:RUNNER_TEMP\origin.git"
+          $out = & cmd /c don-lich-su-git.bat 2>&1
+          $code = $LASTEXITCODE
+          $out | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            $tail = ($out | Select-Object -Last 14) -join " || "
+            throw "script exited $code :: $tail"
+          }
 
       - name: Assert the history is clean and the code survived
         shell: pwsh
