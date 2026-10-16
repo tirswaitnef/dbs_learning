@@ -107,6 +107,29 @@ Project chưa có lockfile. Sau khi cài và chạy ổn, nên lưu
 Không commit `.env`, cache model, vector store, file scan thật hay báo cáo thật.
 Các thư mục tương ứng đã có trong `.gitignore`.
 
+## Cập nhật code mới
+
+Bản mới nhất nằm trên GitHub. Cập nhật **không** đụng tới `.env`, `data/` hay `.venv`
+(những thứ này không được git quản lý).
+
+**Windows:** bấm đúp `cap-nhat.bat`. **Linux/macOS:** `./cap-nhat.sh`.
+
+Script tự làm 4 việc: kiểm tra repo, tự chọn nhánh đúng (nhánh đang làm việc nếu còn
+hơn `main`, ngược lại dùng `main`), cảnh báo nếu bạn đang sửa file mà git quản lý,
+rồi `git pull --ff-only` và in ra commit mới. Cuối cùng nó nói có cần
+`pip install -r requirements.txt` hay không (chỉ cần khi danh sách thư viện đổi).
+
+Muốn gõ tay:
+
+```powershell
+git fetch origin
+git switch main            # hoặc: git switch arena/e28181c3-dbs-learning
+git pull --ff-only
+```
+
+`python ...` sau khi pull dùng ngay code mới vì project cài ở dạng editable
+(`pip install -e .`); chỉ khi `pyproject.toml`/`requirements.txt` đổi mới cần cài lại.
+
 ## Web UI (luồng chính)
 
 ### Chuẩn bị một lần
@@ -494,6 +517,7 @@ chỉnh trên dữ liệu gán nhãn.
 | `scripts/` | Các lệnh CLI |
 | `tests/`, `tests/fixtures/scanners/` | Unittest và 6 fixture scanner giả lập |
 | `lab/` | Compose dựng lab quét: DVWA + hai CSDL cấu hình yếu |
+| `cap-nhat.bat`, `cap-nhat.sh` | Cập nhật code mới nhất từ GitHub (không đụng `.env`/`data/`/`.venv`) |
 | `data/raw/owasp/cards.json` | 2 thẻ hướng dẫn (SQLi, XSS) |
 | `data/raw/owasp/official/CheatSheetSeries-master/` | Bản sao OWASP Cheat Sheet Series (CC BY-SA 4.0) |
 | `data/raw/owasp/documents/` | 2 tài liệu minh họa tự viết cho Tập 02–04, không phải tài liệu OWASP |
