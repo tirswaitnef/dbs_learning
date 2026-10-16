@@ -19,3 +19,16 @@ data/raw/scans/*
 !data/raw/scans/zap-example.json
 # Web UI jobs: uploaded scan files and generated reports. May contain client data.
 data/web/
+
+# OWASP Cheat Sheet Series: chỉ giữ phần ingest cần (cheatsheets/*.md, templates/, LICENSE, README).
+# Bản tải về nguyên gốc có ảnh/PDF và CI của upstream, ta không cần -> không đưa vào git.
+data/raw/owasp/official/CheatSheetSeries-master/assets/
+data/raw/owasp/official/CheatSheetSeries-master/.github/
+data/raw/owasp/official/CheatSheetSeries-master/.claude/
+data/raw/owasp/official/CheatSheetSeries-master/scripts/
+data/raw/owasp/official/CheatSheetSeries-master/tests/
+data/raw/owasp/official/CheatSheetSeries-master/cheatsheets_draft/
+data/raw/owasp/official/CheatSheetSeries-master/book.json
+data/raw/owasp/official/CheatSheetSeries-master/package.json
+data/raw/owasp/official/CheatSheetSeries-master/package-lock.json
+data/raw/owasp/official/CheatSheetSeries*.zip

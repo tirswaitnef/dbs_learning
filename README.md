@@ -135,9 +135,13 @@ git pull --ff-only
 ### Chuẩn bị một lần
 
 1. Cài đầy đủ và điền `.env` như trên.
-2. Tạo vector store cho OWASP Cheat Sheet Series. Repo đã có sẵn bản sao trong
-   `data/raw/owasp/official/CheatSheetSeries-master/`. Lần đầu cần internet để tải
-   model E5 từ Hugging Face:
+2. Tạo vector store cho OWASP Cheat Sheet Series. Repo đã có sẵn phần cần dùng của
+   bản sao trong `data/raw/owasp/official/CheatSheetSeries-master/` — chỉ gồm
+   `cheatsheets/*.md` (phần ingest thực sự đọc) cùng `templates/`, `LICENSE.md`,
+   `README.md`; ảnh/PDF và file CI của upstream đã bỏ để repo nhẹ. Muốn bản đầy đủ:
+   tải zip từ https://github.com/OWASP/CheatSheetSeries rồi giải nén đè lên thư mục
+   đó — `.gitignore` đã chặn phần nặng nên `git status` vẫn sạch. Lần đầu cần
+   internet để tải model E5 từ Hugging Face:
 
 ```powershell
 python scripts/ingest_documents.py --raw data/raw/owasp/official/CheatSheetSeries-master/cheatsheets --output data/processed/owasp-official
@@ -519,7 +523,7 @@ chỉnh trên dữ liệu gán nhãn.
 | `lab/` | Compose dựng lab quét: DVWA + hai CSDL cấu hình yếu |
 | `cap-nhat.bat`, `cap-nhat.sh` | Cập nhật code mới nhất từ GitHub (không đụng `.env`/`data/`/`.venv`) |
 | `data/raw/owasp/cards.json` | 2 thẻ hướng dẫn (SQLi, XSS) |
-| `data/raw/owasp/official/CheatSheetSeries-master/` | Bản sao OWASP Cheat Sheet Series (CC BY-SA 4.0) |
+| `data/raw/owasp/official/CheatSheetSeries-master/` | OWASP Cheat Sheet Series, chỉ `cheatsheets/*.md` + `templates/` + license (CC BY-SA 4.0) |
 | `data/raw/owasp/documents/` | 2 tài liệu minh họa tự viết cho Tập 02–04, không phải tài liệu OWASP |
 | `data/raw/scans/` | 2 file scan mẫu; các file khác bị ignore |
 | `data/processed/`, `data/reports/`, `data/web/` | Sinh tự động khi chạy, đã ignore |
