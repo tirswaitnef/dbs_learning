@@ -195,6 +195,49 @@ File job đã được gỡ khỏi repo nhưng vẫn còn trong lịch sử Git 
 - Đánh giá chất lượng có gán nhãn: độ đúng của hướng dẫn, của diễn giải, và khả năng
   từ chối.
 
+## Cập nhật 2026-10-16 — bản 0.12.0 (gọn repo, script cập nhật, xác minh trên Windows)
+
+### Đã chạy
+
+- Dọn cây làm việc: 452 → **224 file**, 40 MB → **5,8 MB**. Bỏ file zip CheatSheetSeries
+  (16 MB, không script/tài liệu/test nào tham chiếu), thư mục `assets/` của bản sao
+  upstream (19 MB ảnh/PDF; ingest chỉ đọc `cheatsheets/*.md`), các file CI/package của
+  upstream, bản nháp cheatsheet và `tests/bao-cao-theo-mau-demo.pdf` (file mồ côi).
+  Giữ `cheatsheets/` (127 cheat sheet), `templates/`, `LICENSE.md`, `README.md`.
+  `.gitignore` chặn lại các đường dẫn nặng nếu giải nén bản đầy đủ đè lên.
+- `python -m pytest -q`: **112 passed, 70 subtests passed** (112 test của bản trước,
+  không test nào phụ thuộc phần đã xoá).
+- `cap-nhat.bat` / `cap-nhat.sh`: cập nhật code từ GitHub cho người dùng cuối, tự chọn
+  nhánh (nhánh làm việc khi còn hơn `main`, `main` sau khi gộp), cảnh báo khi file được
+  git quản lý bị sửa, `git pull --ff-only`, in commit mới và chỉ nhắc cài lại thư viện
+  khi dòng khai báo thư viện thật sự đổi (đổi số `version` không tính).
+- `don-lich-su-git.bat` / `.sh`: viết lại lịch sử để xoá vĩnh viễn zip, `assets/` và PDF
+  mồ côi khỏi **mọi** commit, kiểm tra lại rồi mới force-push `main` và nhánh làm việc;
+  không đụng bản clone đang dùng. Thử trên một origin giả trong sandbox: **32 MB → 2,3 MB**,
+  16 commit giữ nguyên, cây nhánh không đổi (224 file), test vẫn PASS sau khi viết lại.
+- Máy Windows thật (GitHub Actions, Windows Server 2022):
+  [run 38887876130](https://github.com/tirswaitnef/dbs_learning/actions/runs/38887876130)
+  chạy cả hai script `.bat` trên một origin giả rồi khẳng định: `assets` không còn trong
+  lịch sử, `main` không còn zip, nhánh còn `lab/` và `db_scope.py`, cả hai script exit 0.
+- Hai lỗi thật do lần chạy đó phát hiện: (1) `echo` chứa dấu ngoặc đơn đặt trong khối
+  `if (...)` làm cmd vỡ cú pháp — script thoát 255 mà không báo gì; đã bỏ hết ngoặc đơn
+  trong `echo`. (2) `git diff-index --quiet` không tự làm mới stat cache nên báo nhầm
+  "có thay đổi" trên bản clone sạch — đã chuyển sang `git status --porcelain`, bỏ qua
+  file chưa được theo dõi (`??`). Ngoài ra bản đầu tiên của script không dọn gì: đường
+  dẫn Python là tương đối nên hỏng sau `cd`, và lỗi của `git-filter-repo` bị `| tail`
+  che mất; nay script dừng hẳn nếu chưa xoá được `assets`.
+- Workflow kiểm thử tạm (`test-don-lich-su.yml`) đã xoá sau khi xác minh; chỉ còn
+  `tests.yml` trong CI.
+
+### Chưa kiểm tra
+
+- **Chưa áp dụng việc viết lại lịch sử lên repo thật.** Cho tới khi chạy
+  `don-lich-su-git.bat`, bản clone đầy đủ vẫn mang các blob cũ (~72 MB); clone nông
+  `--depth 1` thì chỉ ~6,8 MB. Đây là thao tác một lần, do người dùng chạy vì nó
+  force-push cả `main`.
+- Chưa chạy `cap-nhat.bat` trên máy người dùng với dữ liệu thật (.env, data/) — mới
+  xác minh trên runner Windows với origin giả.
+
 ## Lịch sử kiểm tra bản 0.1–0.5
 
 Phần dưới giữ nguyên từ các lần bàn giao trước; số liệu là của thời điểm đó.
