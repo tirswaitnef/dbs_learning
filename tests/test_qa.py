@@ -99,6 +99,51 @@ class QATests(unittest.TestCase):
                                         Settings(api_key="dummy", chat_model="dummy")), expected)
             cls.return_value.generate.assert_called_once()
 
+    def test_gemini_retries_429_rate_limit_but_fails_fast_on_auth_error(self):
+        import types
+        from rag.llm import GeminiLLM
+        sleeps = []
+        calls = {"n": 0}
+
+        class FakeModels:
+            def generate_content(self, **kwargs):
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise Exception("429 RESOURCE_EXHAUSTED. Please retry in 12.5s.")
+                return types.SimpleNamespace(text='{"ok": true}')
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.models = FakeModels()
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        fake_genai = types.ModuleType("google.genai")
+        fake_genai.Client = FakeClient
+        fake_genai.types = types.SimpleNamespace(
+            HttpOptions=lambda **kw: kw,
+            GenerateContentConfig=lambda **kw: kw,
+        )
+        fake_google = types.ModuleType("google")
+        fake_google.genai = fake_genai
+        with patch.dict(sys.modules, {"google": fake_google, "google.genai": fake_genai}):
+            llm = GeminiLLM(Settings(api_key="k", chat_model="m"), sleep=sleeps.append)
+            out = llm.generate("hi", system="sys", schema={})
+            self.assertEqual(out, '{"ok": true}')
+            self.assertEqual(sleeps, [14.0])
+
+            class AuthFailModels:
+                def generate_content(self, **kwargs):
+                    raise Exception("403 PERMISSION_DENIED: API key not valid")
+
+            FakeClient.__init__ = lambda self, **kw: setattr(self, "models", AuthFailModels())
+            sleeps.clear()
+            with self.assertRaises(RuntimeError):
+                llm.generate("hi", system="sys", schema={})
+            self.assertEqual(sleeps, [])
+
 
 if __name__ == "__main__":
     unittest.main()
