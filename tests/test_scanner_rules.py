@@ -165,18 +165,42 @@ class EndToEndTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             scan = Path(d) / "db.xml"
             scan.write_bytes(nmap(MYSQL_EMPTY))
-            md, js, *_ = run_report(scan, ROOT / "data/raw/owasp/cards.json", Path(d) / "out", Settings(), format_="nmap")
+            cards_path = ROOT / "data/raw/owasp/cards.json"
+            md, js, *_ = run_report(scan, cards_path, Path(d) / "out", Settings(), format_="nmap")
             report = json.loads(js.read_text(encoding="utf-8"))
             observation, alert = report["findings"]
             self.assertEqual(observation["status"], "scope_blocked")
-            # In scope, but the two bundled cards cover only SQLi and XSS: no card, and the report says so.
-            self.assertEqual((alert["owasp_top10"]["status"], alert["status"]), ("in_scope", "no_supported_guidance"))
-            self.assertIn("Chưa truy xuất được hướng dẫn", alert["guidance_reason"])
+            self.assertEqual((alert["owasp_top10"]["status"], alert["status"]), ("in_scope", "guidance_available"))
+            self.assertIn("OWASP-DB-AUTH-DEFAULT", [g["id"] for g in alert["guidance"]])
             self.assertIn(md_text("CWE-1393 (gán theo quy tắc ánh xạ của dự án; công cụ không ghi CWE)"),
                           md.read_text(encoding="utf-8"))
             template = Path(d) / "template.pdf"
             render_template_pdf(report, template)
             self.assertGreater(template.stat().st_size, 1000)
+
+            # When a card set lacks the CWE, abstention with no_supported_guidance still holds.
+            minimal_cards = Path(d) / "minimal-cards.json"
+            minimal_cards.write_text(
+                json.dumps([c for c in json.loads(cards_path.read_text(encoding="utf-8"))
+                            if c["cwe"] in {"CWE-89", "CWE-79"}], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            _, js_min, *_ = run_report(scan, minimal_cards, Path(d) / "out-min", Settings(), format_="nmap")
+            alert_min = json.loads(js_min.read_text(encoding="utf-8"))["findings"][1]
+            self.assertEqual((alert_min["owasp_top10"]["status"], alert_min["status"]),
+                             ("in_scope", "no_supported_guidance"))
+            self.assertIn("Chưa truy xuất được hướng dẫn", alert_min["guidance_reason"])
+
+    def test_all_bundled_cards_match_verbatim_vendored_cheatsheet_excerpts(self):
+        cards = json.loads((ROOT / "data/raw/owasp/cards.json").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(cards), 12)
+        for card in cards:
+            with self.subTest(card=card["id"]):
+                slug = card["url"].split("/cheatsheets/", 1)[1].split(".html", 1)[0]
+                sheet_path = CHEATSHEETS / f"{slug}.md"
+                self.assertTrue(sheet_path.is_file(), f"Missing vendored sheet for {card['id']}: {sheet_path}")
+                content = sheet_path.read_text(encoding="utf-8")
+                self.assertIn(card["source_excerpt"], content)
 
     def test_owasp_mode_prefers_database_security_sheet(self):
         f = parse_nessus(nessus("10481", "MySQL Unpassworded Account Check"), "scan.nessus")[0]

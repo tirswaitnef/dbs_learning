@@ -103,6 +103,18 @@ class ScannerFormatTests(unittest.TestCase):
         self.assertIn("target URL not established", f.location)
         self.assertEqual(f.details["parameter"], "q")
 
+    def test_utf16_powershell_redirection_supported_in_parser_and_web_detect(self):
+        from rag.web_server import detect_format
+        raw_log = (FIXTURES / "sqlmap.log").read_text(encoding="utf-8")
+        with tempfile.TemporaryDirectory() as d:
+            for enc, bom in [("utf-16-le", b"\xff\xfe"), ("utf-16-be", b"\xfe\xff")]:
+                p = Path(d) / f"sqlmap_{enc}.txt"
+                p.write_bytes(bom + raw_log.encode(enc))
+                with self.subTest(encoding=enc):
+                    self.assertEqual(detect_format(p), "sqlmap-log")
+                    f = load_findings(p, "sqlmap-log")[0]
+                    self.assertEqual((f.cwe, f.details["parameter"]), ("CWE-89", "q"))
+
 
 if __name__ == "__main__":
     unittest.main()

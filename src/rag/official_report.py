@@ -10,6 +10,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .db_scope import attach_db_scope
 from .llm import GeminiLLM
 from .loader import load_documents
 from .report_builder import write_report, guidance_reason
@@ -170,7 +171,7 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
                 'Kho Cheat Sheet Series do người dùng tải từ nguồn chính thức. Hash kiểm tra tính nhất quán với lúc ingest, không xác thực độc lập nguồn tải.',
                 'Nguồn hướng dẫn: OWASP Cheat Sheet Series, CC BY-SA 4.0; https://creativecommons.org/licenses/by-sa/4.0/. Trích đoạn giữ nguyên Markdown gốc.',
                 'Không truy cập source code/database, không chạy quét, tự sửa code hoặc retest.']}
-    return enforce(report)
+    return attach_db_scope(enforce(report))
 
 
 def run_corpus_report(scan_path, output, settings, *, raw_directory, store_directory,

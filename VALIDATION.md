@@ -238,6 +238,58 @@ File job đã được gỡ khỏi repo nhưng vẫn còn trong lịch sử Git 
 - Chưa chạy `cap-nhat.bat` trên máy người dùng với dữ liệu thật (.env, data/) — mới
   xác minh trên runner Windows với origin giả.
 
+## Cập nhật 2026-10-20 — xác minh trên file quét thật (EC2 lab) & bổ sung thẻ OWASP CSDL
+
+### Thay đổi
+
+- `data/raw/owasp/cards.json`: mở rộng từ 2 lên **12 thẻ hướng dẫn đã duyệt**, đối chiếu
+  trích đoạn nguyên văn (`source_excerpt`) khớp từng ký tự với bản Markdown chính thức
+  trong `data/raw/owasp/official/CheatSheetSeries-master/cheatsheets/` — bao phủ toàn bộ
+  các nhóm kiểm soát CSDL trong phạm vi OWASP Top 10:2025 (`CWE-89`, `CWE-564`,
+  `CWE-1393`, `CWE-306`, `CWE-521`, `CWE-798`, `CWE-1104`, `CWE-311`, `CWE-319`) cùng
+  `CWE-79`.
+- `src/rag/parsers/__init__.py`, `src/rag/web_server.py`: thêm `decode_text` giải mã cả
+  UTF-8 và **UTF-16 LE/BE BOM** cho cả bước tự nhận diện định dạng lẫn nạp bản ghi. Sửa
+  lỗi thực tế khi người dùng Windows PowerShell xuất log bằng toán tử chuyển hướng
+  `sqlmap ... > sqlmap_csdl.txt` (PowerShell 5.1 mặc định ghi UTF-16 LE BOM `\xff\xfe`,
+  trước đó gây `UnicodeDecodeError` và không tự nhận diện được định dạng).
+- `src/rag/db_scope.py`, `src/rag/retriever.py`, `src/rag/report_builder.py`,
+  `src/rag/official_report.py`, `src/rag/analysis.py`:
+  - Luôn gắn `db_frame` và tổng hợp `db_scope` cho báo cáo ở **cả chế độ `--demo` lẫn
+    `gemini`** (không gọi AI).
+  - Các bản ghi có vị trí `http://` hoặc `https://` thuần túy không kèm cổng CSDL, quy
+    tắc CSDL, dòng `back-end DBMS` hay CWE tiêm truy vấn (ví dụ cảnh báo `HTTP Only Site`
+    `CWE-311` và `Strict-Transport-Security Header Not Set` `CWE-319` của OWASP ZAP) nay
+    được giữ ở `unrelated` và không gắn nhầm thẻ `Database Security Cheat Sheet`.
+
+### Đã chạy thực nghiệm
+
+- Chạy trọn luồng chuẩn hóa + tự nhận diện định dạng + xuất `report.md`, `report.json`,
+  `report.pdf`, `template.pdf` trên **bộ file quét thật cùng mục tiêu lab EC2** (Ubuntu
+  24.04 + Docker `vulnerables/web-dvwa` cổng 80 + `mariadb:11.4` cổng 3306; file quét giữ
+  ngoài Git theo `.gitignore`):
+  - **Nmap 7.992 (`nmap -Pn -sV -p 22,80,3306 --script mysql-empty-password -oX`)**:
+    4 bản ghi — 3 `observation` (`22/tcp`, `80/tcp`, `3306/tcp` MariaDB 11.4.13) + 1
+    `scanner_alert` khớp quy tắc `nmap-mysql-empty-password` → `CWE-1393`, `A07:2025`,
+    `server_db`, nhận 2 thẻ `OWASP-DB-AUTH-DEFAULT` và `OWASP-DB-HARDEN-DEFAULTS` (đối
+    chiếu thêm 1 file quét khi cổng `3306` đang `closed` chỉ cho 2 `observation`).
+  - **OWASP ZAP 2.17.0 (Traditional JSON Report)**:
+    - Quét có phiên đăng nhập DVWA: 48 bản ghi (16 loại cảnh báo) → đúng **1/48** bản ghi
+      `SQL Injection - MySQL` (`CWE-89`, `Evidence: You have an error in your SQL syntax`)
+      vào `app_db` + thẻ `OWASP-SQLI-PARAM`; **47/48** bản ghi web còn lại (`XSS` `CWE-79`,
+      `HTTP Only Site` `CWE-311`, `HSTS` `CWE-319`, CSP, Cookie…) vào `unrelated` (không
+      dương tính giả về phạm vi CSDL).
+    - Quét chưa đăng nhập (`login.php`): 23 bản ghi → **23/23 `unrelated`**, 0 bản ghi CSDL.
+  - **sqlmap 1.10.6 (`sqlmap-log`, cả file log UTF-8 lẫn file UTF-16 LE BOM từ PowerShell)**:
+    1 `scanner_alert` `SQLMAP-0` (`CWE-89`, `A05:2025`, `app_db`, 4 kỹ thuật boolean/error/
+    time/UNION, `back-end DBMS: MySQL >= 5.1 (MariaDB fork)`) → thẻ `OWASP-SQLI-PARAM`.
+- Bộ test tự động: **115 tests, 86 subtests PASS** (0 skip, 0 lỗi).
+
+### Chưa chạy
+
+- Gọi `GEMINI_API_KEY` thật để đánh giá văn phong diễn giải AI trên 3 file thật trên.
+- File export thật của Burp Suite, Nuclei và Nessus (hiện mới có fixture).
+
 ## Lịch sử kiểm tra bản 0.1–0.5
 
 Phần dưới giữ nguyên từ các lần bàn giao trước; số liệu là của thời điểm đó.

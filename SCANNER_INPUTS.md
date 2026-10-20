@@ -19,9 +19,12 @@ quét.
 | Nessus | .nessus XML, root NessusClientData_v2 | `nessus` | ReportHost/ReportItem, mức độ, plugin_output, CVE/CVSS nếu có |
 | Nmap | XML -oX, root nmaprun | `nmap` | Cổng open/open-filtered, service, port scripts và host scripts |
 
-Các adapter hiện đã được kiểm tra bằng fixture tự tạo dựa trên cấu trúc tài liệu;
-**chưa xác nhận tương thích bằng file export thật của người dùng**. Không tuyên bố
-hỗ trợ mọi phiên bản, template, biến thể định dạng hoặc extension của các tool.
+Các adapter cho **Nmap 7.992 (`-oX`), OWASP ZAP 2.17.0 (Traditional JSON) và sqlmap 1.10.6
+(`sqlmap-log`, gồm cả file UTF-16 BOM do toán tử `>` của Windows PowerShell ghi ra)** đã
+được xác nhận thực nghiệm trên file export thật quét lab EC2 (xem `VALIDATION.md`, cập
+nhật 2026-10-20). Ba adapter còn lại (**Burp, Nuclei, Nessus**) hiện mới được kiểm tra
+bằng fixture tự tạo dựa trên cấu trúc tài liệu; không tuyên bố hỗ trợ mọi phiên bản,
+template, biến thể định dạng hoặc extension của các tool.
 
 ## Chạy ngay với file mẫu
 

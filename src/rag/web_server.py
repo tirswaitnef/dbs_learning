@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import ROOT, load_settings
-from .parsers import SUPPORTED_FORMATS, load_findings
+from .parsers import SUPPORTED_FORMATS, decode_text, load_findings
 
 MAX_UPLOAD = 10 * 1024 * 1024
 TERMINAL = {'completed', 'partial', 'failed'}
@@ -29,7 +29,7 @@ def detect_format(path):
     raw=Path(path).read_bytes()
     if raw.startswith(b'%PDF'):
         raise ValueError('PDF đầu vào chưa được hỗ trợ. Hãy xuất JSON, XML, JSONL hoặc log từ công cụ; PDF là báo cáo đầu ra.')
-    text=raw.decode('utf-8-sig',errors='replace').lstrip()
+    text=decode_text(raw,errors='replace').lstrip()
     try:
         data=json.loads(text)
         if isinstance(data,dict):

@@ -5,6 +5,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .db_scope import attach_db_scope
 from .schemas import card_digest
 from .top10 import classify, enforce, finding_cwes
 from .validators import validate_plan
@@ -30,14 +31,14 @@ def build_report(findings, candidates, cards, plan, *, mode, scan_sha256, model=
                      "guidance": [asdict(card_map[id_]) for id_ in ids]})
     for row in rows:
         row["guidance_reason"] = "" if row["guidance"] else guidance_reason(row)
-    return enforce({"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+    return attach_db_scope(enforce({"schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
             "mode": mode, "model": model, "scan_sha256": scan_sha256,
             "knowledge_sha256": card_digest(cards), "findings": rows,
             "limitations": [
                 "Kết quả do công cụ/đầu vào cung cấp; chưa xác minh độc lập lỗ hổng.",
                 "Kiểm tra bằng chứng hiện chỉ xét có/không, chưa xác định true/false positive.",
                 "Gợi ý là hướng dẫn có điều kiện, không phải bản vá đã kiểm chứng.",
-                "Không truy cập source code/database, không chạy quét hoặc retest."]})
+                "Không truy cập source code/database, không chạy quét hoặc retest."]}))
 
 
 

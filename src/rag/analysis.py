@@ -6,7 +6,7 @@ is never printed as analysis. Remediation is exclusively the separate OWASP bran
 import json
 import re
 from collections import Counter
-from .db_scope import ai_source, db_frame, scope_lines, scope_summary
+from .db_scope import ai_source, attach_db_scope, db_frame, scope_lines, scope_summary
 from .llm import GeminiLLM
 from .report_view import cwe_origin, cwe_text
 from .top10 import cwe_label
@@ -134,8 +134,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
     report['analysis_calls']=0
     report['statistics']={'total':len(rows),'by_input_severity':dict(Counter(r['severity'] for r in rows)),
                           'with_guidance':sum(bool(r['guidance']) for r in rows)}
-    for row in rows:
-        row['db_frame']=db_frame(row)
+    attach_db_scope(report)
     if not rows:
         report['ai_summary']={'status':'not_requested','claims':{},'sources':{},'calls':0,'reason':'Không có phát hiện trong đầu vào; không suy ra hệ thống an toàn.'}
         return report

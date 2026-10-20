@@ -149,6 +149,23 @@ class DbFrameTests(unittest.TestCase):
         finding = parse_nessus(nessus("10481", "MySQL Unpassworded Account Check"), "n.nessus")[0]
         json.dumps(db_frame(row(finding)), ensure_ascii=False)
 
+    def test_web_http_encryption_headers_stay_unrelated_and_withhold_db_cards(self):
+        from rag.loader import load_cards
+        from rag.parsers import parse_zap
+        from rag.retriever import retrieve
+        cards = load_cards(ROOT / "data/raw/owasp/cards.json")
+        zap_doc = {"site": [{"@name": "http://198.51.100.10", "alerts": [
+            {"alert": "HTTP Only Site", "cweid": "311", "riskcode": "2",
+             "instances": [{"uri": "http://198.51.100.10", "evidence": "http://198.51.100.10"}]},
+            {"alert": "Strict-Transport-Security Header Not Set", "cweid": "319", "riskcode": "1",
+             "instances": [{"uri": "http://198.51.100.10/", "evidence": "HTTP/1.1 200 OK"}]},
+        ]}]}
+        for finding in parse_zap(zap_doc, "zap.json"):
+            with self.subTest(alert=finding.title):
+                frame = db_frame(row(finding))
+                self.assertEqual((frame["relevance"], frame["control"]), ("unrelated", ""))
+                self.assertEqual(retrieve(finding, cards), [])
+
 
 if __name__ == "__main__":
     unittest.main()

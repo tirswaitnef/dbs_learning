@@ -7,6 +7,15 @@ from ..schemas import Finding
 SUPPORTED_FORMATS = ("normalized", "zap", "burp", "nuclei", "sqlmap-log", "nessus", "nmap")
 
 
+def decode_text(raw, *, errors="strict"):
+    """Decode text exported as UTF-8 or redirected by Windows PowerShell '>' (UTF-16 BOM)."""
+    if raw.startswith(b"\xff\xfe"):
+        return raw[2:].decode("utf-16-le", errors=errors)
+    if raw.startswith(b"\xfe\xff"):
+        return raw[2:].decode("utf-16-be", errors=errors)
+    return raw.decode("utf-8-sig", errors=errors)
+
+
 def normalize_cwe(value):
     if value is None or str(value).strip() in {"", "-1", "0", "unknown"}:
         return "unknown"
@@ -100,13 +109,14 @@ def load_findings(path, format_="normalized"):
     if format_ not in SUPPORTED_FORMATS:
         raise ValueError(f"Unsupported format: {format_}")
     from .native import parse_burp, parse_nuclei, parse_sqlmap_log, parse_nessus, parse_nmap
+    raw = path.read_bytes()
     if format_ in {"normalized", "zap"}:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = json.loads(decode_text(raw))
         findings = {"normalized": parse_normalized, "zap": parse_zap}[format_](data, path.name)
     elif format_ in {"burp", "nessus", "nmap"}:
-        findings = {"burp": parse_burp, "nessus": parse_nessus, "nmap": parse_nmap}[format_](path.read_bytes(), path.name)
+        findings = {"burp": parse_burp, "nessus": parse_nessus, "nmap": parse_nmap}[format_](raw, path.name)
     else:
-        findings = {"nuclei": parse_nuclei, "sqlmap-log": parse_sqlmap_log}[format_](path.read_text(encoding="utf-8-sig"), path.name)
+        findings = {"nuclei": parse_nuclei, "sqlmap-log": parse_sqlmap_log}[format_](decode_text(raw), path.name)
     for finding in findings:
         for field_name in ("id", "title", "cwe", "severity", "location", "tool", "source_ref"):
             _text(getattr(finding, field_name), field_name)

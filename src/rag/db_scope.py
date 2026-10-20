@@ -42,6 +42,7 @@ SERVER_TOOLS = {'nessus', 'nmap'}
 # layer even when the tool name is unknown; the other buckets are server configuration.
 APP_CONTROLS = {'query_handling'}
 PORT = re.compile(r':(\d{2,5})(?:/tcp|/udp)?\b')
+HTTP_LOCATION = re.compile(r'(?i)^https?://')
 DBMS_LINE = re.compile(r'(?im)^\s*back-end DBMS:\s*([A-Za-z0-9 ._+\-]+?)\s*$')
 
 
@@ -70,8 +71,9 @@ def db_frame(row):
     details = row.get('details') or {}
     rule = str(details.get('scanner_rule') or '')
     tool = str(row.get('tool') or '').strip().lower()
+    location = str(row.get('location') or '').strip()
     port = None
-    match = PORT.search(str(row.get('location') or ''))
+    match = PORT.search(location)
     if match and int(match.group(1)) in ENGINES:
         port = int(match.group(1))
         basis.append(f'cổng {port} trong trường vị trí')
@@ -96,12 +98,19 @@ def db_frame(row):
                 break
     cwes = record_cwes(row)
     control, control_label = control_of(cwes)
-    if control_label:
-        basis.append('CWE do công cụ hoặc quy tắc cung cấp: ' + ', '.join(cwes))
-        unmapped = [c for c in cwes if c not in CONTROLS]
-        if unmapped:
-            basis.append('CWE chưa có trong bảng kiểm soát: ' + ', '.join(unmapped))
-    db_signal = bool(control_label) or any(c in CONTROLS for c in cwes)
+    has_query_cwe = any(CONTROLS.get(c, ('',))[0] in APP_CONTROLS for c in cwes)
+    # Generic server/transport CWEs (e.g. CWE-311 HTTP Only Site, CWE-319 missing HSTS)
+    # on a plain http(s):// URL without a DB port, rule, or DBMS belong to the web layer.
+    if HTTP_LOCATION.match(location) and not (engine or port or rule or has_query_cwe):
+        control = control_label = ''
+        db_signal = False
+    else:
+        if control_label:
+            basis.append('CWE do công cụ hoặc quy tắc cung cấp: ' + ', '.join(cwes))
+            unmapped = [c for c in cwes if c not in CONTROLS]
+            if unmapped:
+                basis.append('CWE chưa có trong bảng kiểm soát: ' + ', '.join(unmapped))
+        db_signal = bool(control_label) or any(c in CONTROLS for c in cwes)
     is_server_tool = any(token in tool for token in SERVER_TOOLS)
     if rule in RULE_ENGINES or (is_server_tool and engine):
         relevance, layer = 'server_db', 'máy chủ CSDL'
@@ -180,3 +189,12 @@ def scope_lines(rows):
     lines.append('Các mục trên chỉ là phân loại lại thông tin đầu vào; không xác nhận lỗ hổng, không chứng minh '
                  'CSDL đã được kiểm thử đầy đủ và không thay thế quét có xác thực (quyền, mã hoá, logging).')
     return lines
+
+
+def attach_db_scope(report):
+    """Attach the deterministic database frame to every record and the report summary."""
+    rows = report.get('findings') or []
+    for row in rows:
+        row['db_frame'] = db_frame(row)
+    report['db_scope'] = {'summary': scope_summary(rows), 'lines': scope_lines(rows)}
+    return report
