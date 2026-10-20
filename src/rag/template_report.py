@@ -31,7 +31,7 @@ VI_CHARS = set('àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêề
 VI_LOWER = ''.join(sorted(VI_CHARS))
 VI_CHARS |= {c.upper() for c in VI_CHARS}
 VI_UPPER = ''.join(sorted(c for c in VI_CHARS if c.isupper()))
-MIDWORD_CAPITAL = re.compile('[a-z' + VI_LOWER + '][A-Z' + VI_UPPER + ']')
+UPPER_CHARS = set('ABCDEFGHIJKLMNOPQRSTUVWXYZ' + VI_UPPER)
 
 
 def readable_vi(text):
@@ -44,9 +44,9 @@ def readable_vi(text):
         if unicodedata.category(ch)[0] in 'PSNZ':
             continue
         return False
-    if MIDWORD_CAPITAL.search(text):
-        return False
     words = re.findall(r'[^\W\d_]+', text)
+    if any(any(c in VI_CHARS for c in w) and any(c in UPPER_CHARS for c in w[1:]) for w in words):
+        return False
     if len(words) >= 8 and sum(any(c in VI_CHARS for c in w) for w in words) / len(words) < 0.15:
         return False
     return True

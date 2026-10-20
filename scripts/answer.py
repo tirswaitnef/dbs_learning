@@ -7,13 +7,13 @@ from rag.qa import RAGPipeline
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="Episode 04: retrieved context -> Gemini answer with checked citations")
+    p = argparse.ArgumentParser(description="Episode 04: retrieved context -> grounded AI answer with checked citations")
     p.add_argument("question")
     p.add_argument("--raw", type=Path, default=ROOT / "data/raw/owasp/documents")
     p.add_argument("--store", type=Path, default=ROOT / "data/processed/documents")
     p.add_argument("--top-k", type=int)
     p.add_argument("--min-score", type=float)
-    p.add_argument("--offline-embeddings", action="store_true", help="Cache-only E5; Gemini still needs network")
+    p.add_argument("--offline-embeddings", action="store_true", help="Cache-only E5; pairs with local Ollama for full offline run")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
     try:

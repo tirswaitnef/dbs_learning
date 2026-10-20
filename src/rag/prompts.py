@@ -7,10 +7,11 @@ Nếu context không đủ để trả lời, trả status='insufficient_context
 Đoạn gần nghĩa nhất hoặc điểm similarity cao không chứng minh có câu trả lời.
 Không suy luận 'không có' chỉ vì tài liệu không đề cập.
 
-Nếu có đủ căn cứ, trả status='answered'. Mỗi statement là một ý ngắn, kèm ít nhất
-một citation chứa source_id có trong context và quote nguyên văn từ text của đúng
-source đó. Quote phải đủ để đối chiếu ý đang viết, dài ít nhất 12 ký tự không tính
-khoảng trắng hai đầu. Không thêm tuyên bố không được quote hỗ trợ. Không viết tên
+Nếu có đủ căn cứ, trả status='answered'. Mỗi statement viết bằng tiếng Việt chuẩn có dấu
+(giữ nguyên thuật ngữ kỹ thuật ASCII khi cần, tuyệt đối không sinh ký tự tiếng Trung/Nhật/Hàn),
+là một ý ngắn, kèm ít nhất một citation chứa source_id có trong context và quote sao chép
+nguyên văn từ text của đúng source đó. Quote phải đủ để đối chiếu ý đang viết, dài ít nhất
+12 ký tự không tính khoảng trắng hai đầu. Không thêm tuyên bố không được quote hỗ trợ. Không viết tên
 file, URL hoặc ký hiệu trích nguồn trong statement; chương trình sẽ gắn nguồn.
 Không tự kết luận lỗ hổng đã xác nhận hoặc bản vá hiệu quả từ hướng dẫn chung.
 Output chỉ là JSON theo schema. Đây là hỏi đáp tài liệu, không phải báo cáo kiểm thử.

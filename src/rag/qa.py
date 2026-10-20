@@ -4,11 +4,19 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from .context import build_context, build_prompt
-from .llm import GeminiLLM
+from .llm import GeminiLLM, OllamaLLM
 from .prompts import ANSWER_SCHEMA, SYSTEM_PROMPT
-from .report_builder import md_text
 
 NOT_FOUND = "Tôi không tìm thấy đủ thông tin để trả lời trong các đoạn tài liệu được cung cấp."
+_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+
+
+def _quote_matches(quote, chunk_text):
+    if quote in chunk_text:
+        return True
+    norm_q = re.sub(r"\s+", " ", quote).strip()
+    norm_c = re.sub(r"\s+", " ", chunk_text)
+    return bool(norm_q) and norm_q in norm_c
 
 
 @dataclass
@@ -42,7 +50,7 @@ def validate_answer(data, sources):
         if not isinstance(statement, dict) or set(statement) != {"text", "citations"}:
             raise ValueError("Invalid statement")
         text = statement["text"]
-        if not isinstance(text, str) or not text.strip() or len(text) > 3000:
+        if not isinstance(text, str) or not text.strip() or len(text) > 3000 or _CJK.search(text):
             raise ValueError("Invalid statement text")
         if re.search(r"https?://|www\.|\[nguồn\s*:|\[S\d+\]", text, re.I):
             raise ValueError("Model must use structured citations, not invent inline sources")
@@ -56,7 +64,7 @@ def validate_answer(data, sources):
             id_, quote = citation["source_id"], citation["quote"]
             if not isinstance(id_, str) or id_ not in source_map or id_ in cited:
                 raise ValueError("Unknown/duplicate source ID")
-            if not isinstance(quote, str) or len(quote.strip()) < 12 or quote not in source_map[id_]["text"]:
+            if not isinstance(quote, str) or len(quote.strip()) < 12 or not _quote_matches(quote, source_map[id_]["text"]):
                 raise ValueError("Quote not found verbatim in cited chunk")
             cited.add(id_)
             if id_ not in used:
@@ -70,7 +78,12 @@ def answer_from_results(question, results, settings, *, llm=None, max_context_ch
     sources = build_context(results, max_context_chars)
     if not sources:
         return RAGAnswer("insufficient_context", NOT_FOUND, [], sources)
-    model = llm if llm is not None else GeminiLLM(settings)
+    if llm is not None:
+        model = llm
+    elif settings.resolved_provider == "ollama":
+        model = OllamaLLM(settings)
+    else:
+        model = GeminiLLM(settings)
     raw = model.generate(build_prompt(question, sources), system=SYSTEM_PROMPT, schema=ANSWER_SCHEMA)
     try:
         data = json.loads(raw)

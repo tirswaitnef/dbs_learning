@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import ROOT, load_settings
+from .llm import check_ollama
 from .parsers import SUPPORTED_FORMATS, decode_text, load_findings
 
 MAX_UPLOAD = 10 * 1024 * 1024
@@ -49,10 +50,16 @@ def detect_format(path):
 
 
 def safe_error(exc):
-    if isinstance(exc,FileNotFoundError):return 'Thiếu file cấu hình, tài liệu OWASP hoặc vector store. Kiểm tra .env và kho đã ingest.'
-    if isinstance(exc,ImportError):return 'Thiếu thư viện Python. Chạy .\\.venv\\Scripts\\python.exe -m pip install -r requirements.txt rồi khởi động lại web.'
-    text=str(exc).lower()
-    if 'gemini' in text or 'api_key' in text or 'chat_model' in text:return 'Chưa gọi được Gemini. Kiểm tra API key, model và quota trong .env.'
+    if isinstance(exc,FileNotFoundError):return 'Thiếu file cấu hình, tài liệu OWASP hoặc vector store. Chạy ingest OWASP hoặc dùng start-web.bat.'
+    if isinstance(exc,ImportError):return 'Thiếu thư viện Python. Chạy .\\.venv\\Scripts\\python.exe -m pip install -e ".[retrieval,pdf]" rồi khởi động lại web.'
+    raw=str(exc)
+    text=raw.lower()
+    if 'run: ollama pull' in text:
+        cmd=raw.split('run: ',1)[1].strip()
+        return f'Model chưa tải trong Ollama. Mở PowerShell chạy lệnh: {cmd} rồi gửi lại file.'
+    if 'ollama' in text:
+        return 'Chưa gọi được Ollama local. Kiểm tra ứng dụng Ollama đang chạy (ollama serve), OLLAMA_MODEL và OLLAMA_TIMEOUT trong .env.'
+    if 'gemini' in text or 'api_key' in text or 'chat_model' in text:return 'Chưa gọi được Gemini. Kiểm tra API key, model và quota trong .env (hoặc đặt LLM_PROVIDER=ollama để chạy AI local).'
     if any(x in text for x in ('store','corpus','chunk','embedding','model limit','revision')):return 'Kho vector, tài liệu hoặc cấu hình embedding chưa khớp. Giữ chunk/overlap đúng với lần ingest và kiểm tra kho OWASP.'
     return 'Không hoàn tất xử lý ('+type(exc).__name__+'). File đã được giữ cục bộ. Kiểm tra định dạng, cấu hình và thử lại bằng một lần gửi mới.'
 
@@ -220,16 +227,29 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_data(200,(Path(__file__).parent/'web'/assets[path]).read_bytes(),ext[path],headers)
         if not self.trusted(auth=True):return
         if path=='/api/config':
-            issues=[];model='';configured=False
+            issues=[];model='';provider='demo';configured=False
             if not self.server.manager.demo:
                 try:
-                    settings=self.server.manager.settings_loader();model=settings.chat_model
-                    configured=bool(settings.api_key and model)
-                    if not configured:issues.append('Thêm GEMINI_API_KEY và GEMINI_CHAT_MODEL vào .env, sau đó khởi động lại web.')
-                except Exception:issues.append('Không đọc được .env. Kiểm tra cấu hình và thư viện Python.')
-                if not (ROOT/'data/processed/owasp-official').is_dir():issues.append('Chưa thấy kho vector OWASP: data/processed/owasp-official.')
-                if not (ROOT/'data/raw/owasp/official/CheatSheetSeries-master/cheatsheets').is_dir():issues.append('Chưa thấy tài liệu Cheat Sheet Series đã ingest.')
-            return self.send_data(200,{'token':self.server.token,'demo':self.server.manager.demo,'configured':configured or self.server.manager.demo,'model':model,'issues':issues,'formats':FORMATS,'max_bytes':MAX_UPLOAD})
+                    settings=self.server.manager.settings_loader()
+                    provider=settings.resolved_provider;model=settings.active_model
+                    if provider=='ollama':
+                        status=check_ollama(settings)
+                        configured=bool(status['ok'])
+                        if status['error']:issues.append(status['error'])
+                    else:
+                        configured=bool(settings.api_key and model)
+                        if not configured:
+                            issues.append('Đặt LLM_PROVIDER=ollama và OLLAMA_MODEL=qwen2.5:7b trong .env để chạy Ollama local (hoặc cấu hình GEMINI_API_KEY + GEMINI_CHAT_MODEL).')
+                except Exception as exc:
+                    issues.append('Không đọc được .env ('+str(exc)+'). Kiểm tra cấu hình trong .env.')
+                if not self.server.manager.runner:
+                    if not (ROOT/'data/processed/owasp-official/vector_store.meta.json').is_file():
+                        configured=False
+                        issues.append('Chưa thấy kho vector OWASP: data/processed/owasp-official. Hãy chạy start-web.bat hoặc ingest_documents.py.')
+                    if not (ROOT/'data/raw/owasp/official/CheatSheetSeries-master/cheatsheets').is_dir():
+                        configured=False
+                        issues.append('Chưa thấy tài liệu Cheat Sheet Series trong data/raw/owasp/official.')
+            return self.send_data(200,{'token':self.server.token,'demo':self.server.manager.demo,'provider':provider,'configured':configured or self.server.manager.demo,'model':model,'issues':issues,'formats':FORMATS,'max_bytes':MAX_UPLOAD})
         if path=='/api/jobs':return self.send_data(200,self.server.manager.list())
         match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json))?',path)
         if match:

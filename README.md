@@ -8,22 +8,24 @@ Nuclei, sqlmap, Nessus, Nmap hoặc JSON chuẩn hóa của project), giữ nguy
 chứng, phân loại theo **OWASP Top 10:2025** bằng bảng ánh xạ CWE, rồi sinh báo cáo
 **Markdown, JSON và PDF tiếng Việt**.
 
-- Gợi ý khắc phục chỉ lấy từ nguồn OWASP: 2 thẻ đã duyệt trong `cards.json`, hoặc
+- Gợi ý khắc phục chỉ lấy từ nguồn OWASP: 12 thẻ đã duyệt trong `cards.json`, hoặc
   đoạn **trích nguyên văn** từ OWASP Cheat Sheet Series. AI chỉ được **chọn ID**
   nguồn, không được tự viết cách sửa.
-- Ở chế độ đầy đủ, Gemini viết thêm phần diễn giải tiếng Việt. Mỗi ý phải trích
-  nguyên văn từ dữ liệu đầu vào và qua một lượt AI rà soát.
+- Ở chế độ đầy đủ, model AI cục bộ qua **Ollama** (khuyến nghị `qwen2.5:7b` hoặc
+  `qwen2.5:3b`, hỗ trợ tiếng Việt có dấu, chạy offline không cần API key; vẫn hỗ trợ
+  `LLM_PROVIDER=gemini` làm tùy chọn) viết phần diễn giải tiếng Việt. Mỗi ý phải trích
+  nguyên văn từ dữ liệu đầu vào và qua một lượt AI rà soát độc lập.
 
 > Project không chạy scanner, không truy cập hệ thống mục tiêu và không xác minh lỗ
 > hổng. Báo cáo sinh ra là bản nháp, cần người có chuyên môn kiểm tra trước khi dùng.
 
 ## Ba chế độ tạo báo cáo
 
-| Chế độ | Chạy bằng | Cần thêm | Gọi Gemini | Nguồn khắc phục |
+| Chế độ | Chạy bằng | Cần thêm | Gọi AI | Nguồn khắc phục |
 |---|---|---|---|---|
-| `demo` | `scripts/demo.py`, `generate_report.py --mode demo`, `web.py --demo` | Chỉ `reportlab` | Không | 2 thẻ trong `data/raw/owasp/cards.json` (SQLi, XSS), ghép theo CWE |
-| `gemini` (nhánh thẻ) | `generate_report.py --mode gemini` | Index E5 của thẻ (`ingest.py`), API key | 1 lần chọn thẻ mỗi báo cáo, cộng 2 lần diễn giải mỗi bản ghi | Thẻ đã duyệt; Gemini chọn ID thẻ |
-| `owasp` (luồng chính) | `web.py`, `generate_report.py --mode owasp` | Vector store E5 của Cheat Sheet Series, API key | Nhiều lần, xem [Dữ liệu gửi lên Gemini](#dữ-liệu-gửi-lên-gemini) | Trích nguyên văn Cheat Sheet Series; Gemini chọn đoạn và viết diễn giải |
+| `demo` | `scripts/demo.py`, `generate_report.py --mode demo`, `web.py --demo` | Chỉ `reportlab` | Không | 12 thẻ trong `data/raw/owasp/cards.json`, ghép theo CWE |
+| `ollama` / `gemini` (nhánh thẻ) | `generate_report.py --mode ollama` | Index E5 của thẻ (`ingest.py`), Ollama local | 1 lần chọn thẻ mỗi báo cáo, cộng 2 lần diễn giải mỗi bản ghi | Thẻ đã duyệt; AI chọn ID thẻ |
+| `owasp` (luồng chính) | `start-web.bat`, `web.py`, `generate_report.py --mode owasp` | Vector store E5 của Cheat Sheet Series, Ollama local (`qwen2.5:7b`) | Chọn đoạn OWASP + 2 lượt viết/rà soát tiếng Việt mỗi bản ghi + tổng quan | Trích nguyên văn Cheat Sheet Series; Ollama chọn đoạn và viết diễn giải |
 
 Cả ba chế độ dùng chung parser, cổng phạm vi Top 10:2025, khung suy luận CSDL và bộ
 dựng báo cáo, và luôn sinh đủ `report.json`, `report.md`, `report.pdf`. Hai chế độ
@@ -95,12 +97,12 @@ trên. Các lệnh `python ...` bên dưới đều hiểu là Python trong venv
 Project chưa có lockfile. Sau khi cài và chạy ổn, nên lưu
 `python -m pip freeze > requirements-lock.txt` để tái lập thí nghiệm.
 
-Điền `.env`:
+Điền `.env` (mặc định `.env.example` đã cấu hình sẵn Ollama local, không cần chỉnh nếu dùng `qwen2.5:7b`):
 
-1. `GEMINI_API_KEY`: lấy tại https://aistudio.google.com/apikey.
-2. `GEMINI_CHAT_MODEL`: mã model khả dụng trong tài khoản, có hỗ trợ structured
-   output (xem https://ai.google.dev/gemini-api/docs/models). Biến này cố ý để trống
-   để không phụ thuộc vào một alias có thể đổi giữa các lần thí nghiệm.
+1. Cài Ollama từ https://ollama.com/download rồi tải model tiếng Việt:
+   `ollama pull qwen2.5:7b` (hoặc `ollama pull qwen2.5:3b` nếu máy RAM 8 GB / chỉ chạy CPU).
+2. `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`, `OLLAMA_MODEL=qwen2.5:7b`
+   (tùy chọn đám mây: đặt `LLM_PROVIDER=gemini` kèm `GEMINI_API_KEY` và `GEMINI_CHAT_MODEL`).
 3. Giữ `EMBED_MODEL=intfloat/multilingual-e5-small`; nên điền `EMBED_REVISION` bằng
    commit model đã dùng.
 

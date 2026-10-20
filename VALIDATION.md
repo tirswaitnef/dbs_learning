@@ -3,6 +3,36 @@
 File này ghi lại những gì đã thực sự được chạy và những gì chưa. Test pass không
 chứng minh chất lượng của AI.
 
+## Cập nhật 2026-10-20 — tích hợp AI cục bộ qua Ollama (hỗ trợ tiếng Việt, chạy offline)
+
+### Thay đổi
+
+- `src/rag/llm.py`, `src/rag/config.py`: bổ sung `OllamaLLM` gọi trực tiếp HTTP `/api/chat`
+  bằng thư viện chuẩn Python (structured output `format: schema`, `think: false` với fallback
+  cho Ollama bản cũ, tự mở rộng `num_ctx` lên `16384` cho báo cáo lớn, bỏ qua proxy hệ thống
+  trên loopback `127.0.0.1`/`localhost`) và `check_ollama()` kiểm tra `/api/tags`.
+  Đọc `.env` hỗ trợ UTF-8 BOM từ Windows Notepad và nạp nóng không ghi đè `os.environ`.
+- `src/rag/analysis.py`, `src/rag/qa.py`, `src/rag/template_report.py`: kiểm tra `text_vi`
+  tiếng Việt có dấu, chặn rò rỉ ký tự CJK, chuẩn hóa CRLF/khoảng trắng khi đối chiếu trích dẫn
+  nguyên văn, giữ tên tài khoản trong `mysql-empty-password`, cho phép tên kỹ thuật camelCase
+  ASCII (`MySQL`, `MariaDB`, `HttpOnly`), và thử tự sửa 1 lần trước khi đánh dấu `rejected_output`.
+- `src/rag/web_server.py`, `src/rag/web/`, `start-web.bat`, `.env.example`: mặc định chạy
+  `LLM_PROVIDER=ollama` (`OLLAMA_MODEL=qwen2.5:7b`), tự tạo `.env` và kho vector
+  `data/processed/owasp-official` ở lần khởi động đầu tiên.
+
+### Đã chạy
+
+- `pytest`: **121 passed, 86 subtests passed** (bao gồm `tests/test_ollama.py` chạy mock
+  HTTP server Ollama thật trên loopback cho `/api/tags`, `/api/chat`, `QA`, `Web UI` và xuất PDF).
+- Đã kiểm tra xuất PDF chế độ `--demo` thực tế trên Windows với dữ liệu quét lab DVWA/MariaDB
+  (xác nhận font tiếng Việt, `db_scope`, ánh xạ `CWE-1393` → `A07:2025` và thẻ OWASP CSDL).
+
+### Chưa chạy
+
+- **Chưa chạy suy luận model Ollama thật (`qwen2.5:7b` / `qwen2.5:3b`) trên máy Windows của người dùng**
+  để ghi nhận chất lượng văn phong tiếng Việt thực tế và tỷ lệ `ai_reviewed` / `prose_check`
+  trên bộ dữ liệu quét lab.
+
 ## Cập nhật 2026-10-15 — bản 0.12.0 (suy luận theo đầu vào: khung CSDL và kiểm tra trùng lặp)
 
 ### Thay đổi

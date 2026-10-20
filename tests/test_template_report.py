@@ -15,6 +15,7 @@ from rag.template_report import readable_vi, render_template_pdf
 class TemplateReportTests(unittest.TestCase):
     def test_readable_vi(self):
         self.assertTrue(readable_vi('Cảnh báo từ bộ quét ghi nhận mức độ high và CWE-89 tại FAKE-01.'))
+        self.assertTrue(readable_vi('Dịch vụ MySQL và MariaDB mở cổng 3306 cùng HttpOnly chưa bật.'))
         self.assertFalse(readable_vi('Endpoint quản trỈ trả HTTP 200'))          # capital mid-word
         self.assertFalse(readable_vi('Bằng chứng đěợc ghi nhận'))                 # non-Vietnamese letter
         self.assertFalse(readable_vi('Cong cu kiem thu ghi nhan canh bao muc do medium tai vi tri'))  # no diacritics

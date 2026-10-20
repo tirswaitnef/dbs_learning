@@ -8,7 +8,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Generate an evidence-first OWASP report")
     p.add_argument("--input", required=True)
     p.add_argument("--format", choices=SUPPORTED_FORMATS, default="normalized")
-    p.add_argument("--mode", choices=["demo", "gemini", "owasp"], default="demo")
+    p.add_argument("--mode", choices=["demo", "ollama", "gemini", "owasp"], default="demo")
     p.add_argument("--cards", default=ROOT / "data/raw/owasp/cards.json")
     p.add_argument("--index", default=ROOT / "data/processed/e5")
     p.add_argument("--output", default=ROOT / "data/reports/latest")

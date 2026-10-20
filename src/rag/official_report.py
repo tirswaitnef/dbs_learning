@@ -1,7 +1,8 @@
 """Top10-gated report using an existing document-v1 store.
 
-Gemini selects whole source blocks, not free-form remediation. Literal copying
-prevents invented advice but does not prove applicability or source authenticity.
+The configured LLM (local Ollama or Gemini) selects whole source blocks, not
+free-form remediation. Literal copying prevents invented advice but does not
+prove applicability or source authenticity.
 """
 import hashlib
 import json
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .db_scope import attach_db_scope
-from .llm import GeminiLLM
+from .llm import GeminiLLM, OllamaLLM
 from .loader import load_documents
 from .report_builder import write_report, guidance_reason
 from .scanner_rules import cheatsheets_for
@@ -113,7 +114,7 @@ def select_sources(finding, candidates, settings, *, llm=None):
     if classify(finding)['status']!='in_scope' or not finding.evidence or not candidates:return [],'not_requested'
     prompt=json.dumps({'finding':{'title':finding.title,'cwe':cwe_label(finding),'has_evidence':True,
                                   'top10':classify(finding)['categories']},'candidates':candidates},ensure_ascii=False)
-    model=llm or GeminiLLM(settings)
+    model=llm or (OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings))
     data=json.loads(model.generate(prompt,system=SYSTEM,schema=SELECT_SCHEMA))
     if not isinstance(data,dict) or set(data)!={'source_ids'}:raise ValueError('Invalid source selection schema')
     ids=data['source_ids'];available={x['source_id']:x for x in candidates}
@@ -133,40 +134,54 @@ def guidance_from_source(source, cwe):
 
 
 def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None):
-    rows=[];calls=0
+    provider=settings.resolved_provider
+    prefix='ollama' if provider=='ollama' else 'gemini'
+    actor='AI cục bộ (Ollama)' if provider=='ollama' else 'Gemini'
+    rows=[];calls=0;selection_cache={}
     for finding in findings:
         scope=classify(finding)
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
         if scope['status']=='in_scope' and finding.evidence:
             query=f"{' '.join(finding_cwes(finding))} {finding.title[:240]} prevention remediation security best practices"
-            results=get_results(query)
-            candidates=source_candidates(results,documents,preferred_sources(finding))
-            row['retrieval']=candidates
-            row['status']='no_supported_guidance'
-            if candidates:
-                calls+=1
-                try:
-                    selected,state=select_sources(finding,candidates,settings,llm=llm)
-                except (ValueError,TypeError,KeyError):
-                    selected=[];state='rejected_output'
-                except RuntimeError:
-                    selected=[];state='api_error'
-                row['generation_status']=state
-                row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
-                if selected:row['status']='guidance_available'
+            cache_key=(query,finding.title,cwe_label(finding),tuple(sorted(preferred_sources(finding))))
+            if cache_key in selection_cache:
+                candidates,selected,state=selection_cache[cache_key]
+                row['retrieval']=candidates
+                row['status']='guidance_available' if selected else 'no_supported_guidance'
+                if candidates:
+                    row['generation_status']=state
+                    row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
+            else:
+                results=get_results(query)
+                candidates=source_candidates(results,documents,preferred_sources(finding))
+                row['retrieval']=candidates
+                row['status']='no_supported_guidance'
+                selected=[];state='not_requested'
+                if candidates:
+                    calls+=1
+                    try:
+                        selected,state=select_sources(finding,candidates,settings,llm=llm)
+                    except (ValueError,TypeError,KeyError):
+                        selected=[];state='rejected_output'
+                    except RuntimeError:
+                        selected=[];state='api_error'
+                    row['generation_status']=state
+                    row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
+                    if selected:row['status']='guidance_available'
+                selection_cache[cache_key]=(candidates,selected,state)
         elif scope['status']=='in_scope':row['status']='missing_evidence'
         row['analysis_vi']=(f"Kiểm thử cung cấp {len(finding.evidence)} mục bằng chứng. "
                             'Giữ nguyên mức độ và phân loại từ đầu vào; chưa xác minh độc lập lỗ hổng. '+scope['reason'])
         row['guidance_reason']='' if row['guidance'] else guidance_reason(row)
         rows.append(row)
     report={'schema_version':1,'generated_at':datetime.now(timezone.utc).isoformat(),
-            'mode':'gemini-top10-extractive','model':settings.chat_model,'generation_calls':calls,
+            'mode':f'{prefix}-top10-extractive','model':settings.model_label,'generation_calls':calls,
             'scan_sha256':scan_sha256,'knowledge_sha256':corpus_sha256,'findings':rows,
             'limitations':[
                 'Chỉ đề xuất cho CWE có ánh xạ trực tiếp trong OWASP Top 10:2025 và có bằng chứng đầu vào.',
                 'Phân tích bằng chứng chỉ kiểm tra sự hiện diện; chưa xác minh true/false positive hoặc mức độ rủi ro.',
-                'Gemini chỉ chọn ID đoạn gốc; không tự viết, dịch hoặc bổ sung hướng dẫn khắc phục.',
+                f'{actor} chỉ chọn ID đoạn gốc; không tự viết, dịch hoặc bổ sung hướng dẫn khắc phục.',
                 'Trích nguyên văn không chứng minh hướng dẫn phù hợp. Cần người kiểm tra trước khi áp dụng.',
                 'Kho Cheat Sheet Series do người dùng tải từ nguồn chính thức. Hash kiểm tra tính nhất quán với lúc ingest, không xác thực độc lập nguồn tải.',
                 'Nguồn hướng dẫn: OWASP Cheat Sheet Series, CC BY-SA 4.0; https://creativecommons.org/licenses/by-sa/4.0/. Trích đoạn giữ nguyên Markdown gốc.',
