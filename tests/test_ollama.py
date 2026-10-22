@@ -507,13 +507,22 @@ class OllamaIntegrationTests(unittest.TestCase):
                 pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
             self.assertTrue(pdf_file.read_bytes().startswith(b"%PDF-"))
             full_pdf_text = __import__("html").unescape("\n".join(rendered_paragraphs))
-            self.assertIn("giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào", full_pdf_text)
+            self.assertIn("8.1 — CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", full_pdf_text)
             self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
-            # All 6 pentest report polish guarantees:
             for forbidden in ("SHA-256", "Model AI", "ollama/qwen3:4b", "AUDITNOTE |", "scanner_alert", "[K1]", "[C1]", "[F1]"):
                 self.assertNotIn(forbidden, full_pdf_text)
-            self.assertIn("Tác động đối với hoạt động & nghiệp vụ", full_pdf_text)
-            self.assertIn("W-001:", full_pdf_text)
+            for expected_sec in (
+                "1. Tóm tắt điều hành",
+                "2. Phạm vi và Phương pháp kiểm thử",
+                "3. Tổng hợp phát hiện theo Danh mục OWASP",
+                "4. Chi tiết các phát hiện",
+                "5. Phân loại mức độ rủi ro",
+                "6. Khuyến nghị khắc phục",
+                "7. Phụ lục",
+                "W-001:",
+                "— Kết thúc Báo cáo —",
+            ):
+                self.assertIn(expected_sec, full_pdf_text)
 
     def test_pentest_polish_xss_decision_and_public_ip_redaction(self):
         from rag.parsers.native import parse_sqlmap_log
@@ -714,12 +723,34 @@ class OllamaIntegrationTests(unittest.TestCase):
             self.assertEqual([m["id"] for m in e0["http_exchanges"]], ["#239", "#5330"])
             self.assertIn("#1008", e0["excluded_http_note"])
             self.assertIn("Submit", e0["excluded_http_note"])
-            # 6. Retest / Verification checklist included
+            # 6. Strict template compliance in both Vietnamese (`vi`) and English (`en`), plus contextual vs strict CVSS
             self.assertGreaterEqual(len(e0["retest_steps"]), 4)
-            md = render_pentest_markdown(rep)
-            self.assertIn("Retest / Verification", md)
-            pdf_out = render_pdf(rep, Path(tmp) / "out.pdf")
+            md_vi = render_pentest_markdown(rep)
+            self.assertIn("## 1. Tóm tắt điều hành", md_vi)
+            self.assertIn("## 4. Chi tiết các phát hiện", md_vi)
+            self.assertIn("8.1 — CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", md_vi)
+            self.assertIn("— Kết thúc Báo cáo —", md_vi)
+            self.assertNotIn("Retest / Verification", md_vi)
+            pdf_out = render_pdf(rep, Path(tmp) / "out_vi.pdf")
             self.assertTrue(pdf_out.is_file() and pdf_out.stat().st_size > 5000)
+
+            rep_en = {**rep, "report_metadata": {"report_lang": "en", "client": "ACME Corp", "prepared_by": "Student Tester"}}
+            md_en = render_pentest_markdown(rep_en)
+            for heading in (
+                "# Web Application Penetration Testing Report",
+                "## Table of Contents",
+                "## 1. Executive Summary",
+                "## 2. Scope and Methodology",
+                "## 3. Findings Summary by OWASP Category",
+                "## 4. Detailed Findings",
+                "## 5. Risk Ratings",
+                "## 6. Remediation Recommendations",
+                "## 7. Appendix",
+                "— End of Report —",
+            ):
+                self.assertIn(heading, md_en)
+            pdf_en = render_pdf(rep_en, Path(tmp) / "out_en.pdf")
+            self.assertTrue(pdf_en.is_file() and pdf_en.stat().st_size > 5000)
 
     def test_scan_hash_ai_cache_reuses_analysis_on_rerender_and_skips_dropped_observations(self):
         import numpy as np
