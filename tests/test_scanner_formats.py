@@ -202,18 +202,28 @@ class ScannerFormatTests(unittest.TestCase):
         complete_pentest_log = (
             "Target URL: http://198.51.100.42/vulnerabilities/sqli/?id=1&Submit=Submit\n"
             "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=[REDACTED]; security=low)\n"
-            + synthetic_full
-            + "current user: 'root@localhost'\n"
+            "CVSS: 8.1 (High) | CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N\n"
+            + synthetic_full.replace("[y/N] N", "[y/N] Y").replace("level (1) and risk (1)", "level (5) and risk (3)")
+            + "current user: 'app@localhost'\n"
             + "current database: 'dvwa'\n"
-            + "current user is DBA: True\n"
+            + "current user is DBA: False\n"
             + "Database: dvwa\n[2 tables]\n+-----------+\n| guestbook |\n| users     |\n+-----------+\n"
+            + "\nHTTP request [#11]:\nGET /vulnerabilities/sqli/?id=1%27%20OR%20NOT%205290%3D5290%23&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\nCookie: PHPSESSID=[REDACTED]; security=low\n\nHTTP response [#11] (200 OK):\nServer: Apache/2.4.25 (Debian)\n\n<pre>ID: 1' OR NOT 5290=5290#<br />First name: admin<br />Surname: admin</pre>\n"
+            + "\nHTTP request [#24]:\nGET /vulnerabilities/sqli/?id=1%27%20AND%20EXTRACTVALUE(2172,CONCAT(0x5c,0x71787a7a71))--%20cWfP&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\nCookie: PHPSESSID=[REDACTED]; security=low\n\nHTTP response [#24] (200 OK):\nServer: Apache/2.4.25 (Debian)\n\n<pre>XPATH syntax error: '\\qxzzq1qzxbbq'</pre>\n"
+            + "\nHTTP request [#38]:\nGET /vulnerabilities/sqli/?id=1%27%20AND%20(SELECT%201156%20FROM%20(SELECT(SLEEP(5)))VtpK)--%20pXlg&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\nCookie: PHPSESSID=[REDACTED]; security=low\n\nHTTP response [#38] (200 OK):\nServer: Apache/2.4.25 (Debian)\nX-Observed-Delay: >=5000ms\n\n<pre>ID: 1' AND (SELECT 1156 FROM (SELECT(SLEEP(5)))VtpK)-- pXlg<br />First name: admin</pre>\n"
+            + "\nHTTP request [#52]:\nGET /vulnerabilities/sqli/?id=1%27%20UNION%20ALL%20SELECT%20CONCAT(0x71787a7a71),NULL%23&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\nCookie: PHPSESSID=[REDACTED]; security=low\n\nHTTP response [#52] (200 OK):\nServer: Apache/2.4.25 (Debian)\n\n<pre>First name: qxzzqGFxZnmIu...qzxbbq</pre>\n"
         )
         full_parsed = parse_sqlmap_log(complete_pentest_log, "pentest_full.log")
+        self.assertEqual(full_parsed[0].severity, "high")
+        self.assertEqual(full_parsed[0].details["cvss_score"], "8.1")
+        self.assertEqual(full_parsed[0].details["cvss_vector"], "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N")
+        self.assertEqual(len(full_parsed[0].details["http_messages"]), 4)
+        self.assertTrue(full_parsed[0].details["scan_telemetry"]["tested_all_parameters"])
         full_ctx = extract_scan_context({"findings": [asdict(f) for f in full_parsed], "input_format": "sqlmap-log"})
         self.assertEqual(full_ctx["repro_gaps"], [])
-        self.assertIn("root@localhost", full_ctx["db_identity"])
+        self.assertIn("app@localhost", full_ctx["db_identity"])
         self.assertEqual(full_ctx["tables_by_db"], {"dvwa": ["guestbook", "users"]})
-        self.assertIn("PHPSESSID=[REDACTED]", evidence_profile(asdict(full_parsed[0]))["note_vi"])
+        self.assertIn("8.1", evidence_profile(asdict(full_parsed[0]))["note_vi"])
 
         # Multi-file bundle (Nmap DB port + mysql-empty-password + sqlmap DB exploitation) -> single unified PDF report
         import base64

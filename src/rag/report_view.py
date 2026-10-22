@@ -113,11 +113,16 @@ def evidence_profile(row):
         if sys_dbs:schema_parts.append("schema hệ thống '"+', '.join(sys_dbs)+"'")
         tbl_cnt=sum(len(v) for v in (tel.get('tables_by_db') or {}).values())
         tbl_suffix=f", {tbl_cnt} bảng" if tbl_cnt else ""
-        auth_tail=(f"giữ 'unknown' ở trường gốc vì công cụ không tự xuất điểm CVSS (ngữ cảnh xác thực ghi nhận: {tel['auth_context']})."
-                   if tel.get('auth_context')
-                   else "giữ 'unknown' ở trường gốc vì công cụ không xuất CVSS và thiếu ngữ cảnh xác thực (PR:N/PR:L).")
+        http_cnt=len(d.get('http_messages') or [])
+        http_suffix=f"; kèm {http_cnt} cặp HTTP Request/Response" if http_cnt else ""
+        if d.get('cvss_score'):
+            auth_tail=f"mức CVSS được khai báo kèm ngữ cảnh xác thực: {d['cvss_score']}"+(f" ({d['cvss_vector']})" if d.get('cvss_vector') else "")+"."
+        elif tel.get('auth_context'):
+            auth_tail=f"giữ 'unknown' ở trường gốc vì công cụ không tự xuất điểm CVSS (ngữ cảnh xác thực ghi nhận: {tel['auth_context']})."
+        else:
+            auth_tail="giữ 'unknown' ở trường gốc vì công cụ không xuất CVSS và thiếu ngữ cảnh xác thực (PR:N/PR:L)."
         return {'tier':'exploited_in_log',
-                'label_vi':f"Đã khai thác trích xuất dữ liệu trong log (1 điểm tiêm / {len(techs)} kỹ thuật; đọc {len(dbs)} schema{tbl_suffix})",
+                'label_vi':f"Đã khai thác trích xuất dữ liệu trong log (1 điểm tiêm / {len(techs)} kỹ thuật; đọc {len(dbs)} schema{tbl_suffix}{http_suffix})",
                 'note_vi':(f"Log chứng minh khai thác thành công bằng {len(techs)} kỹ thuật ({', '.join(techs)}) và đã liệt kê {', '.join(schema_parts)}. "
                            "Nhóm lỗi SQL Injection trích xuất được dữ liệu thường thuộc mức Cao/Nghiêm trọng trong thực tế; "+auth_tail)}
     if techs:
@@ -163,6 +168,8 @@ def extract_scan_context(report, scan_path=None, format_=None):
         if tel.get('not_string'):parts.append(f'chuỗi đối chiếu boolean: --not-string="{tel["not_string"]}"')
         if tel.get('stopped_after_first_vulnerable_param'):
             parts.append('dừng kiểm thử các tham số còn lại sau phát hiện đầu tiên ([y/N] N)')
+        elif tel.get('tested_all_parameters'):
+            parts.append('đã mở rộng kiểm thử các tham số còn lại ([y/N] Y)')
         if tel.get('cli_hint'):parts.append(f"lệnh ghi nhận: {tel['cli_hint']}")
         if tel.get('auth_context') and not ctx.get('auth_context'):
             ctx['auth_context']=tel['auth_context']
@@ -271,6 +278,8 @@ def context_source_text(row):
     if tel.get('reflection_filtered'):t_bits.append("lọc giá trị phản xạ")
     if tel.get('not_string'):t_bits.append(f'--not-string="{tel["not_string"]}"')
     if tel.get('stopped_after_first_vulnerable_param'):t_bits.append("bỏ qua kiểm thử các tham số khác ([y/N] N)")
+    elif tel.get('tested_all_parameters'):t_bits.append("đã kiểm thử mở rộng toàn bộ tham số ([y/N] Y)")
+    if d.get('http_messages'):t_bits.append(f"đính kèm {len(d['http_messages'])} cặp giao dịch HTTP Request/Response thực tế")
     if t_bits:parts.append("Thông số phiên quét: "+"; ".join(t_bits)+".")
     if 'sqlmap output log' in str(row.get('location','')) or 'not established' in str(row.get('location','')):
         parts.append("Giới hạn tái hiện: log stdout không lưu URL đầy đủ, cookie xác thực phiên hay quyền tài khoản CSDL hiện tại.")
@@ -356,6 +365,7 @@ def technical_fields(row):
     d=row.get('details') or {};raw=d.get('raw_result') or {};inst=d.get('raw_instance') or {}
     messages=d.get('http_messages') or []
     requests=[m.get('request','') for m in messages if isinstance(m,dict) and m.get('request')]
+    exchanges=[{'request':m.get('request',''),'response':m.get('response','')} for m in messages if isinstance(m,dict) and (m.get('request') or m.get('response'))]
     if isinstance(raw,dict) and raw.get('request'):requests.append(str(raw['request']))
     method=d.get('method') or inst.get('method') if isinstance(inst,dict) else d.get('method')
     if not method and requests:
@@ -365,7 +375,7 @@ def technical_fields(row):
             'cvss':str(d.get('cvss_score')) if d.get('cvss_score') not in (None,'') else MISSING,
             'cvss_vector':str(d.get('cvss_vector') or MISSING),'confidence':str(d.get('confidence') or MISSING),
             'description':str(d.get('description') or (d.get('raw_alert') or {}).get('desc') or ''),
-            'requests':requests}
+            'requests':requests,'exchanges':exchanges}
 
 
 def cwe_origin(row):

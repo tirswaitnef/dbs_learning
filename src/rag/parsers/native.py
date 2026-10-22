@@ -282,6 +282,8 @@ def _sqlmap_telemetry(clean):
         telemetry["not_string"] = not_str.group(1)
     if re.search(r"is vulnerable\. Do you want to keep testing the others \(if any\)\?\s*\[y/N\]\s*N", clean):
         telemetry["stopped_after_first_vulnerable_param"] = True
+    elif re.search(r"is vulnerable\. Do you want to keep testing the others \(if any\)\?\s*\[y/N\]\s*Y", clean, re.I):
+        telemetry["tested_all_parameters"] = True
     os_m = re.search(r"(?im)^\s*web server operating system:\s*(.+?)\s*$", clean)
     if os_m:
         telemetry["os_banner"] = os_m.group(1).strip()
@@ -320,6 +322,50 @@ def _sqlmap_telemetry(clean):
     return telemetry
 
 
+def _sqlmap_http_traffic(clean):
+    """Extract raw wire-level HTTP request/response pairs recorded via sqlmap -t traffic capture."""
+    messages = []
+    pattern = re.compile(
+        r"HTTP request \[#(\d+)\]:\n(.*?)\n+HTTP response \[#\1\] \(([^\n)]*)\):\n(.*?)(?=\nHTTP request \[#\d+\]:|\n={20,}|\Z)",
+        re.S,
+    )
+    for m in pattern.finditer(clean):
+        req_id, req_raw, status_info, resp_raw = m.group(1), m.group(2).strip(), m.group(3).strip(), m.group(4).strip()
+        if not req_raw:
+            continue
+        resp_full = resp_raw if resp_raw.startswith("HTTP/") else f"HTTP/1.1 {status_info}\n{resp_raw}"
+        messages.append({
+            "id": f"#{req_id}",
+            "request": req_raw[:2400],
+            "response": resp_full[:2400],
+        })
+        if len(messages) >= 8:
+            break
+    return messages
+
+
+def _sqlmap_cvss_header(clean):
+    """Parse explicit analyst-supplied CVSS v3.x score/vector header when present; never compute or guess."""
+    header = clean[:1500]
+    vec_m = re.search(r"(?im)^\s*(?:Analyst\s+)?CVSS[^:\n]*:.*?((?:CVSS:3\.[01]/)?AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH])\b", header)
+    score_m = re.search(r"(?im)^\s*(?:Analyst\s+)?CVSS[^:\n]*:\s*([0-9]+\.[0-9])\s*(?:\(([A-Za-z]+)\))?", header)
+    if not vec_m and not score_m:
+        return "unknown", "", ""
+    vec = vec_m.group(1).strip() if vec_m else ""
+    if vec and not vec.startswith("CVSS:"):
+        vec = "CVSS:3.1/" + vec
+    score = score_m.group(1).strip() if score_m else ""
+    sev = "unknown"
+    if score_m and score_m.group(2):
+        cand = score_m.group(2).strip().lower()
+        if cand in {"critical", "high", "medium", "low", "informational"}:
+            sev = cand
+    if sev == "unknown" and score:
+        val = float(score)
+        sev = "critical" if val >= 9.0 else "high" if val >= 7.0 else "medium" if val >= 4.0 else "low" if val > 0 else "informational"
+    return sev, score, vec
+
+
 def parse_sqlmap_log(content, source):
     """Confirmed sqlmap injection-point blocks, plus explicit heuristic XSS observations when present."""
     clean = re.sub(r"\x1b\[[0-9;]*m", "", content).replace("\r\n", "\n").replace("\r", "\n")
@@ -330,6 +376,8 @@ def parse_sqlmap_log(content, source):
     target_url = re.search(r"(?im)^\s*(?:Target\s+)?URL:\s*(https?://\S+)\s*$", clean)
     output_host = re.search(r"sqlmap[/\\]output[/\\]([A-Za-z0-9._-]+)", clean, re.I)
     telemetry = _sqlmap_telemetry(clean)
+    http_messages = _sqlmap_http_traffic(clean)
+    cvss_sev, cvss_score, cvss_vector = _sqlmap_cvss_header(clean)
     meta_lines = []
     for label_re in (
         r"(?im)^\s*web server operating system:\s*.+$",
@@ -378,7 +426,7 @@ def parse_sqlmap_log(content, source):
         place = match.group(2).strip()
         location = _location_for(match.group(1), place)
         http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
-        findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", "unknown",
+        findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", cvss_sev,
                                 location,
                                 (block.rstrip() + post_text,), "sqlmap", f"{source}#line={line_number}",
                                 details={"parameter": match.group(1), "place": place,
@@ -386,8 +434,15 @@ def parse_sqlmap_log(content, source):
                                          "techniques": techniques,
                                          **({"dbms": dbms.group(1)} if dbms else {}),
                                          **({"scan_telemetry": telemetry} if telemetry else {}),
+                                         **({"cvss_score": cvss_score} if cvss_score else {}),
+                                         **({"cvss_vector": cvss_vector} if cvss_vector else {}),
+                                         **({"http_messages": http_messages} if http_messages else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
-                                         "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
+                                         "evidence_type": (
+                                             "scanner finding block corroborated by captured HTTP request/response traffic"
+                                             if http_messages
+                                             else "scanner finding block, not independent raw HTTP confirmation"
+                                         )}))
     negative_end = bool(re.search(r"all tested parameters do not appear to be injectable", clean, re.I))
     if not findings and not negative_end:
         raise ValueError("No recognized final sqlmap finding/negative result; heuristic messages are insufficient")

@@ -146,7 +146,12 @@ def render_pdf(report, path):
         add('Bằng chứng kiểm thử gốc',sub)
         if not row.get('evidence'):add('Chưa có bằng chứng đính kèm.')
         for i,item in enumerate(row.get('evidence',[]),1):evidence(f"[E{i}]\n{item}",mono=True)
-        if tech['requests']:
+        if tech.get('exchanges') and any(ex.get('response') for ex in tech['exchanges']):
+            add('Giao dịch HTTP Request / Response thực tế (Traffic Capture)',sub)
+            for idx_ex,ex in enumerate(tech['exchanges'][:4],1):
+                if ex.get('request'):evidence(f"[HTTP Request #{idx_ex}]\n{ex['request']}",mono=True)
+                if ex.get('response'):evidence(f"[HTTP Response #{idx_ex}]\n{ex['response']}",mono=True)
+        elif tech['requests']:
             add('HTTP request từ đầu vào',sub)
             for item in tech['requests']:evidence(item,mono=True)
         add('Khắc phục: '+('Xem hướng dẫn đa lớp tại mục 6, mã '+row['id']+'.' if row.get('guidance') else guidance_reason(row)),small)
