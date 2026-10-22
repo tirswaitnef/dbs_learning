@@ -25,18 +25,29 @@ RULE_ENGINES = {'nessus-10481': 'MySQL/MariaDB', 'nessus-10483': 'PostgreSQL',
                 'nessus-63347': 'PostgreSQL', 'nessus-55786': 'Oracle Database',
                 'nessus-64784': 'Microsoft SQL Server', 'nessus-73756': 'Microsoft SQL Server',
                 'nmap-mysql-empty-password': 'MySQL/MariaDB',
-                'nmap-ms-sql-empty-password': 'Microsoft SQL Server'}
+                'nmap-ms-sql-empty-password': 'Microsoft SQL Server',
+                'nmap-mysql-brute': 'MySQL/MariaDB',
+                'nmap-pgsql-brute': 'PostgreSQL',
+                'nmap-ms-sql-brute': 'Microsoft SQL Server',
+                'nmap-mongodb-brute': 'MongoDB',
+                'nmap-redis-brute': 'Redis',
+                'nmap-mongodb-unauth': 'MongoDB',
+                'nmap-redis-unauth': 'Redis',
+                'nmap-mysql-auth-bypass': 'MySQL/MariaDB'}
 # Control at stake, keyed by the CWE that the tool or a project rule supplied.
 CONTROLS = {'CWE-89': ('query_handling', 'Xử lý truy vấn (SQL injection)'),
             'CWE-564': ('query_handling', 'Xử lý truy vấn (Hibernate injection)'),
             'CWE-943': ('query_handling', 'Xử lý truy vấn (NoSQL injection)'),
             'CWE-1393': ('authentication', 'Xác thực / mật khẩu mặc định'),
             'CWE-306': ('authentication', 'Xác thực bắt buộc'),
+            'CWE-287': ('authentication', 'Xác thực không đúng cách'),
             'CWE-521': ('authentication', 'Chính sách mật khẩu'),
             'CWE-798': ('credentials', 'Thông tin đăng nhập hard-code'),
             'CWE-1104': ('patching', 'Phiên bản / bản vá bảo mật'),
+            'CWE-295': ('encryption', 'Xác thực chứng chỉ TLS không hợp lệ'),
             'CWE-311': ('encryption', 'Thiếu mã hoá dữ liệu lưu trữ'),
-            'CWE-319': ('encryption', 'Truyền dữ liệu không mã hoá')}
+            'CWE-319': ('encryption', 'Truyền dữ liệu không mã hoá'),
+            'CWE-327': ('encryption', 'Thuật toán / bộ mã mật mã yếu')}
 SERVER_TOOLS = {'nessus', 'nmap'}
 # Query handling is code that builds a query, so the finding lives at the application
 # layer even when the tool name is unknown; the other buckets are server configuration.

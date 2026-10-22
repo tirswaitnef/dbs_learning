@@ -211,7 +211,7 @@ def parse_nessus(content, source):
 
 def nse_finding(rule, script, finding_id, location, source_ref, extra):
     """Finding for an NSE script whose output matches a project rule. Nmap gives no severity."""
-    output = script.get("output", "").strip()
+    output = _nmap_script_full_output(script).strip()
     return Finding(finding_id, f"{rule['title']} (Nmap {rule['script_id']})", rule["cwe"], "unknown", location,
                    (f"NSE {rule['script_id']}: {output}",), "Nmap", source_ref,
                    details={"rule_id": rule["script_id"], **extra,
@@ -224,6 +224,18 @@ def _sanitize_cli(text_value):
     return re.sub(r'[A-Za-z]:\\Users\\[^\\\s"\']+', r'C:\\Users\\[REDACTED]', text_value)
 
 
+def _nmap_script_full_output(script_el):
+    out = script_el.get("output", "") or ""
+    if out.strip():
+        return out
+    parts = []
+    for el in script_el.iter():
+        if el.tag == "elem" and el.text and el.text.strip():
+            key = el.get("key")
+            parts.append(f"{key}: {el.text.strip()}" if key else el.text.strip())
+    return "\n".join(parts)
+
+
 def parse_nmap(content, source):
     root = safe_xml(content, "nmaprun")
     nmap_meta = {}
@@ -231,6 +243,9 @@ def parse_nmap(content, source):
         nmap_meta["tool_version"] = root.get("version").strip()
     if root.get("startstr"):
         nmap_meta["scan_start"] = root.get("startstr").strip()
+    finished_el = root.find("runstats/finished")
+    if finished_el is not None and finished_el.get("timestr"):
+        nmap_meta["scan_end"] = finished_el.get("timestr").strip()
     if root.get("args"):
         nmap_meta["cli_hint"] = _sanitize_cli(root.get("args").strip())[:300]
     findings = []
@@ -243,11 +258,25 @@ def parse_nmap(content, source):
                 continue
             service_details = dict(service.attrib) if service is not None else {}
             observation = f"port_state={state}; service={json.dumps(service_details, ensure_ascii=False)}"
-            scripts = [{"id": s.get("id"), "output": s.get("output", ""),
-                        "raw_xml": ET.tostring(s, encoding="unicode")} for s in port.findall("script")]
+            scripts = []
+            port_dbs = []
+            port_users = []
+            for s in port.findall("script"):
+                sid = s.get("id")
+                sout = _nmap_script_full_output(s)
+                scripts.append({"id": sid, "output": sout, "raw_xml": ET.tostring(s, encoding="unicode")})
+                if sid == "mysql-databases" and sout:
+                    port_dbs.extend([ln.strip() for ln in sout.splitlines() if ln.strip() and not ln.strip().lower().startswith("error")])
+                elif sid == "mysql-users" and sout:
+                    port_users.extend([ln.strip() for ln in sout.splitlines() if ln.strip() and not ln.strip().lower().startswith("error")])
+            port_meta = dict(nmap_meta)
+            if port_dbs:
+                port_meta["databases"] = port_dbs[:30]
+            if port_users:
+                port_meta["current_user"] = ", ".join(port_users[:8])
             location = f"{address}:{port.get('portid')}/{port.get('protocol')}"
             obs_details = {"state": state, "service": service_details, "scripts": scripts,
-                           **({"scan_telemetry": nmap_meta} if nmap_meta else {}),
+                           **({"scan_telemetry": port_meta} if port_meta else {}),
                            "raw_xml": ET.tostring(port, encoding="unicode")}
             findings.append(Finding(f"NMAP-{hi}-{pi}", f"Service observation: {service_details.get('name', 'unknown')}",
                                     "unknown", "informational", location,
@@ -256,10 +285,11 @@ def parse_nmap(content, source):
                                     details=obs_details))
             # The port record stays an observation; a script result that matches a rule is a finding of its own.
             for si, script in enumerate(port.findall("script")):
-                rule = nmap_rule(script.get("id"), script.get("output", ""))
+                sout = _nmap_script_full_output(script)
+                rule = nmap_rule(script.get("id"), sout)
                 if rule:
                     extra = {"state": state, "service": service_details,
-                             **({"scan_telemetry": nmap_meta} if nmap_meta else {})}
+                             **({"scan_telemetry": port_meta} if port_meta else {})}
                     findings.append(nse_finding(rule, script, f"NMAP-{hi}-{pi}-S{si}", location,
                                                 f"{source}#/host[{hi}]/ports/port[{pi}]/script[{si}]",
                                                 extra))

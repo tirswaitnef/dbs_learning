@@ -25,8 +25,9 @@ MAX_UPLOAD = 10 * 1024 * 1024
 MAX_BUNDLE_BODY = 15 * 1024 * 1024
 TERMINAL = {'completed', 'partial', 'failed'}
 FORMATS = {
+    'pentest-report': 'Báo cáo Pentest · PDF/MD/TXT',
     'normalized': 'JSON chuẩn hóa',
-    'zap': 'OWASP ZAP · JSON',
+    'zap': 'OWASP ZAP · JSON/XML',
     'burp': 'Burp Suite · XML',
     'nuclei': 'Nuclei · JSONL',
     'sqlmap-log': 'sqlmap · log',
@@ -40,9 +41,10 @@ def now():
 
 
 def detect_format(path):
-    raw = Path(path).read_bytes()
+    p = Path(path)
+    raw = p.read_bytes()
     if raw.startswith(b'%PDF'):
-        raise ValueError('PDF đầu vào chưa được hỗ trợ. Hãy xuất JSON, XML, JSONL hoặc log từ công cụ; PDF là báo cáo đầu ra.')
+        return 'pentest-report'
     text = decode_text(raw, errors='replace').lstrip()
     try:
         data = json.loads(text)
@@ -55,7 +57,12 @@ def detect_format(path):
                 return 'nuclei'
     except ValueError:
         pass
-    for root, fmt in [('issues', 'burp'), ('NessusClientData_v2', 'nessus'), ('nmaprun', 'nmap')]:
+    for root, fmt in [
+        ('OWASPZAPReport', 'zap'),
+        ('issues', 'burp'),
+        ('NessusClientData_v2', 'nessus'),
+        ('nmaprun', 'nmap'),
+    ]:
         if re.search(r'<' + root + r'(?:\s|>)', text[:4096]):
             return fmt
     try:
@@ -66,7 +73,12 @@ def detect_format(path):
         pass
     if re.search(r'(?m)^Parameter:\s*.+\(.+\)\s*$', text) or 'all tested parameters do not appear to be injectable' in text.lower():
         return 'sqlmap-log'
-    raise ValueError('Chưa nhận diện được định dạng. Chọn đúng công cụ trong ô Định dạng hoặc dùng JSON chuẩn hóa của project.')
+    suffix = p.suffix.lower()
+    if suffix in {'.md', '.markdown', '.html', '.htm'} and len(text.strip()) >= 20:
+        return 'pentest-report'
+    if not text.startswith(('<', '{', '[')) and len(text.strip()) >= 40 and '\x00' not in text[:1024]:
+        return 'pentest-report'
+    raise ValueError('Chưa nhận diện được định dạng. Chọn đúng định dạng đầu vào hoặc tải lên Báo cáo Pentest (.pdf/.md/.txt) / tệp quét hợp lệ.')
 
 
 def safe_error(exc):

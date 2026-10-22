@@ -85,6 +85,7 @@ SECTION_TITLES = [
 ]
 
 FORMAT_DISPLAY = {
+    'pentest-report': 'Báo cáo kiểm thử Pentest / Tài liệu kỹ thuật (PDF/MD/TXT)',
     'sqlmap-log': 'Nhật ký kiểm thử SQLMap (Văn bản thuần)',
     'nmap': 'Bản quét cổng & dịch vụ Nmap XML (-oX)',
     'nessus': 'Bản đánh giá lỗ hổng Nessus (.nessus XML)',
@@ -118,7 +119,7 @@ def classify_finding_state(row: dict) -> str:
         return STATE_TENTATIVE
     details = row.get('details') or {}
     conf = str(details.get('confidence') or '').strip().lower()
-    if conf in {'tentative', 'heuristic'}:
+    if conf in {'tentative', 'heuristic', 'low', '1', '0', 'false positive'}:
         return STATE_TENTATIVE
     has_ev = bool(row.get('evidence')) or bool(details.get('request')) or bool(details.get('response')) or bool(details.get('http_messages'))
     if not has_ev:

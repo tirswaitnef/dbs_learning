@@ -421,61 +421,16 @@ def load_corpus_runtime(raw_directory, store_directory, settings, offline=False)
 def run_corpus_report(scan_path, output, settings, *, raw_directory, store_directory,
                       format_='normalized', offline=False, progress=None, report_metadata=None,display_filename=None):
     from dataclasses import replace as dc_replace
+    from .ai_ingest import (
+        extract_findings_from_report_with_ai,
+        extract_pentest_text,
+        resolve_unmapped_findings_with_ai,
+    )
     from .parsers import load_findings
-    findings=load_findings(scan_path,format_)
-    if len(findings)>100:raise ValueError('Corpus report supports at most 100 records; split input')
+
     xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
     extra_poc=str((report_metadata or {}).get('xss_poc') or '').strip()
     drop_obs=(xss_dec=='drop')
-    if xss_dec in {'confirm','include','keep'}:
-        promoted_findings=[]
-        for f in findings:
-            if getattr(f,'kind','')=='observation':
-                new_sev='medium' if f.cwe=='CWE-79' and f.severity in {'info','low','unknown'} else f.severity
-                new_ev=([extra_poc,*f.evidence] if extra_poc else list(f.evidence))
-                new_det=dict(f.details or {})
-                if f.cwe=='CWE-79':
-                    new_det.setdefault('cvss_score','6.1')
-                    new_det.setdefault('cvss_vector','CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N')
-                promoted_findings.append(dc_replace(f,kind='scanner_alert',severity=new_sev,evidence=new_ev,details=new_det))
-            else:
-                promoted_findings.append(f)
-        findings=promoted_findings
-    if progress:
-        progress(f"[step=1|pct=8] Đã đọc & chuẩn hóa {len(findings)} bản ghi từ file kiểm thử")
-    eligible=any(classify(f)['status']=='in_scope' and f.evidence for f in findings)
-    documents=[];corpus_sha='not_used'
-    def search(_):return []
-    if eligible:
-        if progress:
-            progress('[step=2|pct=12] Đang kiểm tra kho OWASP chuyên biệt CSDL và mô hình ngữ nghĩa E5...')
-        from .embeddings import embed_query_safe
-        store, documents, corpus_sha, encoder = load_corpus_runtime(
-            raw_directory, store_directory, settings, offline=offline
-        )
-        if progress:
-            progress(f"[step=2|pct=18] Kho OWASP CSDL ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
-        def search(query):
-            sub_queries=[query]
-            if query.startswith('CWE-89 '):
-                sub_queries.extend([
-                    'Query Parameterization prepared statement parameterized query example',
-                    'SQL injection additional defenses least privilege allow-list input validation',
-                    'error handling generic error response log server side SQL exception',
-                ])
-            elif query.startswith('CWE-79 '):
-                sub_queries.extend([
-                    'Cross Site Scripting Prevention output encoding HTML entity context Content Security Policy',
-                ])
-            elif any(query.startswith(prefix) for prefix in ('CWE-1393 ','CWE-306 ','CWE-521 ','CWE-287 ')):
-                sub_queries.append('Database Security authentication localhost bind permissions mysql_secure_installation')
-            merged={}
-            for sq in sub_queries:
-                for hit in store.search(embed_query_safe(encoder,sq,overlap=settings.chunk_overlap),top_k=max(24,settings.top_k),min_score=settings.min_score):
-                    key=(hit['source'],hit['start'],hit['end'])
-                    if key not in merged or hit['score']>merged[key]['score']:
-                        merged[key]=hit
-            return sorted(merged.values(),key=lambda h:-h['score'])
     scan_sha=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest()
     force_fresh=str((report_metadata or {}).get('force_fresh_ai') or '').strip().lower() in {'1','true','yes','on'}
     out_dir=Path(output)
@@ -488,9 +443,16 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         tmp_j.replace(out_dir/'ai_trace.json')
         tmp_t.replace(out_dir/'ai_trace.txt')
 
+    store_probe_sha=''
+    meta_path=Path(store_directory)/'metadata.json'
+    if meta_path.is_file():
+        try:
+            store_probe_sha=str(json.loads(meta_path.read_text(encoding='utf-8')).get('corpus_sha256') or '')
+        except Exception:
+            store_probe_sha=''
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
-        'v':3,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':corpus_sha,
+        'v':4,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':store_probe_sha,
         'model':settings.model_label,'xss_decision':xss_dec,'xss_poc':extra_poc,
     },sort_keys=True).encode('utf-8')).hexdigest()
     cache_file=cache_dir/f'{cache_key}.json'
@@ -511,15 +473,83 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         except Exception:
             pass
 
+    effective_meta=dict(report_metadata or {})
     with trace_llm_session(mode=settings.resolved_provider,model=settings.model_label,on_update=_write_trace_files) as trace_sess:
-        shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
+        shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings))
+        if format_=='pentest-report':
+            raw_doc_text=extract_pentest_text(scan_path)
+            findings,extracted_meta=extract_findings_from_report_with_ai(
+                raw_doc_text,
+                display_filename or Path(scan_path).name,
+                settings,
+                llm=shared_llm,
+                progress=progress,
+            )
+            effective_meta={**extracted_meta,**effective_meta}
+        else:
+            findings=load_findings(scan_path,format_)
+            findings=resolve_unmapped_findings_with_ai(findings,settings,llm=shared_llm,progress=progress)
+
+        if len(findings)>100:raise ValueError('Corpus report supports at most 100 records; split input')
+        if xss_dec in {'confirm','include','keep'}:
+            promoted_findings=[]
+            for f in findings:
+                if getattr(f,'kind','')=='observation':
+                    new_sev='medium' if f.cwe=='CWE-79' and f.severity in {'info','low','unknown'} else f.severity
+                    new_ev=([extra_poc,*f.evidence] if extra_poc else list(f.evidence))
+                    new_det=dict(f.details or {})
+                    if f.cwe=='CWE-79':
+                        new_det.setdefault('cvss_score','6.1')
+                        new_det.setdefault('cvss_vector','CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N')
+                    promoted_findings.append(dc_replace(f,kind='scanner_alert',severity=new_sev,evidence=new_ev,details=new_det))
+                else:
+                    promoted_findings.append(f)
+            findings=promoted_findings
+        if progress:
+            progress(f"[step=1|pct=11] Đã đọc & chuẩn hóa {len(findings)} bản ghi kiểm thử")
+
+        eligible=any(classify(f)['status']=='in_scope' and f.evidence for f in findings)
+        documents=[];corpus_sha='not_used'
+        def search(_):return []
+        if eligible:
+            if progress:
+                progress('[step=2|pct=14] Đang kiểm tra kho OWASP chuyên biệt CSDL và mô hình ngữ nghĩa E5...')
+            from .embeddings import embed_query_safe
+            store, documents, corpus_sha, encoder = load_corpus_runtime(
+                raw_directory, store_directory, settings, offline=offline
+            )
+            if progress:
+                progress(f"[step=2|pct=19] Kho OWASP CSDL ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
+            def search(query):
+                sub_queries=[query]
+                if query.startswith('CWE-89 '):
+                    sub_queries.extend([
+                        'Query Parameterization prepared statement parameterized query example',
+                        'SQL injection additional defenses least privilege allow-list input validation',
+                        'error handling generic error response log server side SQL exception',
+                    ])
+                elif query.startswith('CWE-79 '):
+                    sub_queries.extend([
+                        'Cross Site Scripting Prevention output encoding HTML entity context Content Security Policy',
+                    ])
+                elif any(query.startswith(prefix) for prefix in ('CWE-1393 ','CWE-306 ','CWE-521 ','CWE-287 ')):
+                    sub_queries.append('Database Security authentication localhost bind permissions mysql_secure_installation')
+                merged={}
+                for sq in sub_queries:
+                    for hit in store.search(embed_query_safe(encoder,sq,overlap=settings.chunk_overlap),top_k=max(24,settings.top_k),min_score=settings.min_score):
+                        key=(hit['source'],hit['start'],hit['end'])
+                        if key not in merged or hit['score']>merged[key]['score']:
+                            merged[key]=hit
+                return sorted(merged.values(),key=lambda h:-h['score'])
+
+        llm_for_rows=shared_llm if findings else None
         report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
-                                  scan_sha256=scan_sha,llm=shared_llm,progress=progress,
+                                  scan_sha256=scan_sha,llm=llm_for_rows,progress=progress,
                                   drop_unverified_observations=drop_obs)
         from .report_view import attach_context
-        attach_context(report,scan_path,format_,report_metadata,display_filename)
+        attach_context(report,scan_path,format_,effective_meta,display_filename)
         from .analysis import enrich_report
-        enrich_report(report,settings,llm=shared_llm,progress=progress,drop_unverified_observations=drop_obs)
+        enrich_report(report,settings,llm=llm_for_rows,progress=progress,drop_unverified_observations=drop_obs)
         report['ai_trace']=trace_sess.snapshot()
     active_rows=[r for r in report.get('findings',[]) if not (drop_obs and r.get('kind')=='observation')]
     if (all(r.get('ai_analysis',{}).get('status')=='ai_reviewed' for r in active_rows)

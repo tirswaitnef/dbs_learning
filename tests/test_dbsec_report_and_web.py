@@ -445,6 +445,166 @@ class CourseworkReportAndWebTests(unittest.TestCase):
         self.assertNotIn("GRANT", md_clean)
         self.assertNotIn("nhật ký kiểm thử lại (retest) sau khi triển khai khắc phục", md_clean)
 
+    def test_ai_pentest_report_reader_unmapped_cwe_classifier_nmap_and_zap_xml(self):
+        """Verify direct Pentest Report AI reading (PDF/MD), AI unknown-CWE classification, ZAP XML & deep Nmap DB rules."""
+        from rag.ai_ingest import (
+            extract_findings_from_report_with_ai,
+            extract_pentest_text,
+            resolve_unmapped_findings_with_ai,
+        )
+        from rag.config import Settings
+        from rag.parsers import load_findings
+        from rag.parsers.native import parse_nmap
+        from rag.pdf_report import render_pdf
+        from rag.web_server import detect_format
+
+        pentest_md = (
+            "# Báo cáo Pentest Hệ thống CSDL Bán hàng\n"
+            "Target: http://198.51.100.90/products?cat=books\n"
+            "DBMS: PostgreSQL 15.4\n\n"
+            "## 1. SQL Injection tại tham số cat\n"
+            "Severity: High\n"
+            "Payload thử nghiệm `cat=books' UNION SELECT current_user,version()--` trả về trực tiếp `postgres` trong bảng HTML.\n\n"
+            "## 2. Tài khoản Redis nội bộ không mật khẩu\n"
+            "Kết nối tới 198.51.100.90:6379 thực thi lệnh `INFO server` thành công mà không cần `AUTH`.\n"
+        )
+
+        class _MockReportReaderLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                return json.dumps({
+                    "metadata": {
+                        "project_name": "Pentest Hệ thống CSDL Bán hàng",
+                        "target_object": "http://198.51.100.90",
+                        "dbms_override": "PostgreSQL 15.4; Redis",
+                        "assessment_period": "",
+                        "allowed_scope": "",
+                    },
+                    "findings": [
+                        {
+                            "title": "SQL Injection tại tham số cat",
+                            "cwe": "CWE-89",
+                            "severity": "high",
+                            "state": "confirmed",
+                            "location": "http://198.51.100.90/products?cat=books",
+                            "parameter": "cat",
+                            "method": "GET",
+                            "tool": "manual-pentest",
+                            "native_solution": "",
+                            "evidence_quotes": [
+                                "Payload thử nghiệm `cat=books' UNION SELECT current_user,version()--` trả về trực tiếp `postgres`",
+                                "THIS QUOTE WAS HALLUCINATED BY MODEL AND MUST BE STRIPPED",
+                            ],
+                        },
+                        {
+                            "title": "Tài khoản Redis nội bộ không mật khẩu",
+                            "cwe": "CWE-306",
+                            "severity": "unknown",
+                            "state": "confirmed",
+                            "location": "198.51.100.90:6379",
+                            "evidence_quotes": [
+                                "Kết nối tới 198.51.100.90:6379 thực thi lệnh `INFO server` thành công"
+                            ],
+                        },
+                    ],
+                }, ensure_ascii=False)
+
+        extracted_findings, extracted_meta = extract_findings_from_report_with_ai(
+            pentest_md,
+            "pentest_ec2.md",
+            Settings(llm_provider="ollama", ollama_model="qwen2.5:7b"),
+            llm=_MockReportReaderLLM(),
+        )
+        self.assertEqual(len(extracted_findings), 2)
+        self.assertEqual(extracted_meta["project_name"], "Pentest Hệ thống CSDL Bán hàng")
+        # Hallucinated second quote MUST be stripped deterministically while real verbatim quote survives
+        self.assertEqual(len(extracted_findings[0].evidence), 1)
+        self.assertEqual(extracted_findings[0].severity, "high")
+        self.assertEqual(extracted_findings[1].cwe, "CWE-306")
+        self.assertEqual(extracted_findings[1].severity, "unknown")
+
+        # Unmapped custom NSE script (`ssl-enum-ciphers` on 3306) auto-classified by AI without hand-written rule
+        raw_nmap = (
+            b'<?xml version="1.0"?><nmaprun scanner="nmap" startstr="2026-10-22 09:00">'
+            b'<host><status state="up"/><address addr="198.51.100.90" addrtype="ipv4"/><ports>'
+            b'<port protocol="tcp" portid="80"><state state="open"/><service name="http"/></port>'
+            b'<port protocol="tcp" portid="3306"><state state="open"/><service name="mysql" product="MariaDB"/>'
+            b'<script id="mysql-databases"><elem>dvwa</elem><elem>information_schema</elem></script>'
+            b'<script id="mysql-brute" output="&#xa;  Accounts:&#xa;    audit_lab:123456 - Valid credentials"/>'
+            b'</port></ports>'
+            b'<hostscript><script id="custom-db-tls-audit" output=" TLSv1.0 with 3DES cipher accepted on 3306"/></hostscript></host>'
+            b'<runstats><finished timestr="2026-10-22 09:02"/></runstats></nmaprun>'
+        )
+        nmap_parsed = parse_nmap(raw_nmap, "ec2_db.xml")
+        brute_alert = [f for f in nmap_parsed if f.details.get("scanner_rule") == "nmap-mysql-brute"][0]
+        self.assertEqual(brute_alert.cwe, "CWE-521")
+        self.assertEqual(brute_alert.details["scan_telemetry"]["databases"], ["dvwa", "information_schema"])
+
+        class _MockUnmappedClassifierLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                payload = json.loads(prompt)
+                out = []
+                for rec in payload["unmapped_records"]:
+                    if "3DES cipher accepted" in rec["evidence"]:
+                        out.append({
+                            "id": rec["id"],
+                            "is_weakness": True,
+                            "state": "confirmed",
+                            "cwe": "CWE-327",
+                            "dbms": "MariaDB",
+                            "quote": "TLSv1.0 with 3DES cipher accepted on 3306",
+                        })
+                    else:
+                        out.append({
+                            "id": rec["id"],
+                            "is_weakness": False,
+                            "state": "tentative",
+                            "cwe": "unknown",
+                            "dbms": "",
+                            "quote": "",
+                        })
+                return json.dumps({"classifications": out})
+
+        enriched_nmap = resolve_unmapped_findings_with_ai(
+            nmap_parsed,
+            Settings(llm_provider="ollama", ollama_model="qwen2.5:7b"),
+            llm=_MockUnmappedClassifierLLM(),
+        )
+        host_tls = [f for f in enriched_nmap if f.id == "NMAP-H0-S0"][0]
+        self.assertEqual((host_tls.cwe, host_tls.kind), ("CWE-327", "scanner_alert"))
+        plain_http = [f for f in enriched_nmap if f.id == "NMAP-0-0"][0]
+        self.assertEqual((plain_http.cwe, plain_http.kind), ("unknown", "observation"))
+
+        # Verify ZAP XML (<OWASPZAPReport>) + PDF Pentest Report detection
+        zap_xml = (
+            b'<?xml version="1.0"?><OWASPZAPReport version="2.16.0" generated="Thu, 22 Oct 2026 09:15:00">'
+            b'<site name="http://198.51.100.90" host="198.51.100.90" port="80" ssl="false"><alerts>'
+            b'<alertitem><pluginid>40019</pluginid><alert>SQL Injection - MySQL</alert>'
+            b'<riskcode>3</riskcode><confidence>2</confidence><cweid>89</cweid>'
+            b'<desc>SQLi confirmed</desc><solution>Use prepared statements</solution>'
+            b'<instances><instance><uri>http://198.51.100.90/vulnerabilities/sqli/?id=1</uri>'
+            b'<method>GET</method><param>id</param><evidence>MariaDB server version</evidence>'
+            b'<requestheader>GET /vulnerabilities/sqli/?id=1 HTTP/1.1\r\nCookie: PHPSESSID=secret999</requestheader>'
+            b'</instance></instances></alertitem></alerts></site></OWASPZAPReport>'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            zx_path = Path(tmp) / "zap_ec2.xml"
+            zx_path.write_bytes(zap_xml)
+            self.assertEqual(detect_format(zx_path), "zap")
+            zx_findings = load_findings(zx_path, "zap")
+            self.assertEqual(len(zx_findings), 1)
+            self.assertEqual((zx_findings[0].cwe, zx_findings[0].severity, zx_findings[0].details.get("dbms")), ("CWE-89", "high", "MySQL"))
+
+            md_path = Path(tmp) / "pentest_report.md"
+            md_path.write_text(pentest_md, encoding="utf-8")
+            self.assertEqual(detect_format(md_path), "pentest-report")
+            self.assertEqual(len(load_findings(md_path, "pentest-report")), 2)
+
+            pdf_path = Path(tmp) / "sample_pentest.pdf"
+            render_pdf({"findings": [], "input_filename": "sample"}, pdf_path)
+            self.assertEqual(detect_format(pdf_path), "pentest-report")
+            pdf_txt = extract_pentest_text(pdf_path)
+            self.assertTrue(len(pdf_txt) > 30)
+
 
 if __name__ == "__main__":
     unittest.main()

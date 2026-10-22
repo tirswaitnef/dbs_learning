@@ -185,6 +185,126 @@
         "https://cwe.mitre.org/data/definitions/1393.html",
         "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
       ]
+    },
+    {
+      "id": "nmap-mysql-brute",
+      "tool": "nmap",
+      "script_id": "mysql-brute",
+      "output_pattern": "Valid credentials",
+      "title": "MySQL weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mysql-brute đăng nhập thành công bằng từ điển mật khẩu yếu/phổ biến và in khối 'Valid credentials': CWE-521 Weak Password Requirements.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mysql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-pgsql-brute",
+      "tool": "nmap",
+      "script_id": "pgsql-brute",
+      "output_pattern": "Valid credentials",
+      "title": "PostgreSQL weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE pgsql-brute đăng nhập thành công bằng mật khẩu từ điển yếu và báo 'Valid credentials': CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/pgsql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-ms-sql-brute",
+      "tool": "nmap",
+      "script_id": "ms-sql-brute",
+      "output_pattern": "Valid credentials|Login Success",
+      "title": "SQL Server weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE ms-sql-brute xác nhận đăng nhập thành công bằng mật khẩu yếu/phổ biến: CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/ms-sql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mongodb-brute",
+      "tool": "nmap",
+      "script_id": "mongodb-brute",
+      "output_pattern": "Valid credentials",
+      "title": "MongoDB weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md", "NoSQL_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mongodb-brute xác nhận đăng nhập MongoDB thành công bằng mật khẩu yếu: CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mongodb-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-redis-brute",
+      "tool": "nmap",
+      "script_id": "redis-brute",
+      "output_pattern": "Valid credentials",
+      "title": "Redis weak or guessable password",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE redis-brute dò trúng mật khẩu AUTH yếu của Redis và in 'Valid credentials': CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/redis-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mongodb-unauth",
+      "tool": "nmap",
+      "script_id": "mongodb-databases",
+      "output_pattern": "totalSize|databases",
+      "title": "MongoDB database enumeration without authentication",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md", "NoSQL_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mongodb-databases liệt kê danh sách cơ sở dữ liệu trực tiếp qua mạng mà không cần xác thực: CWE-306.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mongodb-databases.html",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-redis-unauth",
+      "tool": "nmap",
+      "script_id": "redis-info",
+      "output_pattern": "Version:|redis_version",
+      "title": "Redis server exposed without authentication",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE redis-info thực thi lệnh INFO thành công mà không cần xác thực mật khẩu: CWE-306.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/redis-info.html",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mysql-auth-bypass",
+      "tool": "nmap",
+      "script_id": "mysql-vuln-cve2012-2122",
+      "output_pattern": "VULNERABLE:",
+      "title": "MySQL/MariaDB authentication bypass (CVE-2012-2122)",
+      "cwe": "CWE-287",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mysql-vuln-cve2012-2122 xác nhận lỗi vượt xác thực đăng nhập trên MySQL/MariaDB ('State: VULNERABLE'): CWE-287.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mysql-vuln-cve2012-2122.html",
+        "https://cwe.mitre.org/data/definitions/287.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
     }
   ]
 }

@@ -70,11 +70,11 @@
             </span>
           </div>
           <h1>Báo cáo kiểm thử bảo mật CSDL &amp; <em>đề xuất remediation theo OWASP</em></h1>
-          <p class="intro">Tải lên một hoặc nhiều tệp kết quả kiểm thử từ <strong>sqlmap</strong>, <strong>Nmap</strong>, <strong>OWASP ZAP</strong>, <strong>Burp Suite</strong>, <strong>Nuclei</strong>, <strong>Nessus</strong> hoặc <strong>JSON chuẩn hóa</strong>. Hệ thống tự động đánh mã nguồn dữ liệu <code>I-01+</code>, trích xuất bằng chứng <code>E-01+</code>, phân loại phát hiện <code>F-01+</code> trung thực theo dữ liệu gốc (không tự tạo số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất báo cáo <strong>10 mục hoàn chỉnh</strong> (PDF, Markdown, JSON).</p>
+          <p class="intro">Tải lên <strong>Báo cáo Pentest có sẵn (PDF, Markdown, TXT)</strong> hoặc tệp xuất trực tiếp từ <strong>sqlmap</strong>, <strong>Nmap</strong>, <strong>OWASP ZAP</strong>, <strong>Burp Suite</strong>, <strong>Nuclei</strong>, <strong>Nessus</strong>. AI cục bộ (<strong>Ollama</strong>) tự động đọc bóc tách phát hiện &amp; bằng chứng nguyên văn, nhận diện CWE cho bản ghi chưa gán mã, đánh mã <code>I-01+</code> / <code>E-01+</code> / <code>F-01+</code> trung thực (không tự tạo số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Báo cáo 10 mục chuẩn</strong>.</p>
           <div class="steps" aria-label="Quy trình xử lý">
-            <div><span>1</span>Đánh giá dữ liệu <code>I-01+</code> &amp; tách bằng chứng <code>E-01+</code></div>
+            <div><span>1</span>AI &amp; Parser đọc Báo cáo Pentest / Log (<code>I-01+</code>, <code>E-01+</code>)</div>
             <i>→</i>
-            <div><span>2</span>Đối chiếu RAG OWASP Top 10:2025 &amp; Cheat Sheet</div>
+            <div><span>2</span>Nhận diện CWE &amp; Truy xuất RAG OWASP CSDL</div>
             <i>→</i>
             <div><span>3</span>Kết xuất Báo cáo 10 mục chuẩn PDF &amp; Markdown</div>
           </div>
@@ -84,7 +84,7 @@
 
         <form class="compose-zone" id="upload-form" novalidate>
           <div class="composer" id="dropzone">
-            <input id="file-input" name="file" type="file" accept=".json,.xml,.jsonl,.txt,.log,.nessus" multiple hidden>
+            <input id="file-input" name="file" type="file" accept=".pdf,.md,.markdown,.html,.txt,.log,.json,.jsonl,.xml,.nessus" multiple hidden>
 
             <div class="file-list-wrap" id="file-list-wrap" hidden>
               <div class="file-list-header">
@@ -102,12 +102,13 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
                   </svg>
-                  <span>Chọn tệp kết quả kiểm thử</span>
+                  <span>Chọn báo cáo Pentest / tệp quét</span>
                 </button>
                 <span class="divider" aria-hidden="true"></span>
                 <label for="format">Định dạng đầu vào</label>
                 <select id="format" name="format">
-                  <option value="auto">Tự động nhận diện từng tệp</option>
+                  <option value="auto">Tự động nhận diện (Mọi công cụ &amp; Báo cáo Pentest)</option>
+                  <option value="pentest-report">Báo cáo Pentest · PDF / MD / TXT (AI đọc trực tiếp)</option>
                   <option value="sqlmap-log">sqlmap · log (.txt/.log)</option>
                   <option value="nmap">Nmap · XML (-oX)</option>
                   <option value="zap">OWASP ZAP · JSON/XML</option>
