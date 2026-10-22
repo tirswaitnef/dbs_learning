@@ -199,14 +199,14 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
     def search(_):return []
     if eligible:
         from .document_store import DocumentVectorStore
-        from .embeddings import E5Embedding
+        from .embeddings import E5Embedding, embed_query_safe
         store=DocumentVectorStore.load(store_directory,settings)
         store.verify_corpus(raw_directory)
         documents=load_documents(raw_directory).documents
         corpus_sha=store.metadata['corpus_sha256']
         encoder=E5Embedding(settings.embed_model,settings.embed_revision,local_files_only=offline)
         def search(query):
-            return store.search(encoder.embed_query(query),top_k=max(12,settings.top_k),min_score=settings.min_score)
+            return store.search(embed_query_safe(encoder,query,overlap=settings.chunk_overlap),top_k=max(12,settings.top_k),min_score=settings.min_score)
     report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
                               scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest())
     from .analysis import enrich_report

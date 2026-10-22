@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from .chunker import chunk_cards
-from .embeddings import E5Embedding
+from .chunker import chunk_cards, fit_card_chunks
+from .embeddings import E5Embedding, embed_query_safe
 from .schemas import card_digest
 
 
@@ -12,6 +12,9 @@ def build_store(cards, settings, destination):
     if not chunks:
         raise ValueError("No approved knowledge cards")
     encoder = E5Embedding(settings.embed_model, settings.embed_revision)
+    chunks = fit_card_chunks(chunks, encoder, settings.chunk_overlap)
+    if not chunks:
+        raise ValueError("No approved knowledge cards")
     matrix = encoder.encode([c["text"] for c in chunks])
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
@@ -42,6 +45,6 @@ class VectorStore:
         self.encoder = E5Embedding(settings.embed_model, settings.embed_revision)
 
     def scores(self, query):
-        vector = self.encoder.encode([query], query=True)[0]
+        vector = embed_query_safe(self.encoder, query, overlap=self.meta["overlap"])
         return [(c["card_id"], float(score)) for c, score in
                 zip(self.meta["chunks"], self.vectors @ vector)]
