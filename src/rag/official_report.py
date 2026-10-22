@@ -7,6 +7,7 @@ prove applicability or source authenticity.
 import hashlib
 import json
 import re
+import threading
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -356,6 +357,45 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
     return attach_db_scope(enforce(report))
 
 
+_RUNTIME_LOCK = threading.Lock()
+_RUNTIME_CACHE = {}
+
+
+def load_corpus_runtime(raw_directory, store_directory, settings, offline=False):
+    """Load & verify the OWASP vector store + E5 encoder once per process,
+    invalidating automatically whenever vector_store.meta.json changes."""
+    from .document_store import DocumentVectorStore, corpus_digest
+    from .embeddings import E5Embedding
+
+    raw_path = Path(raw_directory).resolve()
+    store_path = Path(store_directory).resolve()
+    meta_file = store_path / 'vector_store.meta.json'
+    meta_mtime = meta_file.stat().st_mtime_ns if meta_file.exists() else None
+    key = (
+        str(raw_path),
+        str(store_path),
+        meta_mtime,
+        settings.embed_model,
+        settings.embed_revision,
+        settings.chunk_size,
+        settings.chunk_overlap,
+    )
+    with _RUNTIME_LOCK:
+        if meta_mtime is not None and key in _RUNTIME_CACHE:
+            return _RUNTIME_CACHE[key]
+        store = DocumentVectorStore.load(store_directory, settings)
+        documents = load_documents(raw_directory).documents
+        corpus_sha = store.metadata['corpus_sha256']
+        if corpus_digest(documents) != corpus_sha:
+            raise ValueError('Store does not match the current source directory. Re-ingest this source.')
+        encoder = E5Embedding(settings.embed_model, settings.embed_revision, local_files_only=offline)
+        runtime = (store, documents, corpus_sha, encoder)
+        if meta_mtime is not None:
+            _RUNTIME_CACHE.clear()
+            _RUNTIME_CACHE[key] = runtime
+        return runtime
+
+
 def run_corpus_report(scan_path, output, settings, *, raw_directory, store_directory,
                       format_='normalized', offline=False, progress=None, report_metadata=None,display_filename=None):
     from .parsers import load_findings
@@ -368,16 +408,13 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
     def search(_):return []
     if eligible:
         if progress:
-            progress('[step=2|pct=12] Đang kiểm tra kho OWASP Cheat Sheet Series và nạp mô hình ngữ nghĩa E5...')
-        from .document_store import DocumentVectorStore
-        from .embeddings import E5Embedding, embed_query_safe
-        store=DocumentVectorStore.load(store_directory,settings)
-        store.verify_corpus(raw_directory)
-        documents=load_documents(raw_directory).documents
-        corpus_sha=store.metadata['corpus_sha256']
-        encoder=E5Embedding(settings.embed_model,settings.embed_revision,local_files_only=offline)
+            progress('[step=2|pct=12] Đang kiểm tra kho OWASP chuyên biệt CSDL và mô hình ngữ nghĩa E5...')
+        from .embeddings import embed_query_safe
+        store, documents, corpus_sha, encoder = load_corpus_runtime(
+            raw_directory, store_directory, settings, offline=offline
+        )
         if progress:
-            progress(f"[step=2|pct=18] Kho OWASP ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
+            progress(f"[step=2|pct=18] Kho OWASP CSDL ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
         def search(query):
             sub_queries=[query]
             if query.startswith('CWE-89 '):

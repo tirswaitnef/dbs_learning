@@ -57,7 +57,7 @@ if errorlevel 1 goto install_deps
 if not exist "data\raw\owasp\official\CheatSheetSeries-master\cheatsheets" goto run_server
 ".venv\Scripts\python.exe" -c "import sys; sys.path.insert(0, 'src'); from pathlib import Path; from rag.config import load_settings; from rag.document_store import DocumentVectorStore; raw = Path('data/raw/owasp/official/CheatSheetSeries-master/cheatsheets'); store = DocumentVectorStore.load(Path('data/processed/owasp-official'), load_settings()); store.verify_corpus(raw)" >nul 2>&1
 if not errorlevel 1 goto run_server
-echo [1/2] Dang tao/cap nhat kho vector OWASP Cheat Sheet Series - vui long cho 1-3 phut...
+echo [1/2] Dang tao/cap nhat kho vector OWASP chuyen biet CSDL 25 tai lieu - khoang 20-40 giay...
 ".venv\Scripts\python.exe" scripts\ingest_documents.py --raw data\raw\owasp\official\CheatSheetSeries-master\cheatsheets --output data\processed\owasp-official
 if errorlevel 1 goto ingest_failed
 goto run_server

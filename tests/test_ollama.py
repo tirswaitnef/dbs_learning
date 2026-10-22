@@ -556,6 +556,59 @@ class OllamaIntegrationTests(unittest.TestCase):
         self.assertEqual(view_confirm["entries"][1]["severity_key"], "medium")
         self.assertEqual(view_confirm["entries"][1]["cvss_score"], "6.1")
 
+    def test_db_focused_corpus_pruned_and_runtime_cached(self):
+        from rag.official_report import PREFERRED, load_corpus_runtime
+
+        cs_dir = ROOT / "data/raw/owasp/official/CheatSheetSeries-master/cheatsheets"
+        files = {p.name: p for p in cs_dir.glob("*.md")}
+        self.assertEqual(len(files), 25)
+        self.assertLess(sum(p.stat().st_size for p in files.values()), 700_000)
+        for preferred_set in PREFERRED.values():
+            for sheet in preferred_set:
+                self.assertIn(sheet, files)
+        for off_topic in (
+            "Drone_Security_Cheat_Sheet.md",
+            "Automotive_Security_Cheat_Sheet.md",
+            "Mobile_Application_Security_Cheat_Sheet.md",
+            "Browser_Extension_Vulnerabilities_Cheat_Sheet.md",
+        ):
+            self.assertNotIn(off_topic, files)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            import numpy as np
+
+            class _MiniEmbedder:
+                model_name = "intfloat/multilingual-e5-small"
+                revision = None
+
+                def embed_documents(self, texts):
+                    return np.ones((len(texts), 8), dtype=np.float32)
+
+                def embed_query(self, text):
+                    return np.ones((8,), dtype=np.float32)
+
+            tmp_path = Path(tmp)
+            raw_dir = tmp_path / "raw"
+            raw_dir.mkdir()
+            (raw_dir / "Database_Security_Cheat_Sheet.md").write_text(
+                "# Database Security\n\n## Authentication\nUse strong dedicated database accounts.\n",
+                encoding="utf-8",
+            )
+            store_dir = tmp_path / "store"
+            settings = Settings()
+            ingest_documents(raw_dir, store_dir, settings, embedder=_MiniEmbedder())
+            init_calls = []
+
+            def make_embedder(*_args, **_kwargs):
+                init_calls.append(1)
+                return _MiniEmbedder()
+
+            with patch("rag.embeddings.E5Embedding", side_effect=make_embedder):
+                rt1 = load_corpus_runtime(raw_dir, store_dir, settings, offline=True)
+                rt2 = load_corpus_runtime(raw_dir, store_dir, settings, offline=True)
+                self.assertIs(rt1, rt2)
+                self.assertEqual(len(init_calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

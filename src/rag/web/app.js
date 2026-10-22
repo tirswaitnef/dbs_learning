@@ -21,7 +21,7 @@ const SEVERITY_VI = {
 
 const PIPELINE_STEPS = [
   { num: 1, title: 'Đọc & chuẩn hóa dữ liệu kiểm thử', desc: 'Nhận diện công cụ quét, lọc nhiễu & rà soát dữ liệu nhạy cảm' },
-  { num: 2, title: 'Nạp cơ sở tri thức bảo mật OWASP', desc: 'Đối chiếu 137 tài liệu hướng dẫn OWASP chính thức' },
+  { num: 2, title: 'Nạp cơ sở tri thức OWASP chuyên biệt CSDL', desc: 'Đối chiếu 25 tài liệu OWASP trọng tâm về Bảo mật CSDL & Ứng dụng Web' },
   { num: 3, title: 'Chọn lọc hướng khắc phục trọng tâm', desc: 'Tổng hợp biện pháp khắc phục ngắn gọn & ví dụ mã nguồn' },
   { num: 4, title: 'Phân tích chi tiết lỗ hổng & tác động', desc: 'Biên soạn mô tả kỹ thuật & tác động nghiệp vụ dễ hiểu' },
   { num: 5, title: 'Biên tập Tóm tắt điều hành Pentest', desc: 'Tổng hợp mức độ rủi ro tổng thể & lộ trình ưu tiên xử lý' },
@@ -130,7 +130,7 @@ function applyConfig(c) {
     $('config-notice').textContent = '';
   }
   $('privacy').textContent = config.provider === 'ollama'
-    ? 'AI cục bộ (Ollama' + (config.model ? ' · ' + config.model : '') + '): toàn bộ file kiểm thử, kho vector OWASP 137 bài và quá trình sinh báo cáo chạy 100% trên máy này, không gửi dữ liệu ra internet.'
+    ? 'AI cục bộ (Ollama' + (config.model ? ' · ' + config.model : '') + '): toàn bộ file kiểm thử, kho vector 25 tài liệu OWASP chuyên biệt CSDL và quá trình sinh báo cáo chạy 100% trên máy này, không gửi dữ liệu ra internet.'
     : 'File kiểm thử và báo cáo lưu cục bộ trên máy này.';
 }
 
