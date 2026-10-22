@@ -326,7 +326,7 @@ def _sqlmap_http_traffic(clean):
     """Extract raw wire-level HTTP request/response pairs recorded via sqlmap -t traffic capture."""
     messages = []
     pattern = re.compile(
-        r"HTTP request \[#(\d+)\]:\n(.*?)\n+HTTP response \[#\1\] \(([^\n)]*)\):\n(.*?)(?=\nHTTP request \[#\d+\]:|\n={20,}|\Z)",
+        r"HTTP request \[#(\d+)\]:\n(.*?)\n+HTTP response \[#\1\] \(([^\n)]*)\):\n(.*?)(?=\nHTTP request \[#\d+\]:|\n[=#]{20,}|\Z)",
         re.S,
     )
     for m in pattern.finditer(clean):
