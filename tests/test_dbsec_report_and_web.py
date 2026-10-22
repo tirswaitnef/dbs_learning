@@ -326,6 +326,125 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                 srv.server_close()
                 mgr.close()
 
+    def test_cross_input_dynamic_generation_zero_hardcoding_across_distinct_scans(self):
+        """Prove every section dynamically adapts to input facts with zero false error/cookie/SQL/GRANT assumptions."""
+        from rag.dbsec_report import render_dbsec_markdown
+        from rag.top10 import classify
+
+        # 1) Blind time-based SQLi with NO SQL syntax error in HTTP response and NO cookies/secrets
+        blind_row = {
+            "id": "BLIND-1",
+            "title": "Blind SQL Injection",
+            "cwe": "CWE-89",
+            "severity": "unknown",
+            "tool": "sqlmap",
+            "location": "http://198.51.100.88/search?q=book",
+            "kind": "scanner_alert",
+            "evidence": ["Parameter: q (GET)\n    Type: time-based blind\n    Payload: q=book' AND SLEEP(5)-- -"],
+            "details": {
+                "parameter": "q",
+                "method": "GET",
+                "techniques": ["time-based blind"],
+                "request": "GET /search?q=book%27%20AND%20SLEEP%285%29--%20- HTTP/1.1\nHost: 198.51.100.88",
+                "response": "HTTP/1.1 200 OK\nContent-Type: text/html\n\n<html>Results: 0</html>",
+            },
+            "guidance": [],
+            "ai_analysis": {
+                "status": "ai_reviewed",
+                "claims": {
+                    "observations": [
+                        {"text_vi": "Công cụ sqlmap xác nhận độ trễ phản hồi 5 giây lặp lại ổn định trên tham số q."},
+                        {"text_vi": "Phản hồi HTTP 200 không trả về chuỗi lỗi cú pháp CSDL trực tiếp."},
+                        {"text_vi": "Điểm tiêm nằm trên truy vấn tìm kiếm GET không đính kèm cookie phiên."},
+                    ],
+                    "potential_impacts": [
+                        {"text_vi": "Nếu kẻ tấn công tự động hóa khai thác mù theo thời gian, dữ liệu nhạy cảm trong bảng có thể bị dò từng ký tự."}
+                    ],
+                    "limitations": [
+                        {"text_vi": "Chưa liệt kê danh sách bảng do kiểm thử dừng ở bước chứng minh độ trễ an toàn."}
+                    ],
+                },
+            },
+        }
+        blind_row["owasp_top10"] = classify(blind_row)
+        md_blind = render_dbsec_markdown({
+            "schema_version": 1,
+            "mode": "ollama-top10-analysis-extractive",
+            "model": "ollama/qwen2.5:7b",
+            "input_format": "sqlmap-log",
+            "input_filename": "blind_sqli.txt",
+            "scan_sha256": "11223344" * 8,
+            "knowledge_sha256": "99887766" * 8,
+            "findings": [blind_row],
+        })
+        self.assertIn("time-based blind", md_blind)
+        self.assertNotIn("để lộ trực tiếp thông báo ngoại lệ CSDL ra phản hồi HTTP", md_blind)
+        self.assertNotIn("[REDACTED]", md_blind)
+        # All 3 Ollama observations + potential impact + limitation surface dynamically
+        self.assertIn("độ trễ phản hồi 5 giây", md_blind)
+        self.assertIn("Phản hồi HTTP 200 không trả về chuỗi lỗi cú pháp CSDL trực tiếp.", md_blind)
+        self.assertIn("Điểm tiêm nằm trên truy vấn tìm kiếm GET", md_blind)
+        self.assertIn("dò từng ký tự", md_blind)
+
+        # 2) Pure TLS/network finding with native Medium severity + code-only TLS Cheat Sheet block (ZERO SQL/GRANT)
+        tls_row = {
+            "id": "NESSUS-TLS-1",
+            "title": "Database TLS Weak Cipher Suites Accepted",
+            "cwe": "CWE-327",
+            "severity": "medium",
+            "tool": "nessus",
+            "location": "203.0.113.77:3306",
+            "kind": "scanner_alert",
+            "evidence": ["Accepted cipher: TLS_RSA_WITH_3DES_EDE_CBC_SHA on port 3306/tcp"],
+            "details": {
+                "port": 3306,
+                "protocol": "tcp",
+                "description": "Remote MySQL port accepts deprecated 3DES cipher suites",
+                "solution": "Disable weak 3DES ciphers in mysqld TLS configuration",
+                "cvss_score": "5.3",
+                "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+            },
+            "guidance": [{
+                "section": "Transport Layer Protection Cheat Sheet / Only Support Strong Ciphers",
+                "title": "Transport Layer Protection Cheat Sheet",
+                "url": "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Protection_Cheat_Sheet.html",
+                "source_excerpt": "```nginx\nssl_protocols TLSv1.2 TLSv1.3;\nssl_prefer_server_ciphers on;\n```",
+            }],
+        }
+        tls_row["owasp_top10"] = classify(tls_row)
+        md_tls = render_dbsec_markdown({
+            "schema_version": 1,
+            "mode": "demo-no-ai",
+            "model": "none",
+            "input_format": "nessus",
+            "input_filename": "db_tls.nessus",
+            "scan_sha256": "55667788" * 8,
+            "knowledge_sha256": "99887766" * 8,
+            "findings": [tls_row],
+        })
+        self.assertIn("nhãn mức độ nghiêm trọng gốc đầy đủ trên toàn bộ phát hiện", md_tls)
+        self.assertNotIn("nhãn mức độ nghiêm trọng / điểm CVSS gốc trên các bản ghi do công cụ dòng lệnh không tự gán điểm", md_tls)
+        self.assertNotIn("tham số ràng buộc", md_tls)
+        self.assertNotIn("lỗi cú pháp CSDL", md_tls)
+        self.assertNotIn("GRANT", md_tls)
+        self.assertIn("TLS 1.2/1.3", md_tls)
+        self.assertIn("5.3", md_tls)
+
+        # 3) Clean zero-finding scan
+        md_clean = render_dbsec_markdown({
+            "schema_version": 1,
+            "mode": "demo-no-ai",
+            "model": "none",
+            "input_format": "nmap",
+            "input_filename": "clean_scan.xml",
+            "scan_sha256": "abcdef12" * 8,
+            "knowledge_sha256": "not_used",
+            "findings": [],
+        })
+        self.assertIn("Không ghi nhận cảnh báo lỗ hổng trong dữ liệu đầu vào", md_clean)
+        self.assertNotIn("GRANT", md_clean)
+        self.assertNotIn("nhật ký kiểm thử lại (retest) sau khi triển khai khắc phục", md_clean)
+
 
 if __name__ == "__main__":
     unittest.main()

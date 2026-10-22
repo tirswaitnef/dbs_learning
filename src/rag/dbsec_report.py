@@ -19,6 +19,7 @@ approved OWASP Top 10:2025 / Cheat Sheet Series knowledge base, and citation-ver
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import re
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -28,6 +29,8 @@ from .pentest_polish import (
     CWE_FRIENDLY,
     _analyze_http_messages,
     _clean_markdown_excerpt,
+    _extract_card_action,
+    build_cvss_rationale,
     clean_internal_jargon,
     collect_ip_mapping,
     sanitize_text_value,
@@ -365,12 +368,26 @@ def _build_evidence_items_for_finding(
     return items, next_ev_num, excluded_note
 
 
-def _build_root_cause(row: dict, state: str, component: str, sanitize) -> str:
-    """Section 6.6: Separate proven response behavior from unverified source-code hypothesis."""
+def _bundled_cheatsheet_count() -> int:
+    """Count bundled OWASP Cheat Sheet markdown files dynamically from disk."""
+    repo_root = Path(__file__).resolve().parents[2]
+    cs_dir = repo_root / 'data' / 'raw' / 'owasp' / 'official' / 'CheatSheetSeries-master' / 'cheatsheets'
+    if cs_dir.is_dir():
+        return sum(1 for _ in cs_dir.glob('*.md'))
+    return 0
+
+
+def _build_root_cause(row: dict, state: str, component: str, ev_items: list[dict], sanitize) -> str:
+    """Section 6.6: Separate proven behavior strictly present in input evidence from source/config hypothesis."""
     cwe = str(row.get('cwe') or '').strip()
     det = row.get('details') or {}
     tel = det.get('scan_telemetry') or {}
     tech = sanitize(str(tel.get('web_tech') or '')).strip()
+    native_desc = clean_internal_jargon(sanitize(str(det.get('description') or '').strip()))
+    ev_blob = '\n'.join(
+        [str(e.get('snippet') or '') for e in ev_items]
+        + [str(x or '') for x in (row.get('evidence') or [])]
+    ).lower()
 
     if state == STATE_TENTATIVE:
         return (
@@ -385,9 +402,23 @@ def _build_root_cause(row: dict, state: str, component: str, sanitize) -> str:
         )
     if cwe in {'CWE-89', 'CWE-564', 'CWE-943'}:
         stack_note = f" (nền tảng ghi nhận từ tiêu đề máy chủ: `{tech}`)" if tech else ''
+        techs_raw = det.get('techniques') or tel.get('techniques') or []
+        tech_clause = f" thông qua kỹ thuật `{', '.join(sanitize(t) for t in techs_raw)}`" if techs_raw else ''
+        has_db_error = any(
+            err_tok in ev_blob
+            for err_tok in (
+                'sql syntax', 'xpath syntax error', 'mysql_fetch', 'ora-', 'postgresql query failed',
+                'unclosed quotation mark', 'odbc sql server driver', 'sqlite3.operationalerror', 'sqlstate[',
+            )
+        )
+        err_clause = (
+            ', đồng thời ứng dụng để lộ trực tiếp thông báo ngoại lệ CSDL ra phản hồi HTTP'
+            if has_db_error
+            else ' (phản hồi kiểm thử xác nhận hành vi truy vấn bị chi phối bởi tham số đầu vào ngay cả khi không cần hiển thị lỗi cú pháp trực tiếp)'
+        )
         return (
             f"**Cơ sở đã được chứng minh từ phản hồi kiểm thử:** dữ liệu đầu vào tại {component} đã làm thay đổi trực tiếp cấu trúc "
-            f"lô-gic và cú pháp truy vấn thực thi tại tầng CSDL{stack_note}, đồng thời ứng dụng trả nguyên văn thông báo lỗi CSDL ra phản hồi HTTP khi gặp ngoại lệ. "
+            f"lô-gic truy vấn thực thi tại tầng CSDL{tech_clause}{stack_note}{err_clause}. "
             f"**Giả thuyết nguyên nhân gốc ở tầng mã nguồn (cần đối chiếu mã nguồn để xác nhận vì kiểm thử hộp đen không truy cập mã nguồn):** "
             f"tầng truy cập dữ liệu ghép nối chuỗi trực tiếp tham số người dùng vào câu lệnh truy vấn thay vì sử dụng truy vấn tham số hóa (`Prepared Statements` / `Parameterized Queries`)."
         )
@@ -402,12 +433,14 @@ def _build_root_cause(row: dict, state: str, component: str, sanitize) -> str:
             f"**Giả thuyết ở tầng cấu hình (cần đối chiếu tệp cấu hình dịch vụ CSDL):** dịch vụ chưa bật cơ chế bắt buộc xác thực mạnh hoặc chưa giới hạn giao diện mạng lắng nghe nội bộ."
         )
     if cwe in {'CWE-319', 'CWE-295', 'CWE-311', 'CWE-327'}:
+        desc_clause = f" ({native_desc[:220].rstrip('.')})" if native_desc else ''
         return (
-            f"**Cơ sở đã được chứng minh từ dữ liệu quét:** kênh giao tiếp hoặc cấu hình mật mã tại {component} chưa đảm bảo bảo mật đường truyền/xác thực chứng chỉ. "
-            f"**Giả thuyết ở tầng cấu hình:** máy chủ chưa bắt buộc TLS hợp lệ hoặc vẫn chấp nhận kết nối văn bản rõ."
+            f"**Cơ sở đã được chứng minh từ dữ liệu quét:** kênh giao tiếp hoặc cấu hình mật mã tại {component} chưa đảm bảo bảo mật đường truyền/xác thực chứng chỉ{desc_clause}. "
+            f"**Giả thuyết ở tầng cấu hình:** máy chủ chưa bắt buộc giao thức TLS mạnh với bộ mã an toàn hoặc chứng chỉ hợp lệ."
         )
+    desc_clause = f" ({native_desc[:220].rstrip('.')})" if native_desc else ''
     return (
-        f"**Cơ sở từ bằng chứng kiểm thử:** công cụ ghi nhận phản hồi bất thường tại {component} tương ứng phân loại `{cwe or 'Chưa xác định'}`. "
+        f"**Cơ sở từ bằng chứng kiểm thử:** công cụ ghi nhận phản hồi bất thường tại {component} tương ứng phân loại `{cwe or 'Chưa xác định'}`{desc_clause}. "
         f"**Giả thuyết ở tầng mã nguồn / cấu hình (cần kiểm chứng trực tiếp):** thiếu cơ chế kiểm soát đầu vào, phân quyền hoặc cấu hình làm cứng an toàn tương ứng trên máy chủ."
     )
 
@@ -545,7 +578,7 @@ def prepare_dbsec_report(report: dict) -> dict:
 
     # --- Section 1 General Information ---
     gen_at = str(work.get('generated_at') or '')
-    gen_day = gen_at[:10].replace('-', '') if len(gen_at) >= 10 else '20261022'
+    gen_day = gen_at[:10].replace('-', '') if len(gen_at) >= 10 else datetime.now(timezone.utc).strftime('%Y%m%d')
     sha8 = str(work.get('scan_sha256') or '00000000')[:8].upper()
     report_id = meta.get('report_id') or f'RPT-DBSEC-{gen_day}-{sha8}'
 
@@ -693,9 +726,11 @@ def prepare_dbsec_report(report: dict) -> dict:
         raw_vec = str(det.get('cvss_vector') or '').strip()
         if sev_key != 'unknown':
             cvss_bit = f" (điểm CVSS ghi nhận trong đầu vào: `{raw_cvss}` — `{raw_vec}`)" if raw_cvss and raw_vec else (f" (điểm CVSS trong đầu vào: `{raw_cvss}`)" if raw_cvss else '')
+            cvss_expl = build_cvss_rationale(row, scan_ctx) if (raw_cvss or raw_vec) else ''
             sev_basis = (
                 f"Giữ nguyên mức độ `{sev_label}` được ghi nhận trực tiếp từ dữ liệu đầu vào{cvss_bit}, "
                 f"đối chiếu phù hợp với bằng chứng `{', '.join(e['id'] for e in ev_items) or 'Chưa có'}`."
+                + (f" {cvss_expl}" if cvss_expl else '')
             )
         else:
             tech_signals = []
@@ -717,7 +752,7 @@ def prepare_dbsec_report(report: dict) -> dict:
             unknown_factors_bits.append('mức độ nhạy cảm thực tế của dữ liệu nghiệp vụ bên trong các bảng (do không chạy trích xuất dữ liệu)')
         if state == STATE_TENTATIVE:
             unknown_factors_bits.append('kết quả kiểm chứng thực thi thực tế trên trình duyệt/máy khách độc lập')
-        for al in ai_limits[:1]:
+        for al in ai_limits:
             cleaned_al = clean_internal_jargon(al).rstrip('.')
             if cleaned_al and cleaned_al not in unknown_factors_bits:
                 unknown_factors_bits.append(cleaned_al)
@@ -728,7 +763,7 @@ def prepare_dbsec_report(report: dict) -> dict:
         )
 
         # 6.6 & 6.7
-        root_cause = _build_root_cause(row, state, component, sanitize)
+        root_cause = _build_root_cause(row, state, component, ev_items, sanitize)
         potential_impact = _build_potential_impact(row, state, ai_impacts, sanitize)
 
         # Section 7 Remediation per finding (dynamically built from RAG Cheat Sheets + native scanner guidance)
@@ -772,11 +807,9 @@ def prepare_dbsec_report(report: dict) -> dict:
             cleaned_ex = _clean_markdown_excerpt(prose_without_code, max_len=440)
             if cleaned_ex:
                 rem_steps.append(f"**Theo `{sec_name}` (OWASP):** {cleaned_ex}")
-            elif _FENCED_CODE_RE.search(raw_g_txt):
-                rem_steps.append(
-                    f"**Theo `{sec_name}` (OWASP):** Triển khai mẫu truy vấn/cấu hình an toàn sử dụng tham số ràng buộc "
-                    f"như ví dụ chính thức bên dưới thay cho việc ghép nối chuỗi trực tiếp."
-                )
+            else:
+                card_act = _extract_card_action(g, row, lang='vi').strip().rstrip('.')
+                rem_steps.append(f"**Theo `{sec_name}` (OWASP):** {card_act}.")
             ref_entries.append({'section': sec_name, 'url': g_url})
             sheet_title = sec_name.split(' / ')[0].strip()
             cited_owasp_docs[sheet_title] = {
@@ -817,26 +850,70 @@ def prepare_dbsec_report(report: dict) -> dict:
                 f"cần hoàn tất bước xác minh thực tế sau khi đã xử lý dứt điểm các phát hiện `Đã xác nhận` ưu tiên P1/P2."
             )
 
-        rem_goal = (
-            f"Loại bỏ triệt để khả năng dữ liệu không tin cậy tại {component} làm sai lệch truy vấn, phản hồi hoặc cơ chế bảo vệ ở `{db_layer}`, "
-            f"đảm bảo xử lý tham số và cấu hình tuân thủ khuyến nghị chính thức của OWASP."
-        )
+        ev_ref_str = ', '.join(e['id'] for e in ev_items) or fid
+        if cwe_code in {'CWE-89', 'CWE-564', 'CWE-943'}:
+            rem_goal = (
+                f"Tách biệt hoàn toàn dữ liệu đầu vào không tin cậy tại {component} khỏi cấu trúc câu lệnh truy vấn ở `{db_layer}`, "
+                f"loại bỏ khả năng tiêm nhiễm truy vấn và bảo vệ tính bí mật, toàn vẹn của CSDL theo chuẩn OWASP."
+            )
+            retest_check = (
+                f"Kiểm tra lại {component} với bộ payload kiểm chứng tương đương bằng chứng `{ev_ref_str}`: "
+                f"(1) xác nhận tham số đầu vào không còn làm thay đổi lô-gic truy vấn hay để lộ thông báo lỗi CSDL; "
+                f"(2) xác nhận truy vấn hợp lệ vẫn trả kết quả đúng (regression test)."
+            )
+        elif cwe_code == 'CWE-79':
+            rem_goal = (
+                f"Đảm bảo toàn bộ dữ liệu đầu vào phản hồi từ {component} được mã hóa đúng ngữ cảnh hiển thị trước khi dựng trang HTML/kịch bản, "
+                f"ngăn chặn thực thi mã kịch bản phía trình duyệt theo khuyến nghị OWASP."
+            )
+            retest_check = (
+                f"Kiểm tra lại {component} đối chiếu bằng chứng `{ev_ref_str}`: "
+                f"(1) xác nhận các ký tự điều khiển HTML/JavaScript được mã hóa an toàn trong phản hồi HTTP; "
+                f"(2) xác nhận hiển thị giao diện bình thường không bị lỗi ký tự (regression test)."
+            )
+        elif cwe_code in {'CWE-306', 'CWE-287', 'CWE-521', 'CWE-1393', 'CWE-798'}:
+            rem_goal = (
+                f"Thiết lập cơ chế xác thực mạnh, loại bỏ thông tin đăng nhập mặc định/rỗng và giới hạn phạm vi tiếp xúc mạng cho dịch vụ tại {component} theo khuyến nghị OWASP."
+            )
+            retest_check = (
+                f"Kiểm tra lại dịch vụ tại {component} đối chiếu bằng chứng `{ev_ref_str}`: "
+                f"(1) xác nhận kết nối không xác thực hoặc dùng thông tin mặc định bị từ chối hoàn toàn; "
+                f"(2) xác nhận kết nối từ ứng dụng được cấp phép vẫn hoạt động ổn định (regression test)."
+            )
+        elif cwe_code in {'CWE-319', 'CWE-295', 'CWE-311', 'CWE-327'}:
+            rem_goal = (
+                f"Đảm bảo kênh truyền thông tới dịch vụ tại {component} chỉ sử dụng giao thức TLS mạnh, bộ mã an toàn và chứng chỉ hợp lệ theo khuyến nghị OWASP."
+            )
+            retest_check = (
+                f"Kiểm tra lại phiên bắt tay mật mã tại {component} đối chiếu bằng chứng `{ev_ref_str}`: "
+                f"(1) xác nhận dịch vụ từ chối hoàn toàn giao thức cũ/bộ mã yếu và chỉ chấp nhận TLS 1.2/1.3 với chứng chỉ hợp lệ; "
+                f"(2) xác nhận ứng dụng kết nối bình thường qua TLS mới (regression test)."
+            )
+        else:
+            rem_goal = (
+                f"Khắc phục triệt để điểm yếu bảo mật tại {component} thuộc phân loại `{friendly_cwe}`, "
+                f"đảm bảo cấu hình và kiểm soát an toàn tuân thủ khuyến nghị chính thức của OWASP."
+            )
+            retest_check = (
+                f"Kiểm tra lại {component} đối chiếu trực tiếp với bằng chứng `{ev_ref_str}`: "
+                f"(1) xác nhận dấu hiệu kỹ thuật của điểm yếu không còn tái hiện; "
+                f"(2) xác nhận chức năng nghiệp vụ liên quan vận hành bình thường (regression test)."
+            )
         rem_reason = (
             f"Các biện pháp được chọn trực tiếp từ kho tri thức OWASP dựa trên mã điểm yếu `{friendly_cwe}`, "
             f"bằng chứng thực tế `{', '.join(e['id'] for e in ev_items) or 'Chưa có'}` trên `{db_layer}`"
             + (f" và đặc thù hệ quản trị `{dbms_summary}`." if dbms_summary != 'Chưa xác định từ dữ liệu đầu vào' else '.')
-        )
-
-        retest_check = (
-            f"Kiểm tra lại {component} với các mẫu đầu vào kiểm thử tương đương bằng chứng `{', '.join(e['id'] for e in ev_items) or fid}`: "
-            f"(1) xác nhận ứng dụng/dịch vụ xử lý an toàn đầu vào mà không phát sinh lỗi cú pháp CSDL hay rò rỉ dữ liệu; "
-            f"(2) xác nhận chức năng nghiệp vụ hợp lệ vẫn hoạt động đúng (regression test)."
         )
         retest_method = (
             f"Chạy lại công cụ `{sanitize(row.get('tool') or 'kiểm thử bảo mật')}` cùng bộ tham số phạm vi tương đương bản quét `{src_id}`, "
             f"kết hợp rà soát đối chiếu mã nguồn/cấu hình sau khi áp dụng bản vá."
         )
 
+        extra_ai_notes = [
+            clean_internal_jargon(o)
+            for o in ai_obs[1:]
+            if clean_internal_jargon(o)
+        ]
         ev_prof = evidence_profile(row)
         clean_title = clean_internal_jargon(sanitize(row.get('title') or 'Phát hiện kiểm thử bảo mật')) or sanitize(row.get('title') or 'Phát hiện kiểm thử bảo mật')
         findings_out.append({
@@ -845,6 +922,8 @@ def prepare_dbsec_report(report: dict) -> dict:
             'source_id': src_id,
             'title': clean_title,
             'component': component,
+            'cwe_code': cwe_code,
+            'db_layer': db_layer,
             'owasp_doc': owasp_doc_name,
             'owasp_version': owasp_doc_ver,
             'owasp_category': cat_full,
@@ -857,6 +936,7 @@ def prepare_dbsec_report(report: dict) -> dict:
             'state_detail': f"{state} ({ev_prof['label_vi']} — {ev_prof['note_vi']})",
             'evidences': ev_items,
             'evidence_ids': [e['id'] for e in ev_items],
+            'ai_notes': extra_ai_notes,
             'excluded_http_note': excluded_pkt_note,
             'severity_basis': sev_basis,
             'unknown_factors': unknown_factors,
@@ -877,6 +957,20 @@ def prepare_dbsec_report(report: dict) -> dict:
         })
 
     # --- Section 2.2 Data Quality Assessment ---
+    was_redacted = (
+        redaction_stats['secrets_masked'] > 0
+        or redaction_stats['paths_masked'] > 0
+        or bool(ip_map)
+        or any('[REDACTED' in str(e.get('snippet') or '') for e in all_evidences)
+    )
+    present_cwes = {f['cwe_code'] for f in findings_out if f['cwe_code']}
+    has_query_findings = bool(present_cwes & {'CWE-89', 'CWE-564', 'CWE-943'})
+    has_xss_findings = 'CWE-79' in present_cwes
+    has_auth_findings = bool(present_cwes & {'CWE-306', 'CWE-287', 'CWE-521', 'CWE-1393', 'CWE-798'})
+    has_tls_findings = bool(present_cwes & {'CWE-319', 'CWE-295', 'CWE-311', 'CWE-327'})
+    has_app_findings = any('://' in f['component'] for f in findings_out) or has_query_findings or has_xss_findings
+    has_net_findings = any(not ('://' in f['component']) for f in findings_out) or has_auth_findings or has_tls_findings
+
     have_bits: list[str] = []
     if targets:
         have_bits.append(f"địa chỉ/mục tiêu kiểm thử ({'; '.join(targets[:3])})")
@@ -885,32 +979,52 @@ def prepare_dbsec_report(report: dict) -> dict:
     if scan_ctx.get('auth_context'):
         have_bits.append(f"ngữ cảnh xác thực ({sanitize(scan_ctx['auth_context'])})")
     if all_evidences:
-        have_bits.append(f"{len(all_evidences)} mục bằng chứng kỹ thuật được đánh mã (`{all_evidences[0]['id']}`..`{all_evidences[-1]['id']}`)")
+        ev_span = (
+            f"`{all_evidences[0]['id']}`"
+            if len(all_evidences) == 1
+            else f"`{all_evidences[0]['id']}`..`{all_evidences[-1]['id']}`"
+        )
+        have_bits.append(f"{len(all_evidences)} mục bằng chứng kỹ thuật được đánh mã ({ev_span})")
     if any('HTTP' in e['kind'] for e in all_evidences):
-        have_bits.append('bản ghi gói tin HTTP Request/Response nguyên văn (đã che thông tin phiên nhạy cảm `[REDACTED]`)')
+        redact_tag = ' (đã che thông tin phiên nhạy cảm `[REDACTED]`)' if was_redacted else ''
+        have_bits.append(f"bản ghi gói tin HTTP Request/Response nguyên văn{redact_tag}")
+    if findings_out and all(f['severity_key'] != 'unknown' for f in findings_out):
+        have_bits.append('nhãn mức độ nghiêm trọng gốc đầy đủ trên toàn bộ phát hiện')
     if not have_bits:
         have_bits.append(f"tệp đầu vào `{input_sources[0]['name']}` định dạng `{input_sources[0]['source']}`")
 
-    missing_bits: list[str] = [
-        'mã nguồn ứng dụng phía máy chủ và tệp cấu hình gốc của hệ quản trị CSDL (do kiểm thử hộp đen từ bên ngoài)',
-    ]
+    missing_bits: list[str] = []
+    if has_app_findings and has_net_findings:
+        missing_bits.append('mã nguồn ứng dụng phía máy chủ và tệp cấu hình gốc trên máy chủ đích (do kiểm thử hộp đen từ bên ngoài)')
+    elif has_app_findings:
+        missing_bits.append('mã nguồn ứng dụng phía máy chủ và tệp cấu hình kết nối CSDL (do kiểm thử hộp đen từ bên ngoài)')
+    elif has_net_findings:
+        missing_bits.append('tệp cấu hình trực tiếp trên máy chủ dịch vụ đích (do quét kiểm thử từ bên ngoài qua mạng)')
+    else:
+        missing_bits.append('thông tin cấu hình nội bộ chi tiết của hệ thống đích ngoài phạm vi bản quét cung cấp')
+
     for g in scan_ctx.get('repro_gaps') or []:
         if str(g).strip():
             missing_bits.append(str(g).strip().rstrip('.'))
     if any(f['severity_key'] == 'unknown' for f in findings_out):
         missing_bits.append('nhãn mức độ nghiêm trọng / điểm CVSS gốc trên các bản ghi do công cụ dòng lệnh không tự gán điểm')
-    if any(f['state'] == STATE_TENTATIVE for f in findings_out):
-        missing_bits.append('bằng chứng thực thi độc lập trên trình duyệt cho các ghi nhận dò sơ bộ (`Có dấu hiệu`)')
-    if retest_status_meta == 'Chưa thực hiện':
+    if any(f['state'] in {STATE_TENTATIVE, STATE_INSUFFICIENT} for f in findings_out):
+        missing_bits.append('bằng chứng xác minh độc lập cho các ghi nhận chưa đủ điều kiện xác nhận (`Có dấu hiệu` / `Chưa đủ dữ liệu`)')
+    if findings_out and retest_status_meta == 'Chưa thực hiện':
         missing_bits.append('nhật ký kiểm thử lại (retest) sau khi triển khai khắc phục')
 
+    redact_limit_clause = (
+        ', và các thông tin nhạy cảm về phiên/đường dẫn cục bộ đã được làm sạch bằng `[REDACTED]`.'
+        if was_redacted
+        else '.'
+    )
     quality_assessment = {
         'present': '; '.join(have_bits) + '.',
         'missing': '; '.join(dict.fromkeys(missing_bits)) + '.',
         'analytic_limits': (
             'Phân tích chỉ kết luận trên các thành phần, tham số và dịch vụ thực sự xuất hiện trong tệp đầu vào; '
-            'mọi nhận định về nguyên nhân ở tầng mã nguồn chỉ được trình bày dưới dạng giả thuyết kỹ thuật cần đối chiếu thực tế, '
-            'và các thông tin nhạy cảm về phiên/đường dẫn cục bộ đã được làm sạch bằng `[REDACTED]`.'
+            'mọi nhận định về nguyên nhân ở tầng mã nguồn/cấu hình nội bộ chỉ được trình bày dưới dạng giả thuyết kỹ thuật cần đối chiếu thực tế'
+            + redact_limit_clause
         ),
     }
 
@@ -918,6 +1032,14 @@ def prepare_dbsec_report(report: dict) -> dict:
     mode_raw = str(work.get('mode') or 'demo-no-ai')
     model_raw = str(work.get('model') or 'none')
     is_ai_mode = mode_raw not in {'demo-no-ai', 'none', ''}
+    cs_total = _bundled_cheatsheet_count()
+    cs_count_phrase = f"bộ {cs_total} tài liệu chính thức thuộc " if cs_total else 'bộ tài liệu chính thức thuộc '
+    matched_doc_titles = [d['title'] for d in cited_owasp_docs.values()]
+    matched_doc_clause = (
+        f" Tài liệu đối chiếu trực tiếp cho bản quét này: {', '.join(f'`{t}`' for t in matched_doc_titles[:6])}."
+        if matched_doc_titles
+        else ''
+    )
     methodology = {
         'method': (
             'Phân tích kết hợp hai tầng (Hybrid Deterministic + Extractive OWASP RAG + Local AI Verification): '
@@ -933,8 +1055,8 @@ def prepare_dbsec_report(report: dict) -> dict:
             + (f"Mô hình ngôn ngữ cục bộ: `{model_raw}`." if is_ai_mode else 'Chế độ Demo cục bộ (`--demo`, không gọi LLM).')
         ),
         'references': (
-            'OWASP Top 10:2025 (Web Application Security Risks) và bộ 25 tài liệu chính thức thuộc '
-            'OWASP Cheat Sheet Series tập trung vào bảo mật CSDL, truy vấn tham số hóa, xác thực, phân quyền, mã hóa và xử lý lỗi (CC BY-SA 4.0).'
+            f"OWASP Top 10:2025 (Web Application Security Risks) và {cs_count_phrase}"
+            f"OWASP Cheat Sheet Series chuyên biệt bảo mật CSDL (CC BY-SA 4.0).{matched_doc_clause}"
         ),
         'criteria': (
             'Trạng thái phát hiện gồm 4 mức: `Đã xác nhận` (có bằng chứng phản hồi/thực thi kỹ thuật trực tiếp), '
@@ -1005,10 +1127,31 @@ def prepare_dbsec_report(report: dict) -> dict:
             verify_items.append(
                 f"Xác minh thủ công `{f['id']}` ({f['title']}) tại {f['component']} để phân định rõ dương tính thật hay cảnh báo nhiễu."
             )
-    verify_items.append(
-        'Đối chiếu trực tiếp mã nguồn tầng truy cập dữ liệu và cấu hình phân quyền tài khoản CSDL (`GRANT` / vai trò kết nối) để kiểm chứng các giả thuyết nguyên nhân tại Mục 6.6.'
-    )
-    if retest_status_meta == 'Chưa thực hiện':
+    if has_query_findings:
+        verify_items.append(
+            'Đối chiếu trực tiếp mã nguồn tầng truy cập dữ liệu và cấu hình phân quyền tài khoản CSDL (`GRANT` / vai trò kết nối) để kiểm chứng giả thuyết nguyên nhân tại Mục 6.6.'
+        )
+    if has_xss_findings:
+        verify_items.append(
+            'Kiểm tra cơ chế mã hóa đầu ra theo ngữ cảnh (output encoding / auto-escaping) tại tầng giao diện của các điểm cuối bị ảnh hưởng.'
+        )
+    if has_auth_findings:
+        verify_items.append(
+            'Kiểm tra tệp cấu hình xác thực dịch vụ CSDL, chính sách mật khẩu và quy tắc giới hạn giao diện mạng lắng nghe trên máy chủ đích.'
+        )
+    if has_tls_findings:
+        verify_items.append(
+            'Kiểm tra cấu hình giao thức TLS, danh sách bộ mã (cipher suites) và chuỗi chứng chỉ số trực tiếp trên dịch vụ đích.'
+        )
+    if findings_out and not (has_query_findings or has_xss_findings or has_auth_findings or has_tls_findings):
+        verify_items.append(
+            'Đối chiếu mã nguồn/tệp cấu hình trực tiếp trên thành phần bị ảnh hưởng để kiểm chứng các giả thuyết nguyên nhân tại Mục 6.6.'
+        )
+    if not findings_out:
+        verify_items.append(
+            'Mở rộng phạm vi kịch bản kiểm thử chủ động hoặc rà soát cấu hình nội bộ nếu cần đánh giá sâu hơn ngoài phạm vi bản quét hiện tại.'
+        )
+    if findings_out and retest_status_meta == 'Chưa thực hiện':
         verify_items.append(
             'Thực hiện đầy đủ kế hoạch kiểm tra lại (retest) tại Mục 7.5 sau khi triển khai bản vá để có bằng chứng đóng lỗ hổng.'
         )
@@ -1219,6 +1362,8 @@ def render_dbsec_markdown(report: dict) -> str:
             ])
         if f['excluded_http_note']:
             out.append(f"- *Lưu ý lọc nhiễu bằng chứng:* {f['excluded_http_note']}")
+        for ai_n in f.get('ai_notes') or []:
+            out.append(f"- **Diễn giải kỹ thuật từ dữ liệu đầu vào:** {ai_n}")
         out.extend([
             '',
             '#### 6.4. Phân loại OWASP',

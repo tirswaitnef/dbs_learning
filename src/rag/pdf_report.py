@@ -330,6 +330,8 @@ def render_pdf(report, path):
             add_bullet(f"**Giải thích bằng chứng:** {ev['explanation']}")
         if f['excluded_http_note']:
             add_bullet(f"**Lưu ý lọc nhiễu bằng chứng:** {f['excluded_http_note']}")
+        for ai_n in f.get('ai_notes') or []:
+            add_bullet(f"**Diễn giải kỹ thuật từ dữ liệu đầu vào:** {ai_n}")
 
         story.append(Paragraph('6.4. Phân loại OWASP', sub2_st))
         add_bullet(f"**Tài liệu:** {f['owasp_doc']} | **Phiên bản:** {f['owasp_version']}")
