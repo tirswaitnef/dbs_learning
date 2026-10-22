@@ -579,7 +579,12 @@ def _enrich_ai_with_structured(ai_findings: list[Finding], structured_findings: 
             sf = structured_findings[best_idx]
             sdet = sf.details or {}
             # Carry over full raw HTTP packets / rule provenance / telemetry when structured export also had them
-            for key in ('http_messages', 'scanner_rule', 'rule_references', 'rule_cheatsheets', 'rule_id', 'cwes', 'cves', 'raw_xml', 'raw_alert'):
+            if sdet.get('http_messages'):
+                s_msgs = list(sdet['http_messages'])
+                a_msgs = list(adet.get('http_messages') or [])
+                if len(s_msgs) > len(a_msgs) or sum(len(str(m)) for m in s_msgs) > sum(len(str(m)) for m in a_msgs):
+                    adet['http_messages'] = s_msgs + [m for m in a_msgs if m not in s_msgs][:2]
+            for key in ('scanner_rule', 'rule_references', 'rule_cheatsheets', 'rule_id', 'cwes', 'cves', 'raw_xml', 'raw_alert'):
                 if sdet.get(key) and not adet.get(key):
                     adet[key] = sdet[key]
             if sdet.get('scan_telemetry'):
