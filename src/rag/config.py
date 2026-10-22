@@ -36,7 +36,7 @@ class Settings:
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_model: str = ""
     ollama_num_ctx: int = 8192
-    ollama_timeout: int = 300
+    ollama_timeout: int = 600
     api_key: str = ""
     chat_model: str = ""
 
@@ -91,7 +91,7 @@ def load_settings():
         ollama_base_url=env("OLLAMA_BASE_URL", Settings.ollama_base_url) or Settings.ollama_base_url,
         ollama_model=env("OLLAMA_MODEL", ""),
         ollama_num_ctx=int(env("OLLAMA_NUM_CTX", "8192") or "8192"),
-        ollama_timeout=int(env("OLLAMA_TIMEOUT", "300") or "300"),
+        ollama_timeout=max(600, int(env("OLLAMA_TIMEOUT", "600") or "600")),
         api_key=env("GEMINI_API_KEY", ""),
         chat_model=env("GEMINI_CHAT_MODEL", ""),
     )

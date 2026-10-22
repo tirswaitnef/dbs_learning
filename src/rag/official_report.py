@@ -359,10 +359,11 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                     if key not in merged or hit['score']>merged[key]['score']:
                         merged[key]=hit
             return sorted(merged.values(),key=lambda h:-h['score'])
+    shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
     report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
-                              scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest())
+                              scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest(),llm=shared_llm)
     from .report_view import attach_context
     attach_context(report,scan_path,format_,report_metadata,display_filename)
     from .analysis import enrich_report
-    enrich_report(report,settings,progress=progress)
+    enrich_report(report,settings,llm=shared_llm,progress=progress)
     return write_report(report,output)

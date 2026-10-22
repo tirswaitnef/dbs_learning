@@ -79,17 +79,21 @@ def detect_lab_indicator(rows):
                 basis.append("tham số 'Submit=Submit'")
             if basis:
                 return {'name':label,'description':desc,'basis':', '.join(basis),
-                        'note_vi':f"Dấu hiệu đầu vào ({', '.join(basis)}) trùng khớp {label} — {desc.lower()}."}
+                        'note_vi':f"Dấu hiệu đầu vào ({', '.join(basis)}) trùng khớp {label} — {desc.lower()} [quy tắc nhận diện tĩnh trong code dự án]."}
     return None
 
 
 def detect_eol_banners(rows):
     found=[]
+    seen_notes=set()
     for row in rows:
         blob=_row_corpus_text(row)
         for pattern,note in EOL_SIGNATURES:
-            if pattern.search(blob) and note not in found:
-                found.append(note)
+            m=pattern.search(blob)
+            if m and note not in seen_notes:
+                seen_notes.add(note)
+                banner=re.sub(r'\s+',' ',m.group(0)).strip()
+                found.append(f"Banner đầu vào '{banner}' -> {note} [quy tắc đối chiếu tĩnh trong code dự án, không do AI suy đoán]")
     return found
 
 
@@ -265,12 +269,16 @@ def context_source_text(row):
         if tel.get('current_db'):id_seg.append(f"current database='{tel['current_db']}'")
         if tel.get('is_dba') is not None:id_seg.append(f"quyền DBA={'True' if tel['is_dba'] else 'False'}")
         parts.append("Thông tin tài khoản CSDL từ log: "+"; ".join(id_seg)+".")
+    if d.get('cvss_score') or d.get('cvss_vector'):
+        cv_seg=str(d.get('cvss_score') or '')
+        if d.get('cvss_vector'):cv_seg=(cv_seg+' | '+str(d['cvss_vector'])).strip(' |')
+        parts.append(f"Điểm và vector CVSS đã cung cấp sẵn từ đầu vào: {cv_seg}.")
     if tel.get('auth_context'):
-        parts.append("Ngữ cảnh xác thực ghi nhận: "+tel['auth_context']+".")
+        parts.append("Ngữ cảnh xác thực đã cung cấp đầy đủ: "+tel['auth_context']+" (giá trị token phiên được che [REDACTED] có chủ đích để bảo mật báo cáo, đã xác định rõ quyền phiên đăng nhập).")
     lab=detect_lab_indicator([row])
     if lab:parts.append(lab['note_vi'])
     eol=detect_eol_banners([row])
-    if eol:parts.append("Cảnh báo vòng đời nền tảng từ banner: "+"; ".join(eol)+".")
+    if eol:parts.append("Đối chiếu vòng đời nền tảng từ banner (quy tắc tĩnh trong code): "+"; ".join(eol)+".")
     t_bits=[]
     if tel.get('tool_version'):t_bits.append(f"phiên bản công cụ {tel['tool_version']}")
     if tel.get('scan_start'):t_bits.append(f"thời gian {tel['scan_start']}"+(f" đến {tel['scan_end']}" if tel.get('scan_end') else ""))

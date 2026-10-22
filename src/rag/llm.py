@@ -88,12 +88,14 @@ class OllamaLLM:
         self.base_url, self._loopback = _normalize_ollama_url(settings.ollama_base_url)
         self.model = model
         self.num_ctx = settings.ollama_num_ctx
+        self._active_ctx = self.num_ctx
         self.timeout = settings.ollama_timeout
         self.max_retries = max_retries
         self._sleep = sleep
 
     def generate(self, prompt, *, system, schema):
-        ctx = max(self.num_ctx, 16384) if len(prompt) + len(system) > 12000 else self.num_ctx
+        ctx = max(self._active_ctx, 16384 if len(prompt) + len(system) > 12000 else self.num_ctx)
+        self._active_ctx = ctx
         payload = {
             "model": self.model,
             "messages": [
@@ -105,12 +107,21 @@ class OllamaLLM:
             "think": False,
             "options": {
                 "temperature": 0,
+                "repeat_penalty": 1.08,
                 "num_ctx": ctx,
                 "num_predict": 2500,
             },
         }
-        raw_body = None
+        last_reason = "empty response"
         for attempt in range(self.max_retries + 1):
+            if attempt > 0:
+                payload["options"] = {
+                    **payload["options"],
+                    "temperature": min(0.35, round(0.15 * attempt, 2)),
+                    "repeat_penalty": 1.15,
+                    "top_p": 0.9,
+                    "num_predict": 3500,
+                }
             req = urllib.request.Request(
                 f"{self.base_url}/api/chat",
                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -120,7 +131,6 @@ class OllamaLLM:
             try:
                 with _http_open(req, loopback=self._loopback, timeout=self.timeout) as resp:
                     raw_body = resp.read().decode("utf-8")
-                break
             except urllib.error.HTTPError as exc:
                 err_body = ""
                 try:
@@ -141,19 +151,40 @@ class OllamaLLM:
                     f"Ollama HTTP {exc.code} at {self.base_url}; check model '{self.model}'"
                 ) from None
             except Exception as exc:
+                last_reason = type(exc).__name__
+                if isinstance(exc, (TimeoutError, ConnectionResetError)) and attempt < self.max_retries:
+                    self._sleep(1.5 * (attempt + 1))
+                    continue
                 raise RuntimeError(
-                    f"Ollama request failed at {self.base_url} ({type(exc).__name__}); "
+                    f"Ollama request failed at {self.base_url} ({last_reason}); "
                     f"ensure Ollama is running and check OLLAMA_TIMEOUT"
                 ) from None
-        try:
-            parsed = json.loads(raw_body or "")
-        except ValueError:
-            raise RuntimeError("Ollama returned invalid HTTP JSON envelope") from None
-        content = ((parsed.get("message") or {}).get("content") or "").strip()
-        content = _strip_code_fence(content)
-        if not content:
-            raise RuntimeError("Ollama returned empty message content")
-        return content
+            try:
+                parsed = json.loads(raw_body or "")
+            except ValueError:
+                last_reason = "invalid HTTP JSON envelope"
+                if attempt < self.max_retries:
+                    self._sleep(1.0 * (attempt + 1))
+                    continue
+                raise RuntimeError("Ollama returned invalid HTTP JSON envelope") from None
+            content = ((parsed.get("message") or {}).get("content") or "").strip()
+            content = _strip_code_fence(content)
+            if not content:
+                last_reason = "empty message content"
+                if attempt < self.max_retries:
+                    self._sleep(1.0 * (attempt + 1))
+                    continue
+                raise RuntimeError("Ollama returned empty message content")
+            if schema:
+                try:
+                    json.loads(content)
+                except ValueError:
+                    last_reason = "truncated or malformed JSON output"
+                    if attempt < self.max_retries:
+                        self._sleep(1.0 * (attempt + 1))
+                        continue
+            return content
+        raise RuntimeError(f"Ollama failed after retries ({last_reason})")
 
 
 class GeminiLLM:

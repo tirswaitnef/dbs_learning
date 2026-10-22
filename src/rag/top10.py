@@ -55,7 +55,10 @@ def classify(finding):
     result = {'version': '2025', 'cwe': cwe, 'cwes': cwes, 'categories': [], 'mapping_commit': data['commit'],
               'basis': 'Exact CWE membership in OWASP List of Mapped CWEs; CWE is supplied by input, not independently verified.'}
     if kind == 'observation':
-        return {**result, 'status': 'observation', 'reason': 'Quan sát dịch vụ; chưa phải phát hiện lỗ hổng để đề xuất khắc phục.'}
+        reason = ('Dấu hiệu heuristic sơ bộ (chưa xác nhận lỗ hổng và ngoài phạm vi CSDL); không tự động gắn hướng dẫn khắc phục.'
+                  if cwe == 'CWE-79'
+                  else 'Quan sát dịch vụ; chưa phải phát hiện lỗ hổng để đề xuất khắc phục.')
+        return {**result, 'status': 'observation', 'reason': reason}
     if not cwes:
         return {**result, 'status': 'unknown', 'reason': 'Chưa xác định CWE duy nhất từ kiểm thử; chưa đủ căn cứ phân loại OWASP Top 10:2025.'}
     if len(cwes) == 1:

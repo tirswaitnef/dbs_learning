@@ -37,17 +37,22 @@ Write like an experienced security analyst with finding-specific prose:
   When multiple SQLi techniques succeed on one parameter, describe it accurately as ONE injection point confirmed
   via N techniques (never N separate vulnerabilities). State any exploitation results ALREADY achieved in the log
   (e.g. extracted schemas, separating application schemas like 'dvwa' from DBMS system schemas like 'information_schema'),
-  note intentional lab environment indicators in C1 (e.g. DVWA — Damn Vulnerable Web Application), EOL banners,
-  or heuristic warnings when present in C1/E*.
+  and note lab environment indicators (e.g. DVWA) or heuristic warnings when present in C1/E*.
+  IMPORTANT: When mentioning EOL lifecycle notes or lab recognition from C1, clearly separate what the scanner recorded
+  (raw OS/server banner strings) from what the project's static lookup rule matched ("Công cụ ghi nhận banner ...; theo
+  quy tắc đối chiếu tĩnh của dự án, phiên bản này...") — NEVER claim the scanner tool itself output EOL dates!
 - In potential_impacts, ALWAYS begin with conditional phrasing ("Nếu...", "Trong trường hợp...") and describe
   ONLY further downstream impacts beyond what the scan already extracted (e.g. reading/altering tables inside the
   application schema or privilege abuse if deployed on a real system; frame impacts soberly if C1 notes a lab target).
   Leave potential_impacts empty if sources show only a benign port observation.
-- In limitations, state concrete missing context or unverified aspects from M4/C1 ("Log chưa lưu URL đầy đủ...",
-  "Thiếu cookie/ngữ cảnh xác thực để tính vector CVSS...", "Chưa kiểm chứng thủ công...").
+- In limitations, state ONLY genuine remaining limits of THIS record supported by M2/M3/M4/C1 (for instance:
+  non-destructive PoC stopped at schema/table names without dumping row contents, heuristic nature without exploitation,
+  or lack of independent manual retesting). NEVER claim URL, authentication cookie/session, or CVSS score/vector is
+  missing when M2, M3, or C1 already provides them ([REDACTED] means sensitive session tokens were masked intentionally
+  for safety, NOT missing)! Only mention missing URL/auth/DB user if C1 explicitly says "Giới hạn tái hiện" or "thiếu".
 NEVER write action verbs or advice ("cần", "nên", "phải", "hãy", "khuyến nghị") in ANY section.
 Metadata M4 alone is not enough for an observation when C1 or an E evidence source is available.
-Preserve source severity; never invent CVSS numbers. No remediation, code, commands or URLs in ANY section.
+Preserve source severity and any input CVSS score/vector in M2/C1; never invent CVSS numbers. No remediation, code, commands or URLs in ANY section.
 Stay strictly consistent with K1 and C1. Output plain prose, no Markdown.
 '''
 REVIEW_SYSTEM = '''Audit the proposed Vietnamese analysis against ONLY the provided source strings.
@@ -142,19 +147,24 @@ def _match_in_sources(sid, quote, sources):
 
 def input_sources(row):
     # Never send raw details/request collections or full reports to the model.
+    from .report_view import MISSING, context_source_text, technical_fields
+    technical=technical_fields(row)
+    cvss_part=''
+    if technical['cvss']!=MISSING:
+        cvss_part=f"; CVSS từ đầu vào: {technical['cvss']}"
+        if technical['cvss_vector']!=MISSING:
+            cvss_part+=f" (vector: {technical['cvss_vector']})"
     sources={
         'M1':redact('Tên phát hiện do kiểm thử cung cấp: '+row['title'])[:1200],
-        'M2':redact(f"CWE: {cwe_label(row)} (nguồn CWE: {cwe_origin(row)}); mức độ từ đầu vào: {row['severity']}; loại bản ghi: {row.get('kind','scanner_alert')}")[:1200],
+        'M2':redact(f"CWE: {cwe_label(row)} (nguồn CWE: {cwe_origin(row)}); mức độ từ đầu vào: {row['severity']}{cvss_part}; loại bản ghi: {row.get('kind','scanner_alert')}")[:1200],
         'M3':redact('Vị trí do kiểm thử cung cấp: '+row['location'])[:1200],
         'M4':f"Bằng chứng đầu vào: {len(row['evidence'])} mục. Chưa xác minh độc lập. Phạm vi khắc phục: {row['owasp_top10']['status']}.",
     }
-    from .report_view import context_source_text, technical_fields
-    technical=technical_fields(row)
     if technical['description']:
         sources['D1']=redact('Mô tả do công cụ cung cấp (không phải xác minh độc lập): '+technical['description'])[:2400]
         sources['M5']=redact(f"Công cụ: {row['tool']}; phương thức HTTP: {technical['method']}; tham số: {technical['parameter']}; confidence từ công cụ: {technical['confidence']}")[:1600]
     sources['K1']=redact(ai_source(row))[:1200]
-    sources['C1']=redact(context_source_text(row))[:1800]
+    sources['C1']=redact(context_source_text(row))[:2400]
     if technical['requests']:
         sources['R1']=redact('Request được cung cấp; request đơn lẻ không chứng minh lỗi: '+technical['requests'][0])[:2400]
     truncated=[]
@@ -164,6 +174,28 @@ def input_sources(row):
         if len(clean)>2400:truncated.append(f'E{i}')
     if len(row['evidence'])>8:truncated.append('E9 trở đi không gửi')
     return sources,truncated
+
+
+def _check_context_consistency(cleaned, sources):
+    all_src='\n'.join(sources.values())
+    has_auth='Ngữ cảnh xác thực đã cung cấp đầy đủ:' in all_src
+    has_cvss='CVSS từ đầu vào:' in all_src or 'Điểm và vector CVSS đã cung cấp sẵn từ đầu vào:' in all_src
+    has_full_url=bool(re.search(r'Vị trí do kiểm thử cung cấp:\s*https?://',sources.get('M3','')))
+    if has_auth and re.search(
+        r'(?i)(?:chưa\s+(?:lưu(?:\s+trữ)?|có|cung\s+cấp|ghi\s+nhận)|thiếu|không\s+(?:có|lưu(?:\s+trữ)?|cung\s+cấp|ghi\s+nhận))[^.;]{0,80}\b(?:cookie|xác\s+thực|phiên\s+đăng\s+nhập)',
+        cleaned,
+    ):
+        raise ValueError('Claim contradicts provided authentication/cookie context in C1')
+    if has_cvss and re.search(
+        r'(?i)(?:để\s+tính(?:\s+toán)?|không\s+thể\s+tính(?:\s+toán)?|thiếu|chưa\s+(?:có|cung\s+cấp|xác\s+định))[^.;]{0,60}\b(?:vector\s+|điểm\s+)?cvss\b',
+        cleaned,
+    ):
+        raise ValueError('Claim contradicts provided CVSS score/vector in M2/C1')
+    if has_full_url and re.search(
+        r'(?i)(?:chưa\s+lưu(?:\s+trữ)?|thiếu|không\s+(?:có|lưu(?:\s+trữ)?))[^.;]{0,45}\burl\s+đầy\s+đủ',
+        cleaned,
+    ):
+        raise ValueError('Claim contradicts full target URL provided in M3')
 
 
 def validate(data,sources):
@@ -184,6 +216,7 @@ def validate(data,sources):
             words=re.findall(r'[^\W\d_]+',cleaned)
             if len(words)>=6 and not any(ch in _VI_DIACRITICS for ch in cleaned):
                 raise ValueError('Claim text_vi must be accented Vietnamese')
+            _check_context_consistency(cleaned,sources)
             citations=c['citations']
             if not isinstance(citations,list) or not 1<=len(citations)<=3:raise ValueError('Missing claim references')
             for ref in citations:
@@ -230,8 +263,10 @@ def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None):
             if progress:progress(f"  retry {attempt+1}: {exc}")
             repair_note=(f"Attempt {attempt+1} rejected ({exc}). Edit previous_draft in accented Vietnamese "
                          f"(no CJK, no advice/cần/nên/phải), attribute findings to the scanner ('Công cụ ghi nhận...'), "
-                         f"start every potential_impacts claim with 'Nếu...' or 'Trong trường hợp...', copy exact "
-                         f"verbatim substrings from {list(sources)}, and stay strictly consistent with K1.")
+                         f"start every potential_impacts claim with 'Nếu...' or 'Trong trường hợp...', NEVER claim "
+                         f"cookie/authentication, CVSS vector, or URL is missing if already supplied in M2/M3/C1 "
+                         f"(state true remaining limits such as non-destructive table-only PoC without row dump and no manual retest), "
+                         f"copy exact verbatim substrings from {list(sources)}, and stay strictly consistent with K1.")
             if attempt>=max_repairs:
                 result.update(status='rejected_output',reason_code='schema_or_source_or_review_rejected',
                               detail=str(exc),
@@ -264,7 +299,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
         report['analysis_calls']+=analysis['calls']
         if progress:progress(f"AI analysis {index}/{len(rows)}: {analysis['status']}")
     # Summary source IDs refer to deterministic original records, not unchecked AI prose.
-    from .report_view import extract_scan_context
+    from .report_view import MISSING, extract_scan_context, technical_fields
     scan_ctx=extract_scan_context(report)
     summary_sources={}
     for i,row in enumerate(rows,1):
@@ -272,20 +307,28 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
         frame_text=(f"phạm vi CSDL theo code: {frame.get('relevance','?')}/{frame.get('layer') or 'chưa xác định'}"
                     f"; engine {frame.get('engine') or 'chưa xác định'}"
                     f"; kiểm soát {frame.get('control_label') or 'chưa xác định'}")
-        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:900]}.")
+        tech_r=technical_fields(row)
+        cvss_r=(f"; CVSS từ đầu vào: {tech_r['cvss']}"+(f" ({tech_r['cvss_vector']})" if tech_r['cvss_vector']!=MISSING else '')) if tech_r['cvss']!=MISSING else ''
+        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}{cvss_r}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:900]}.")
     summary_sources['K1']=redact('Khung phạm vi CSDL tổng hợp toàn báo cáo (do code tính): '+(' | '.join(scope_lines(rows)) or str(scope_summary(rows))))[:1600]
     ctx_bits=[]
+    if scan_ctx.get('auth_context'):
+        ctx_bits.append(f"Ngữ cảnh xác thực đã cung cấp đầy đủ: {scan_ctx['auth_context']} (token phiên được che [REDACTED] có chủ đích để bảo mật báo cáo).")
     if scan_ctx.get('lab'):ctx_bits.append(scan_ctx['lab']['note_vi'])
+    if scan_ctx.get('db_identity'):ctx_bits.append(f"Tài khoản & quyền CSDL: {scan_ctx['db_identity']}.")
     if scan_ctx.get('schemas'):
         s_info=scan_ctx['schemas']
         app_txt=', '.join(s_info['application']) or 'không có'
         sys_txt=', '.join(s_info['system']) or 'không có'
-        ctx_bits.append(f"Dữ liệu đã trích xuất trong log — schema ứng dụng: {app_txt}; schema hệ thống DBMS: {sys_txt}.")
-    if scan_ctx.get('eol_notes'):ctx_bits.append('Nền tảng EOL từ banner: '+'; '.join(scan_ctx['eol_notes'])+'.')
+        tbl_part=''
+        if scan_ctx.get('tables_by_db'):
+            tbl_part='; bảng đã liệt kê: '+'; '.join(f"{dbn} ({', '.join(ts)})" for dbn,ts in scan_ctx['tables_by_db'].items())+' (dừng ở cấu trúc bảng, không trích xuất bản ghi)'
+        ctx_bits.append(f"Dữ liệu đã trích xuất trong log — schema ứng dụng: {app_txt}; schema hệ thống DBMS: {sys_txt}{tbl_part}.")
+    if scan_ctx.get('eol_notes'):ctx_bits.append('Đối chiếu vòng đời tĩnh từ banner: '+'; '.join(scan_ctx['eol_notes'])+'.')
     if scan_ctx.get('telemetry_lines'):ctx_bits.append('Thông số phiên quét: '+' | '.join(scan_ctx['telemetry_lines'])+'.')
     if scan_ctx.get('repro_gaps'):ctx_bits.append(' '.join(scan_ctx['repro_gaps']))
     if ctx_bits:
-        summary_sources['C1']=redact('Ngữ cảnh mục tiêu & phiên quét (do code tổng hợp): '+' '.join(ctx_bits))[:1600]
+        summary_sources['C1']=redact('Ngữ cảnh mục tiêu & phiên quét (do code tổng hợp): '+' '.join(ctx_bits))[:2400]
     sev_parts=', '.join(f"{k}={v}" for k,v in report['statistics']['by_input_severity'].items()) or 'không có'
     summary_sources['TOTAL']=(f"Tổng số bản ghi: {report['statistics']['total']}; "
                               f"phân bố mức độ đầu vào: {sev_parts}; "
@@ -310,7 +353,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
         'AI phân tích không được viết khắc phục. Khắc phục chỉ nằm ở phần trích nguyên văn OWASP có kiểm tra phạm vi.',
         'Việc cho phép truy xuất khắc phục vẫn dựa trên CWE và bằng chứng không rỗng, không phải đánh giá độ mạnh bằng chứng.',
         privacy_note,
-        'Khung phạm vi CSDL (K1 trong nguồn) do code tính từ cổng/dịch vụ, CWE và quy tắc dự án; AI bị ràng buộc theo khung đó và không tự gán tầng, engine hay kiểm soát CSDL.',
+        'Khung phạm vi CSDL (K1 trong nguồn), bảng gán CWE (scanner-rules.json), nhận diện môi trường lab và đối chiếu vòng đời EOL từ chuỗi banner đầu vào (EOL_SIGNATURES) đều là các bảng quy tắc tra cứu tĩnh tất định trong code dự án; AI bị ràng buộc theo khung đó và không tự suy đoán.',
         'Kiểm tra trùng lặp văn bản (prose_check) chỉ so khớp câu theo từ, không đánh giá đúng/sai và không chứng minh chất lượng diễn giải.']
     return report
 

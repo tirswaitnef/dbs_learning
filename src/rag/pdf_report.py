@@ -105,7 +105,7 @@ def render_pdf(report, path):
         tbl_lines=[f"{dbn}: {', '.join(ts)}" for dbn,ts in scan_ctx['tables_by_db'].items()]
         scope_pairs.append(('Bảng CSDL đã liệt kê','\n'.join(tbl_lines)))
     if scan_ctx.get('eol_notes'):
-        scope_pairs.append(('Cảnh báo vòng đời (EOL)','\n'.join(scan_ctx['eol_notes'])))
+        scope_pairs.append(('Đối chiếu vòng đời tĩnh (EOL)','\n'.join(scan_ctx['eol_notes'])))
     if scan_ctx.get('repro_gaps'):
         scope_pairs.append(('Giới hạn tái hiện log','\n'.join(scan_ctx['repro_gaps'])))
     if meta.get('roles') or meta.get('excluded_areas'):
@@ -169,7 +169,11 @@ def render_pdf(report, path):
     table(['Mức độ gốc do công cụ gán','Số bản ghi'],sev_rows,[width*.75,width*.25])
     if tier_counts:
         table(['Phân tầng độ mạnh chứng cứ kỹ thuật trong log','Số bản ghi'],[[k,str(v)] for k,v in tier_counts.items()],[width*.75,width*.25])
-    add('Lưu ý phương pháp chấm điểm: các công cụ như sqlmap/nmap không xuất điểm CVSS. Khi log thiếu thông tin xác thực (ví dụ PR:N không cần đăng nhập ~9.8 so với PR:L cần cookie phiên đăng nhập như DVWA ~8.8), hệ thống giữ nguyên mức gốc và hiển thị rõ mức độ chứng cứ khai thác thay vì tự bịa con số CVSS sai lệch.',small)
+    has_input_cvss=any(technical_fields(r)['cvss']!=MISSING for r in rows)
+    if has_input_cvss:
+        add('Lưu ý phương pháp chấm điểm: điểm số và vector CVSS hiển thị tại mục 4 được giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào cung cấp sẵn kèm ngữ cảnh xác thực phiên (hệ thống và AI không tự tính hay tự gán lại CVSS); các bản ghi còn lại không có CVSS giữ nguyên mức độ gốc do công cụ ghi nhận.',small)
+    else:
+        add('Lưu ý phương pháp chấm điểm: các công cụ như sqlmap/nmap không xuất điểm CVSS. Khi log thiếu thông tin xác thực (ví dụ PR:N không cần đăng nhập ~9.8 so với PR:L cần cookie phiên đăng nhập như DVWA ~8.8), hệ thống giữ nguyên mức gốc và hiển thị rõ mức độ chứng cứ khai thác thay vì tự bịa con số CVSS sai lệch.',small)
 
     section(6,'Hướng dẫn khắc phục đa lớp theo OWASP')
     add('Các đoạn dưới đây được trích nguyên văn từ OWASP Cheat Sheet Series (giữ nguyên mã nguồn mẫu và thuật ngữ gốc) nhằm bao phủ phòng vệ theo chiều sâu.',small)
@@ -188,18 +192,22 @@ def render_pdf(report, path):
             story.append(Spacer(1,4))
     if not any(r.get('guidance') for r in rows):add('Không có hướng dẫn đủ điều kiện trong lần xử lý này. Lý do theo từng bản ghi nằm tại mục 4.')
     if scan_ctx.get('eol_notes'):
-        add('Lưu ý nâng cấp hạ tầng từ banner đầu vào (ngoài phạm vi code ứng dụng)',sub)
+        add('Đối chiếu vòng đời hạ tầng từ banner đầu vào (quy tắc tĩnh trong code, ngoài phạm vi code ứng dụng)',sub)
         for note in scan_ctx['eol_notes']:
             add('• '+note)
 
     section(7,'Phụ lục và dấu vết xử lý')
     for item in report.get('limitations',[]):add('• '+str(item),small)
+    ai_trace=[]
+    if report.get('ai_summary'):
+        ai_trace.append(f"Tổng quan AI: {STATUS_LABELS.get((report.get('ai_summary') or {}).get('status'),'Không gọi AI')}")
+    ai_trace.extend(f"{r['id']}: {STATUS_LABELS.get((r.get('ai_analysis') or {}).get('status'),'Không gọi AI')}" for r in rows)
     kv_table([
         ('File kiểm thử',report.get('input_filename') or MISSING),
         ('SHA-256 kiểm thử',report.get('scan_sha256') or MISSING),
         ('SHA-256 kho hướng dẫn OWASP',report.get('knowledge_sha256') or MISSING),
         ('Model AI',report.get('model') or MISSING),
-        ('Trạng thái kiểm tra AI','; '.join(f"{r['id']}: {STATUS_LABELS.get((r.get('ai_analysis') or {}).get('status'),'Không gọi AI')}" for r in rows) or MISSING),
+        ('Trạng thái kiểm tra AI','; '.join(ai_trace) or MISSING),
     ])
     def footer(canvas,doc):
         canvas.setStrokeColor(colors.HexColor('#dbe3e9'));canvas.line(44,39,A4[0]-44,39)

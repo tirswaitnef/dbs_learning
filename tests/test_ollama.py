@@ -332,6 +332,164 @@ class OllamaIntegrationTests(unittest.TestCase):
                 server.server_close()
                 manager.close()
 
+    def test_reviewer_issues_cvss_consistency_ollama_retries_and_static_eol_provenance(self):
+        from dataclasses import asdict
+        from io import BytesIO
+        from rag.analysis import input_sources
+        from rag.db_scope import attach_db_scope
+        from rag.parsers.native import parse_sqlmap_log
+        from rag.pdf_report import render_pdf
+        from rag.report_view import extract_scan_context
+        from rag.top10 import classify
+
+        # 1) Issue 2: monotonic runner num_ctx (no 16384 -> 8192 drop), retry on empty/truncated/timeout, and 600s .env floor.
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = Path(tmp) / ".env"
+            env_path.write_text("LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen3:4b\nOLLAMA_TIMEOUT=120\n", encoding="utf-8")
+            with patch("rag.config.ROOT", Path(tmp)), patch.dict(os.environ, {}, clear=False):
+                os.environ.pop("OLLAMA_TIMEOUT", None)
+                s_floor = load_settings()
+                self.assertEqual(s_floor.ollama_timeout, 600)
+
+        with mock_ollama_server(installed_models=("qwen3:4b",)) as (url, state):
+            llm = OllamaLLM(Settings(llm_provider="ollama", ollama_base_url=url, ollama_model="qwen3:4b"), sleep=lambda _: None)
+            llm.generate(json.dumps([{"finding_id": "F1", "pad": "x" * 13000, "candidates": []}]), system="select", schema={"type": "object", "properties": {"items": {"type": "array"}}})
+            llm.generate(json.dumps([{"finding_id": "F1", "candidates": []}]), system="select", schema={"type": "object", "properties": {"items": {"type": "array"}}})
+            self.assertEqual(state["requests"][0]["options"]["num_ctx"], 16384)
+            self.assertEqual(state["requests"][1]["options"]["num_ctx"], 16384)
+
+        responses = [
+            TimeoutError("simulated slow CPU generation"),
+            json.dumps({"message": {"content": "   "}}),
+            json.dumps({"message": {"content": '{"items": ['}}),
+            json.dumps({"message": {"content": '{"items": []}'}}),
+        ]
+
+        class _FakeResp:
+            def __init__(self, body):
+                self._body = body.encode("utf-8")
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        seen_payloads = []
+
+        def fake_open(req, *, loopback, timeout):
+            seen_payloads.append(json.loads(req.data.decode("utf-8")))
+            nxt = responses.pop(0)
+            if isinstance(nxt, Exception):
+                raise nxt
+            return _FakeResp(nxt)
+
+        with patch("rag.llm._http_open", side_effect=fake_open):
+            llm = OllamaLLM(
+                Settings(llm_provider="ollama", ollama_base_url="http://127.0.0.1:11434", ollama_model="qwen3:4b"),
+                max_retries=4,
+                sleep=lambda _: None,
+            )
+            out = llm.generate("{}", system="sys", schema={"type": "object", "properties": {"items": {"type": "array"}}})
+            self.assertEqual(json.loads(out), {"items": []})
+            self.assertEqual(len(seen_payloads), 4)
+            self.assertGreater(seen_payloads[-1]["options"]["temperature"], 0)
+            self.assertGreaterEqual(seen_payloads[-1]["options"]["repeat_penalty"], 1.15)
+
+        # 2) Issue 1 & Issue 3: CVSS/auth consistency guard + explicit static code rule provenance on EOL banners.
+        pentest_log = (
+            "Target URL: http://198.51.100.42/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+            "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=[REDACTED]; security=low)\n"
+            "CVSS: 8.1 (High) | CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N\n"
+            "[10:00:01] [INFO] the back-end DBMS is MySQL\n"
+            "web server operating system: Linux Debian 9 (stretch)\n"
+            "web application technology: Apache 2.4.25, PHP 7.0.33\n"
+            "back-end DBMS: MySQL >= 5.0.12 (MariaDB fork)\n"
+            "Parameter: id (GET)\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based - WHERE, HAVING, ORDER BY or GROUP BY clause (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(2172,CONCAT(0x5c,0x71787a7a71))-- cWfP&Submit=Submit\n"
+            "available databases [2]:\n[*] dvwa\n[*] information_schema\n"
+            "current user: 'app@localhost'\n"
+            "current database: 'dvwa'\n"
+            "current user is DBA: False\n"
+            "Database: dvwa\n[2 tables]\n+-----------+\n| guestbook |\n| users     |\n+-----------+\n"
+        )
+        parsed = parse_sqlmap_log(pentest_log, "pentest_full.txt")
+        row = {**asdict(parsed[0]), "owasp_top10": classify(parsed[0]), "guidance": []}
+        attach_db_scope({"findings": [row]})
+        srcs, _ = input_sources(row)
+        self.assertIn("CVSS từ đầu vào: 8.1 (vector: CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N)", srcs["M2"])
+        self.assertIn("Ngữ cảnh xác thực đã cung cấp đầy đủ:", srcs["C1"])
+        self.assertIn("Điểm và vector CVSS đã cung cấp sẵn từ đầu vào: 8.1", srcs["C1"])
+
+        contradictory_draft = {
+            "observations": [{
+                "text_vi": "Công cụ sqlmap ghi nhận tham số id trên DVWA bị SQL Injection kiểu error-based.",
+                "citations": [{"source_id": "C1", "quote": "SQL Injection duy nhất"}],
+            }],
+            "potential_impacts": [{
+                "text_vi": "Nếu triển khai thực tế, kẻ tấn công có thể đọc dữ liệu trong các bảng guestbook và users.",
+                "citations": [{"source_id": "C1", "quote": "dvwa (guestbook, users)"}],
+            }],
+            "limitations": [{
+                "text_vi": "Log chưa lưu trữ đầy đủ thông tin xác thực (cookie) để tính toán vector CVSS chính xác cho lỗ hổng này.",
+                "citations": [{"source_id": "C1", "quote": "Authenticated HTTP Cookie session"}],
+            }],
+        }
+        with self.assertRaises(ValueError):
+            validate(contradictory_draft, srcs)
+
+        fixed_draft = {
+            **contradictory_draft,
+            "limitations": [{
+                "text_vi": "Phép kiểm thử dừng ở mức liệt kê tên bảng trong schema dvwa, không trích xuất bản ghi dữ liệu và chưa kiểm chứng thủ công.",
+                "citations": [{"source_id": "C1", "quote": "dừng ở mức cấu trúc bảng, không trích xuất bản ghi"}],
+            }],
+        }
+        replies = [
+            json.dumps(contradictory_draft, ensure_ascii=False),
+            json.dumps(fixed_draft, ensure_ascii=False),
+            json.dumps({"supported": True, "no_remediation": True, "appropriately_uncertain": True, "database_specific": True}),
+        ]
+
+        class _RepairModel:
+            def generate(self, prompt, *, system, schema):
+                return replies.pop(0)
+
+        repaired = generate_analysis(srcs, _RepairModel(), task="test")
+        self.assertEqual(repaired["status"], "ai_reviewed")
+        self.assertNotIn("cookie", repaired["claims"]["limitations"][0]["text_vi"].lower())
+
+        report_obj = {
+            "schema_version": 1,
+            "generated_at": "2026-10-22T00:00:00+00:00",
+            "mode": "ollama-top10-analysis-extractive",
+            "model": "ollama/qwen3:4b",
+            "input_format": "sqlmap-log",
+            "input_filename": "sqlmap_csdl_chuan_pentest.txt",
+            "scan_sha256": "a" * 64,
+            "knowledge_sha256": "b" * 64,
+            "findings": [{**row, "ai_analysis": repaired}],
+            "ai_summary": repaired,
+            "limitations": [],
+        }
+        ctx = extract_scan_context(report_obj)
+        self.assertTrue(any("Banner đầu vào 'Debian 9'" in n and "quy tắc đối chiếu tĩnh trong code dự án" in n for n in ctx["eol_notes"]))
+        self.assertTrue(any("Banner đầu vào 'Apache 2.4.25'" in n and "không do AI suy đoán" in n for n in ctx["eol_notes"]))
+
+        with tempfile.TemporaryDirectory() as pdf_dir:
+            pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
+            from pypdf import PdfReader
+            full_pdf_text = "\n".join(p.extract_text() or "" for p in PdfReader(BytesIO(pdf_file.read_bytes())).pages)
+            self.assertIn("giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào", full_pdf_text)
+            self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
+            self.assertIn("quy tắc đối chiếu tĩnh trong code dự án", full_pdf_text)
+            self.assertIn("Tổng quan AI: Có diễn giải AI đã qua kiểm tra tự động", full_pdf_text)
+
 
 if __name__ == "__main__":
     unittest.main()
