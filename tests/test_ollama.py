@@ -313,6 +313,10 @@ class OllamaIntegrationTests(unittest.TestCase):
                         break
                     time.sleep(0.05)
                 self.assertEqual(current["status"], "completed")
+                self.assertEqual(current["percent"], 100)
+                self.assertEqual(current["step"], 6)
+                self.assertGreaterEqual(len(current["events"]), 5)
+                self.assertGreaterEqual(len(current["summary"]["findings_preview"]), 1)
                 req_json = urllib.request.Request(
                     f"http://127.0.0.1:{port}/api/jobs/{job['id']}/json",
                     headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie},
@@ -325,8 +329,19 @@ class OllamaIntegrationTests(unittest.TestCase):
                     f"http://127.0.0.1:{port}/api/jobs/{job['id']}/pdf",
                     headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie},
                 )
-                pdf_bytes = opener.open(req_pdf).read()
+                resp_pdf = opener.open(req_pdf)
+                pdf_bytes = resp_pdf.read()
                 self.assertEqual(pdf_bytes[:4], b"%PDF")
+                self.assertIn("attachment;", resp_pdf.headers.get("Content-Disposition", ""))
+
+                req_pdf_inline = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/jobs/{job['id']}/pdf?inline=1",
+                    headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie},
+                )
+                resp_inline = opener.open(req_pdf_inline)
+                self.assertEqual(resp_inline.read()[:4], b"%PDF")
+                self.assertIn("inline;", resp_inline.headers.get("Content-Disposition", ""))
+                self.assertIn("object-src 'self'", resp_inline.headers.get("Content-Security-Policy", ""))
             finally:
                 server.shutdown()
                 server.server_close()

@@ -235,21 +235,27 @@ def validate(data,sources):
     return data
 
 
-def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None):
+def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None,item_label=None):
     result={'status':'not_requested','claims':{},'sources':sources,'calls':0,
             'notice':'Kiểm tra cấu trúc/trích dẫn và rà soát bằng AI không bảo đảm đúng ngữ nghĩa.'}
     schema=_schema_for(sources)
     repair_note=None
     last_draft=None
+    target=item_label or 'bản ghi'
     for attempt in range(max_repairs+1):
         try:
             payload={'task':task,'sources':sources}
             if repair_note:
                 payload['previous_draft']=last_draft
                 payload['repair_note']=repair_note
+                if progress:progress(f"Đang tự hiệu chỉnh lần {attempt} cho {target} (đối chiếu lại trích dẫn & ngữ cảnh)...")
+            elif progress:
+                progress(f"Đang viết phân tích tiếng Việt cho {target}...")
             result['calls']+=1
             last_draft=llm.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
             data=validate(json.loads(last_draft),sources)
+            if progress:
+                progress(f"Đang kiểm tra trích dẫn & rà soát chéo AI cho {target}...")
             result['calls']+=1
             verdict=json.loads(llm.generate(json.dumps({'sources':sources,'analysis':data},ensure_ascii=False),system=REVIEW_SYSTEM,schema=REVIEW_SCHEMA))
             keys={'supported','no_remediation','appropriately_uncertain','database_specific'}
@@ -260,7 +266,7 @@ def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None):
             result.pop('reason',None);result.pop('reason_code',None);result.pop('detail',None)
             return result
         except (ValueError,TypeError,KeyError) as exc:
-            if progress:progress(f"  retry {attempt+1}: {exc}")
+            if progress:progress(f"Cần hiệu chỉnh lại bản nháp {target} (lần {attempt+1}): {exc}")
             repair_note=(f"Attempt {attempt+1} rejected ({exc}). Edit previous_draft in accented Vietnamese "
                          f"(no CJK, no advice/cần/nên/phải), attribute findings to the scanner ('Công cụ ghi nhận...'), "
                          f"start every potential_impacts claim with 'Nếu...' or 'Trong trường hợp...', NEVER claim "
@@ -290,14 +296,22 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
         report['ai_summary']={'status':'not_requested','claims':{},'sources':{},'calls':0,'reason':'Không có phát hiện trong đầu vào; không suy ra hệ thống an toàn.'}
         return report
     model=llm or (OllamaLLM(settings) if provider=='ollama' else GeminiLLM(settings))
+    total_rows=len(rows)
     for index,row in enumerate(rows,1):
-        if progress:progress(f"AI analysis {index}/{len(rows)}...")
+        base_pct=42+int(34*(index-1)/max(1,total_rows))
+        end_pct=42+int(34*index/max(1,total_rows))
+        row_tag=f"{row['id']} ({index}/{total_rows})"
+        def _row_progress(msg,_p=base_pct):
+            if progress:progress(f"[step=4|pct={_p}] {msg}")
+        if progress:progress(f"[step=4|pct={base_pct}] AI analysis {index}/{total_rows} — {row['id']}: {row['title'][:70]}")
         sources,truncated=input_sources(row)
-        analysis=generate_analysis(sources,model,task='Phân tích một bản ghi kiểm thử bằng tiếng Việt có dấu, không viết hướng dẫn khắc phục.',progress=progress)
+        analysis=generate_analysis(sources,model,task='Phân tích một bản ghi kiểm thử bằng tiếng Việt có dấu, không viết hướng dẫn khắc phục.',progress=_row_progress if progress else None,item_label=row_tag)
         analysis['truncated_sources']=truncated
         row['ai_analysis']=analysis
         report['analysis_calls']+=analysis['calls']
-        if progress:progress(f"AI analysis {index}/{len(rows)}: {analysis['status']}")
+        if progress:
+            st_vi='Đạt kiểm tra nguồn & rà soát AI' if analysis['status']=='ai_reviewed' else analysis['status']
+            progress(f"[step=4|pct={end_pct}] Hoàn tất phân tích {row_tag}: {st_vi}")
     # Summary source IDs refer to deterministic original records, not unchecked AI prose.
     from .report_view import MISSING, extract_scan_context, technical_fields
     scan_ctx=extract_scan_context(report)
@@ -333,10 +347,14 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
     summary_sources['TOTAL']=(f"Tổng số bản ghi: {report['statistics']['total']}; "
                               f"phân bố mức độ đầu vào: {sev_parts}; "
                               f"số bản ghi có hướng dẫn OWASP: {report['statistics']['with_guidance']}.")
-    if progress:progress('AI summary...')
-    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1, C1 và TOTAL; phân biệt rõ 1 điểm tiêm với số kỹ thuật kiểm thử, phân biệt schema ứng dụng với schema hệ thống, nêu rõ ngữ cảnh môi trường lab (như DVWA) nếu có trong C1, không tự bịa điểm CVSS hay viết hướng dẫn khắc phục.',progress=progress)
+    def _sum_progress(msg):
+        if progress:progress(f"[step=5|pct=84] {msg}")
+    if progress:progress('[step=5|pct=80] AI summary — Đang tổng hợp Tổng quan điều hành toàn báo cáo...')
+    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1, C1 và TOTAL; phân biệt rõ 1 điểm tiêm với số kỹ thuật kiểm thử, phân biệt schema ứng dụng với schema hệ thống, nêu rõ ngữ cảnh môi trường lab (như DVWA) nếu có trong C1, không tự bịa điểm CVSS hay viết hướng dẫn khắc phục.',progress=_sum_progress if progress else None,item_label='Tổng quan điều hành')
     report['analysis_calls']+=report['ai_summary']['calls']
-    if progress:progress(f"AI summary: {report['ai_summary']['status']}")
+    if progress:
+        sum_vi='Đạt kiểm tra nguồn & rà soát AI' if report['ai_summary']['status']=='ai_reviewed' else report['ai_summary']['status']
+        progress(f"[step=5|pct=92] Hoàn tất Tổng quan điều hành AI: {sum_vi}")
     report['db_scope']={'summary':scope_summary(rows),'lines':scope_lines(rows)}
     from .report_variety import prose_check
     report['prose_check']=prose_check(report)

@@ -102,14 +102,24 @@ class JobManager:
             job=self.jobs[id_];job.update(values,updated_at=now());self._save(job)
 
     def progress(self,id_,message):
-        label=message
-        match=re.match(r'AI analysis (\d+)/(\d+)',message)
-        if match:label=f"Đang phân tích phát hiện {match[1]}/{match[2]}"
-        elif message.startswith('AI summary'):label='Đang viết và rà soát tổng quan'
+        raw=str(message or '').strip()
+        step=None;pct=None
+        tag_m=re.match(r'^\[step=(\d+)\|pct=(\d+)\]\s*(.*)$',raw)
+        if tag_m:
+            step=int(tag_m.group(1));pct=int(tag_m.group(2));raw=tag_m.group(3).strip()
+        label=raw
+        match=re.match(r'AI analysis (\d+)/(\d+)(?:\s*—\s*(.*))?',raw)
+        if match:
+            suffix=f" ({match.group(3)})" if match.group(3) else ''
+            label=f"Đang phân tích phát hiện {match.group(1)}/{match.group(2)}{suffix}"
+        elif raw.startswith('AI summary'):
+            label='Đang tổng hợp và rà soát Tổng quan điều hành'
         with self.lock:
             job=self.jobs[id_]
-            events=(job.get('events',[])+[{'at':now(),'text':label}])[-60:]
-            self.update(id_,stage=label,events=events)
+            cur_step=max(int(job.get('step') or 1),step or int(job.get('step') or 1))
+            cur_pct=max(int(job.get('percent') or 5),pct or int(job.get('percent') or 5))
+            events=(job.get('events',[])+[{'at':now(),'text':label,'step':cur_step,'percent':cur_pct}])[-80:]
+            self.update(id_,stage=label,step=cur_step,percent=cur_pct,stage_started_at=now(),events=events)
 
     def submit(self,body,filename,format_,note='',metadata=None):
         from .report_view import clean_metadata
@@ -133,8 +143,9 @@ class JobManager:
             name=filename.replace('\\','/').split('/')[-1]
             name=re.sub(r'[\x00-\x1f\x7f]','',name)[:160] or 'kiem-thu'
             job={'id':id_,'filename':name,'report_metadata':metadata,'format':fmt,'note':note,'status':'queued','stage':'Đã nhận file, đang chờ xử lý',
+                 'step':1,'percent':5,'started_at':None,'stage_started_at':now(),
                  'created_at':now(),'updated_at':now(),'count':len(findings),'size':len(body),
-                 'input_sha256':hashlib.sha256(body).hexdigest(),'demo':self.demo,'events':[],'error':None,'summary':None}
+                 'input_sha256':hashlib.sha256(body).hexdigest(),'demo':self.demo,'events':[{'at':now(),'text':f'Đã tiếp nhận {name} ({len(findings)} bản ghi)','step':1,'percent':5}],'error':None,'summary':None}
             self.jobs[id_]=job;self._save(job)
             self.executor.submit(self._run,id_)
             return copy.deepcopy(job)
@@ -192,23 +203,32 @@ class JobManager:
             display_name=(' + '.join(safe_names))[:160]
             job={'id':id_,'filename':display_name,'report_metadata':metadata,'format':'normalized',
                  'input_formats':list(dict.fromkeys(detected_formats)),'note':note,'status':'queued',
+                 'step':1,'percent':5,'started_at':None,'stage_started_at':now(),
                  'stage':'Đã nhận và gộp '+str(len(items))+' file kiểm thử, đang chờ xử lý',
                  'created_at':now(),'updated_at':now(),'count':len(merged_rows),'size':total_size,
-                 'input_sha256':hasher.hexdigest(),'demo':self.demo,'events':[],'error':None,'summary':None}
+                 'input_sha256':hasher.hexdigest(),'demo':self.demo,'events':[{'at':now(),'text':f'Đã gộp {len(items)} file kiểm thử ({len(merged_rows)} bản ghi)','step':1,'percent':5}],'error':None,'summary':None}
             self.jobs[id_]=job;self._save(job)
             self.executor.submit(self._run,id_)
             return copy.deepcopy(job)
 
     def _run(self,id_):
+        import time as _time
+        t0=_time.monotonic()
         folder=self.directory/id_;job=self.get(id_)
         try:
-            self.update(id_,status='running',stage='Đang chuẩn bị báo cáo' if self.demo else 'Đang nạp kho OWASP và tìm hướng dẫn phù hợp')
+            init_stage='Đang chuẩn bị dữ liệu và dựng báo cáo mẫu' if self.demo else 'Đang khởi tạo pipeline RAG & nạp kho OWASP'
+            with self.lock:
+                cur=self.jobs[id_]
+                ev=(cur.get('events',[])+[{'at':now(),'text':init_stage,'step':2 if not self.demo else 1,'percent':10}])[-80:]
+                self.update(id_,status='running',started_at=now(),stage_started_at=now(),step=2 if not self.demo else 1,percent=10,stage=init_stage,events=ev)
             if self.runner:
                 paths=self.runner(folder/'input.scan',folder/'output',job,lambda m:self.progress(id_,m))
             elif self.demo:
                 from .pipeline import run_report
                 from .config import Settings
+                self.progress(id_,'[step=3|pct=45] Đang ánh xạ CWE sang OWASP Top 10:2025 và đối chiếu thẻ hướng dẫn...')
                 paths=run_report(folder/'input.scan',ROOT/'data/raw/owasp/cards.json',folder/'output',Settings(),format_=job['format'],report_metadata=job.get('report_metadata'),display_filename=job['filename'])
+                self.progress(id_,'[step=6|pct=95] Đang kết xuất PDF, Markdown và JSON...')
             else:
                 from .official_report import run_corpus_report
                 settings=self.settings_loader()
@@ -219,16 +239,44 @@ class JobManager:
             if not Path(paths[2]).is_file():raise RuntimeError('PDF missing')
             rows=report['findings']
             analyses=[r.get('ai_analysis',{}).get('status') for r in rows]
+            reviewed_ok=sum(s=='ai_reviewed' for s in analyses) if not self.demo else len(rows)
             skipped=sum(s!='ai_reviewed' for s in analyses) if not self.demo else 0
             summary_status=report.get('ai_summary',{}).get('status')
             selection_failures=sum(r.get('generation_status') in {'api_error','rejected_output'} for r in rows)
             partial=not self.demo and bool(rows) and (skipped or summary_status!='ai_reviewed' or selection_failures)
-            summary={'findings':len(rows),'with_guidance':sum(bool(r.get('guidance')) for r in rows),
-                     'scope_blocked':sum(r.get('owasp_top10',{}).get('status')!='in_scope' for r in rows),
-                     'ai_unavailable':skipped,'selection_failures':selection_failures,'summary_status':summary_status}
-            self.update(id_,status='partial' if partial else 'completed',stage='Đã tạo PDF; có phần AI chưa hoàn tất' if partial else 'Báo cáo PDF đã sẵn sàng',summary=summary)
+            preview=[{
+                'id':str(r.get('id','')),
+                'title':str(r.get('title',''))[:140],
+                'severity':str(r.get('severity','unknown')),
+                'cwe':str(r.get('cwe','unknown')),
+                'kind':str(r.get('kind','scanner_alert')),
+                'guidance_count':len(r.get('guidance') or []),
+                'ai_status':(r.get('ai_analysis') or {}).get('status','not_requested'),
+            } for r in rows[:25]]
+            summary={
+                'findings':len(rows),
+                'with_guidance':sum(bool(r.get('guidance')) for r in rows),
+                'scope_blocked':sum(r.get('owasp_top10',{}).get('status')!='in_scope' for r in rows),
+                'ai_reviewed':reviewed_ok,
+                'ai_unavailable':skipped,
+                'selection_failures':selection_failures,
+                'summary_status':summary_status,
+                'duration_sec':round(max(0.1,_time.monotonic()-t0),1),
+                'model':str(report.get('model','')),
+                'scan_sha256':str(report.get('scan_sha256',''))[:12],
+                'findings_preview':preview,
+            }
+            done_stage='Đã tạo PDF; có phần AI chưa hoàn tất' if partial else 'Báo cáo PDF đã sẵn sàng'
+            with self.lock:
+                cur=self.jobs[id_]
+                ev=(cur.get('events',[])+[{'at':now(),'text':done_stage,'step':6,'percent':100}])[-80:]
+                self.update(id_,status='partial' if partial else 'completed',step=6,percent=100,stage=done_stage,summary=summary,events=ev)
         except Exception as exc:
-            self.update(id_,status='failed',stage='Chưa tạo được báo cáo',error=safe_error(exc))
+            err_msg=safe_error(exc)
+            with self.lock:
+                cur=self.jobs[id_]
+                ev=(cur.get('events',[])+[{'at':now(),'text':'Dừng xử lý: '+err_msg,'step':int(cur.get('step') or 1),'percent':int(cur.get('percent') or 5)}])[-80:]
+                self.update(id_,status='failed',stage='Chưa tạo được báo cáo',error=err_msg,events=ev)
 
     def close(self):self.executor.shutdown(wait=True)
 
@@ -238,7 +286,8 @@ class LocalServer(ThreadingHTTPServer):
     def __init__(self,address,manager):
         super().__init__(address,Handler)
         self.manager=manager;self.token=secrets.token_urlsafe(32)
-        port=self.server_address[1]
+        host_ip,port=self.server_address[0],self.server_address[1]
+        self.allow_preview=(host_ip=='0.0.0.0')
         self.allowed_hosts={f'127.0.0.1:{port}',f'localhost:{port}'}
 
 
@@ -255,25 +304,32 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type',content_type);self.send_header('Content-Length',str(len(body)))
         self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff')
         self.send_header('Referrer-Policy','no-referrer')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        obj_src="'self'" if content_type=='application/pdf' else "'none'"
+        ancestors='' if self.server.allow_preview else " frame-ancestors 'none';"
+        self.send_header('Content-Security-Policy',f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src {obj_src};{ancestors} base-uri 'none'; form-action 'self'")
         for k,v in (extra or {}).items():self.send_header(k,v)
         self.end_headers()
         try:self.wfile.write(body)
         except (BrokenPipeError,ConnectionResetError):pass
 
     def trusted(self,*,auth=False,write=False):
-        if self.headers.get('Host') not in self.server.allowed_hosts:
-            self.send_data(403,{'error':'Chỉ cho phép truy cập qua localhost.'});return False
-        origin=self.headers.get('Origin')
-        if origin and origin not in {'http://'+h for h in self.server.allowed_hosts}:
-            self.send_data(403,{'error':'Yêu cầu khác nguồn bị từ chối.'});return False
-        if self.headers.get('Sec-Fetch-Site')=='cross-site':
-            self.send_data(403,{'error':'Yêu cầu khác nguồn bị từ chối.'});return False
+        if not self.server.allow_preview:
+            if self.headers.get('Host') not in self.server.allowed_hosts:
+                self.send_data(403,{'error':'Chỉ cho phép truy cập qua localhost.'});return False
+            origin=self.headers.get('Origin')
+            if origin and origin not in {'http://'+h for h in self.server.allowed_hosts}:
+                self.send_data(403,{'error':'Yêu cầu khác nguồn bị từ chối.'});return False
+            if self.headers.get('Sec-Fetch-Site')=='cross-site':
+                self.send_data(403,{'error':'Yêu cầu khác nguồn bị từ chối.'});return False
         if auth:
+            hdr_tok=self.headers.get('X-App-Token','')
+            q_tok=parse_qs(urlsplit(self.path).query).get('token',[''])[0] if self.server.allow_preview else ''
             try:
                 cookie=SimpleCookie(self.headers.get('Cookie',''));value=cookie.get('rag_local')
-                good=value and secrets.compare_digest(value.value,self.server.token)
+                good=bool(value and secrets.compare_digest(value.value,self.server.token))
             except Exception:good=False
+            if not good and self.server.allow_preview and (hdr_tok or q_tok):
+                good=secrets.compare_digest(hdr_tok or q_tok,self.server.token)
             if not good:
                 self.send_data(401,{'error':'Phiên web đã đổi. Tải lại trang để tiếp tục.'});return False
         if write and not secrets.compare_digest(self.headers.get('X-App-Token',''),self.server.token):
@@ -282,12 +338,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self.trusted():return
-        path=urlsplit(self.path).path
+        parsed_url=urlsplit(self.path)
+        path=parsed_url.path
         assets={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
         if path in assets:
             ext={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}
-            headers={'Set-Cookie':f'rag_local={self.server.token}; HttpOnly; SameSite=Strict; Path=/'} if path=='/' else {}
-            return self.send_data(200,(Path(__file__).parent/'web'/assets[path]).read_bytes(),ext[path],headers)
+            raw_asset=(Path(__file__).parent/'web'/assets[path]).read_bytes()
+            if path=='/' and self.server.allow_preview:
+                raw_asset=raw_asset.replace(b'</head>',f'<meta name="app-token" content="{self.server.token}"></head>'.encode('utf-8'),1)
+            cookie_flags='SameSite=None; Secure; Path=/' if self.server.allow_preview else 'HttpOnly; SameSite=Strict; Path=/'
+            headers={'Set-Cookie':f'rag_local={self.server.token}; {cookie_flags}'} if path=='/' else {}
+            return self.send_data(200,raw_asset,ext[path],headers)
         if not self.trusted(auth=True):return
         if path=='/api/config':
             issues=[];model='';provider='demo';configured=False
@@ -322,7 +383,9 @@ class Handler(BaseHTTPRequestHandler):
             if job['status'] not in {'completed','partial'}:return self.send_data(409,{'error':'Báo cáo chưa sẵn sàng.'})
             kind=match[2];file=self.server.manager.directory/match[1]/'output'/('report.'+kind)
             if not file.is_file():return self.send_data(404,{'error':'Không tìm thấy file báo cáo.'})
-            return self.send_data(200,file.read_bytes(),'application/pdf' if kind=='pdf' else 'application/json',{'Content-Disposition':f'attachment; filename="bao-cao-{match[1][:8]}.{kind}"'})
+            inline=kind=='pdf' and parse_qs(parsed_url.query).get('inline',['0'])[0]=='1'
+            disp='inline' if inline else 'attachment'
+            return self.send_data(200,file.read_bytes(),'application/pdf' if kind=='pdf' else 'application/json',{'Content-Disposition':f'{disp}; filename="bao-cao-{match[1][:8]}.{kind}"'})
         self.send_data(404,{'error':'Không tìm thấy đường dẫn.'})
 
     def do_POST(self):

@@ -270,16 +270,21 @@ def guidance_from_source(source, cwe):
             'source':source['source'],'start':source['start'],'end':source['end']}
 
 
-def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None):
+def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None, progress=None):
     provider=settings.resolved_provider
     prefix='ollama' if provider=='ollama' else 'gemini'
     actor='AI cục bộ (Ollama)' if provider=='ollama' else 'Gemini'
     rows=[];calls=0;selection_cache={}
-    for finding in findings:
+    total_f=max(1,len(findings))
+    for idx_f,finding in enumerate(findings,1):
         scope=classify(finding)
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
         if scope['status']=='in_scope' and finding.evidence:
+            pct_start=20+int(20*(idx_f-1)/total_f)
+            pct_done=20+int(20*idx_f/total_f)
+            if progress:
+                progress(f"[step=3|pct={pct_start}] Đang truy xuất OWASP & chọn hướng dẫn phòng vệ cho {finding.id} ({idx_f}/{len(findings)})...")
             query=f"{' '.join(finding_cwes(finding))} {finding.title[:240]} prevention remediation security best practices"
             cache_key=(query,finding.title,cwe_label(finding),tuple(sorted(preferred_sources(finding))))
             if cache_key in selection_cache:
@@ -307,6 +312,8 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
                     row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
                     if selected:row['status']='guidance_available'
                 selection_cache[cache_key]=(candidates,selected,state)
+            if progress:
+                progress(f"[step=3|pct={pct_done}] Đã chọn {len(row['guidance'])} lớp hướng dẫn OWASP cho {finding.id}")
         elif scope['status']=='in_scope':row['status']='missing_evidence'
         row['analysis_vi']=(f"Kiểm thử cung cấp {len(finding.evidence)} mục bằng chứng. "
                             'Giữ nguyên mức độ và phân loại từ đầu vào; chưa xác minh độc lập lỗ hổng. '+scope['reason'])
@@ -331,10 +338,14 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
     from .parsers import load_findings
     findings=load_findings(scan_path,format_)
     if len(findings)>100:raise ValueError('Corpus report supports at most 100 records; split input')
+    if progress:
+        progress(f"[step=1|pct=8] Đã đọc & chuẩn hóa {len(findings)} bản ghi từ file kiểm thử")
     eligible=any(classify(f)['status']=='in_scope' and f.evidence for f in findings)
     documents=[];corpus_sha='not_used'
     def search(_):return []
     if eligible:
+        if progress:
+            progress('[step=2|pct=12] Đang kiểm tra kho OWASP Cheat Sheet Series và nạp mô hình ngữ nghĩa E5...')
         from .document_store import DocumentVectorStore
         from .embeddings import E5Embedding, embed_query_safe
         store=DocumentVectorStore.load(store_directory,settings)
@@ -342,6 +353,8 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         documents=load_documents(raw_directory).documents
         corpus_sha=store.metadata['corpus_sha256']
         encoder=E5Embedding(settings.embed_model,settings.embed_revision,local_files_only=offline)
+        if progress:
+            progress(f"[step=2|pct=18] Kho OWASP ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
         def search(query):
             sub_queries=[query]
             if query.startswith('CWE-89 '):
@@ -361,9 +374,11 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
             return sorted(merged.values(),key=lambda h:-h['score'])
     shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
     report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
-                              scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest(),llm=shared_llm)
+                              scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest(),llm=shared_llm,progress=progress)
     from .report_view import attach_context
     attach_context(report,scan_path,format_,report_metadata,display_filename)
     from .analysis import enrich_report
     enrich_report(report,settings,llm=shared_llm,progress=progress)
+    if progress:
+        progress('[step=6|pct=96] Đang dàn trang báo cáo PDF, tạo mục lục tự động và ghi dấu vết SHA-256...')
     return write_report(report,output)
