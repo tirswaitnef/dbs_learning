@@ -244,8 +244,15 @@ class JobManager:
             summary_status=report.get('ai_summary',{}).get('status')
             selection_failures=sum(r.get('generation_status') in {'api_error','rejected_output'} for r in rows)
             partial=not self.demo and bool(rows) and (skipped or summary_status!='ai_reviewed' or selection_failures)
-            from .pentest_polish import prepare_pentest_view
+            from .pentest_polish import prepare_pentest_view, sanitize_raw_scan_text
             pview=prepare_pentest_view(report)
+            try:
+                raw_scan_bytes=(folder/'input.scan').read_bytes()
+                (folder/'output'/'sanitized_input.txt').write_text(
+                    sanitize_raw_scan_text(raw_scan_bytes, report), encoding='utf-8'
+                )
+            except Exception:
+                pass
             preview=[{
                 'id':e['pentest_id'],
                 'title':e['title'][:140],
@@ -377,20 +384,21 @@ class Handler(BaseHTTPRequestHandler):
                         issues.append('Chưa thấy tài liệu Cheat Sheet Series trong data/raw/owasp/official.')
             return self.send_data(200,{'token':self.server.token,'demo':self.server.manager.demo,'provider':provider,'configured':configured or self.server.manager.demo,'model':model,'issues':issues,'formats':FORMATS,'max_bytes':MAX_UPLOAD})
         if path=='/api/jobs':return self.send_data(200,self.server.manager.list())
-        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md))?',path)
+        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md|log))?',path)
         if match:
             try:job=self.server.manager.get(match[1])
             except KeyError:return self.send_data(404,{'error':'Không tìm thấy cuộc trò chuyện.'})
             if not match[2]:return self.send_data(200,job)
             if job['status'] not in {'completed','partial'}:return self.send_data(409,{'error':'Báo cáo chưa sẵn sàng.'})
             kind=match[2]
-            fname='pentest_report.md' if kind=='md' else ('report.'+kind)
+            fname={'md':'pentest_report.md','log':'sanitized_input.txt'}.get(kind,'report.'+kind)
             file=self.server.manager.directory/match[1]/'output'/fname
             if not file.is_file():return self.send_data(404,{'error':'Không tìm thấy file báo cáo.'})
             inline=kind=='pdf' and parse_qs(parsed_url.query).get('inline',['0'])[0]=='1'
             disp='inline' if inline else 'attachment'
-            ctype={'pdf':'application/pdf','json':'application/json; charset=utf-8','md':'text/markdown; charset=utf-8'}[kind]
-            return self.send_data(200,file.read_bytes(),ctype,{'Content-Disposition':f'{disp}; filename="bao-cao-pentest-{match[1][:8]}.{kind}"'})
+            ctype={'pdf':'application/pdf','json':'application/json; charset=utf-8','md':'text/markdown; charset=utf-8','log':'text/plain; charset=utf-8'}[kind]
+            out_name=f"log-kiem-thu-dong-bo-{match[1][:8]}.txt" if kind=='log' else f"bao-cao-pentest-{match[1][:8]}.{kind}"
+            return self.send_data(200,file.read_bytes(),ctype,{'Content-Disposition':f'{disp}; filename="{out_name}"'})
         self.send_data(404,{'error':'Không tìm thấy đường dẫn.'})
 
     def do_POST(self):

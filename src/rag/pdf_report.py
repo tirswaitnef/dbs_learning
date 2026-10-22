@@ -1,4 +1,4 @@
-"""Client-ready 7-section Penetration Testing PDF Report (OWASP standard layout)."""
+"""Client-ready 7-section Penetration Testing PDF Report (Peer-Review & OWASP Standard Layout)."""
 from __future__ import annotations
 
 import html
@@ -43,18 +43,20 @@ def render_pdf(report, path):
     accent_bg = colors.HexColor('#e8eff6')
     biz_bg = colors.HexColor('#fffaf2')
     biz_border = colors.HexColor('#c26a1b')
+    note_bg = colors.HexColor('#f1f6fb')
+    note_border = colors.HexColor('#2563eb')
 
     width = A4[0] - 88
-    body = ParagraphStyle('body', fontName='RagText', fontSize=9.2, leading=14, spaceAfter=6, textColor=navy, splitLongWords=True)
+    body = ParagraphStyle('body', fontName='RagText', fontSize=9.1, leading=13.8, spaceAfter=5.5, textColor=navy, splitLongWords=True)
     bold_body = ParagraphStyle('bold_body', parent=body, fontName='RagBold', spaceAfter=4)
     cover_kicker = ParagraphStyle('cover_kicker', parent=body, fontName='RagBold', fontSize=9, leading=13, textColor=colors.HexColor('#2563eb'), spaceAfter=10)
     cover_title = ParagraphStyle('cover_title', parent=body, fontName='RagBold', fontSize=24, leading=32, spaceAfter=10, textColor=navy)
     cover_sub = ParagraphStyle('cover_sub', parent=body, fontSize=12, leading=17, textColor=slate, spaceAfter=24)
-    heading = ParagraphStyle('section', parent=body, fontName='RagBold', fontSize=14.5, leading=20, spaceBefore=14, spaceAfter=8, keepWithNext=True)
-    sub = ParagraphStyle('sub', parent=heading, fontSize=11, leading=15.5, spaceBefore=10, spaceAfter=5)
-    label_h = ParagraphStyle('label_h', parent=body, fontName='RagBold', fontSize=9.3, leading=13, spaceBefore=6, spaceAfter=3, keepWithNext=True)
-    small = ParagraphStyle('small', parent=body, fontSize=7.8, leading=11, spaceAfter=4, textColor=muted)
-    code_style = ParagraphStyle('code', fontName='Courier', fontSize=7.6, leading=10.8, spaceAfter=6, textColor=navy, backColor=code_bg, borderPadding=6, splitLongWords=True)
+    heading = ParagraphStyle('section', parent=body, fontName='RagBold', fontSize=14, leading=19.5, spaceBefore=13, spaceAfter=7, keepWithNext=True)
+    sub = ParagraphStyle('sub', parent=heading, fontSize=11, leading=15.5, spaceBefore=9, spaceAfter=5)
+    label_h = ParagraphStyle('label_h', parent=body, fontName='RagBold', fontSize=9.2, leading=13, spaceBefore=5.5, spaceAfter=2.5, keepWithNext=True)
+    small = ParagraphStyle('small', parent=body, fontSize=7.8, leading=11.2, spaceAfter=4, textColor=muted)
+    code_style = ParagraphStyle('code', fontName='Courier', fontSize=7.4, leading=10.4, spaceAfter=5.5, textColor=navy, backColor=code_bg, borderPadding=5.5, splitLongWords=True)
 
     def safe(v):
         return html.escape(re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(v)), quote=True).replace('\n', '<br/>')
@@ -65,30 +67,35 @@ def render_pdf(report, path):
         story.append(Paragraph(safe(v), style))
 
     def block(v, mono=False):
-        text = str(v or '')
+        text = str(v or '').strip()
+        if not text:
+            return
         st = code_style if mono else body
-        for start in range(0, len(text), 2200):
-            add(text[start:start + 2200], st)
+        for start in range(0, len(text), 2400):
+            add(text[start:start + 2400], st)
 
-    def callout(header_text, body_text):
+    def callout(header_text, body_text, info=False):
+        bg = note_bg if info else biz_bg
+        brd = note_border if info else biz_border
+        box_col = colors.HexColor('#cfe0f5') if info else colors.HexColor('#f1dfc4')
         cell = [
             Paragraph(safe(header_text), bold_body),
             Paragraph(safe(body_text), body),
         ]
         t = Table([[cell]], colWidths=[width], hAlign='LEFT')
         t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), biz_bg),
-            ('LINEBEFORE', (0, 0), (0, -1), 3, biz_border),
-            ('BOX', (0, 0), (-1, -1), 0.4, colors.HexColor('#f1dfc4')),
-            ('LEFTPADDING', (0, 0), (-1, -1), 11),
+            ('BACKGROUND', (0, 0), (-1, -1), bg),
+            ('LINEBEFORE', (0, 0), (0, -1), 3, brd),
+            ('BOX', (0, 0), (-1, -1), 0.4, box_col),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
             ('RIGHTPADDING', (0, 0), (-1, -1), 10),
-            ('TOPPADDING', (0, 0), (-1, -1), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5.5),
         ]))
-        story.extend([t, Spacer(1, 8)])
+        story.extend([t, Spacer(1, 7)])
 
     def section(n, label):
-        story.append(CondPageBreak(120))
+        story.append(CondPageBreak(115))
         p = Paragraph(safe(f'{n}. {label}'), heading)
         p.toc_label = f'{n}. {label}'
         story.append(p)
@@ -103,26 +110,25 @@ def render_pdf(report, path):
             ('LINEBELOW', (0, 1), (-1, -1), 0.35, border_col),
             ('LEFTPADDING', (0, 0), (-1, -1), 8),
             ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 5.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5.5),
         ]))
-        story.extend([t, Spacer(1, 8)])
+        story.extend([t, Spacer(1, 7)])
 
     def kv_table(pairs):
         data = [[Paragraph(safe(k), bold_body), Paragraph(safe(v), body)] for k, v in pairs]
-        t = Table(data, colWidths=[width * 0.28, width * 0.72], hAlign='LEFT')
+        t = Table(data, colWidths=[width * 0.29, width * 0.71], hAlign='LEFT')
         t.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
             ('LINEBELOW', (0, 0), (-1, -1), 0.35, border_col),
             ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f8fafc')),
             ('LEFTPADDING', (0, 0), (-1, -1), 8),
             ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-            ('TOPPADDING', (0, 0), (-1, -1), 5.5),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 5.5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
         ]))
-        story.extend([t, Spacer(1, 8)])
+        story.extend([t, Spacer(1, 7)])
 
-    # Resolve clean Cover & Scope labels without internal developer notes
     lab_info = scan_ctx.get('lab') or {}
     app_name = (
         meta.get('application')
@@ -137,13 +143,13 @@ def render_pdf(report, path):
     clean_window = re.sub(r'\s*\(ghi trong[^)]*\)', '', str(raw_window)).strip()
 
     # -------------------- PAGE 1: COVER PAGE --------------------
-    story.append(Spacer(1, 36))
+    story.append(Spacer(1, 34))
     add('BÁO CÁO ĐÁNH GIÁ BẢO MẬT CHUYÊN SÂU', cover_kicker)
     add('BÁO CÁO KIỂM THỬ XÂM NHẬP\nỨNG DỤNG WEB & CƠ SỞ DỮ LIỆU', cover_title)
     add('Đánh giá Bảo mật theo Tiêu chuẩn OWASP Top 10 & OWASP Testing Guide', cover_sub)
     if sample_notice(work):
         add(sample_notice(work), bold_body)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 12))
     kv_table([
         ('Hệ thống mục tiêu', app_name),
         ('Đơn vị tiếp nhận (Prepared for)', client_name),
@@ -152,15 +158,15 @@ def render_pdf(report, path):
         ('Thời gian kiểm thử', clean_window),
         ('Phân loại bảo mật (Classification)', classification),
     ])
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 16))
     add('Tài liệu Mật — Chỉ sử dụng cho mục đích rà soát, khắc phục lỗ hổng bảo mật trong phạm vi được ủy quyền.', small)
 
     # -------------------- PAGE 2: TABLE OF CONTENTS --------------------
     story.append(PageBreak())
     add('MỤC LỤC', heading)
     toc = TableOfContents()
-    toc.levelStyles = [ParagraphStyle('toc', parent=body, leading=19, spaceAfter=3)]
-    story.extend([toc, Spacer(1, 16)])
+    toc.levelStyles = [ParagraphStyle('toc', parent=body, leading=18.5, spaceAfter=2.5)]
+    story.extend([toc, Spacer(1, 14)])
 
     # -------------------- 1. EXECUTIVE SUMMARY --------------------
     section(1, 'Tóm tắt điều hành')
@@ -172,15 +178,16 @@ def render_pdf(report, path):
     add(
         f"Đợt kiểm thử xâm nhập được thực hiện trên hệ thống {app_name} tại địa chỉ {primary_url} "
         f"trong khoảng thời gian {clean_window}, do {prepared_by} thực hiện cho {client_name}. "
-        'Quy trình đánh giá tập trung vào kiểm soát dữ liệu đầu vào, an toàn truy vấn cơ sở dữ liệu, xác thực phiên làm việc '
-        'và cấu hình máy chủ theo phương pháp luận OWASP Web Security Testing Guide (v4.2) và khung phân loại OWASP Top 10.'
+        f"{view['exec_scope_sentence']}"
     )
     add(
         f"Đánh giá mức độ rủi ro tổng thể: {view['overall_posture']}. "
         f"Đợt kiểm thử xác nhận tổng cộng {len(entries)} lỗ hổng bảo mật thuộc {owasp_group_count} nhóm danh mục OWASP.",
         bold_body,
     )
-    callout('Tác động đối với hoạt động & nghiệp vụ (Tóm tắt phi kỹ thuật dành cho Quản lý)', view['business_summary'])
+    callout('Tác động đối với hoạt động & nghiệp vụ — Kết quả đã xác nhận & rủi ro tiềm tàng (Dành cho Quản lý)', view['business_summary'])
+    if view['sanitization_note']:
+        callout('Ghi chú bảo mật thông tin & đối chiếu địa chỉ mục tiêu với tệp Log', view['sanitization_note'], info=True)
     for ai_line in view['exec_ai_lines'][:2]:
         add(ai_line)
 
@@ -205,19 +212,23 @@ def render_pdf(report, path):
             stack_bits.append(d['dbms'])
     scope_rows = [
         ('URL / Mục tiêu trong phạm vi', '\n'.join(target_urls) or 'Không xác định'),
+        ('Hạng mục kiểm thử thực tế', view['active_scope']),
         ('Vai trò & Ngữ cảnh xác thực', auth_tested),
         ('Giới hạn & Vùng loại trừ', scope_exclude),
-        ('Hạng mục kiểm thử theo OWASP', 'Injection (SQL Injection, XSS), Quản lý Phiên & Xác thực, Cấu hình Bảo mật & Thành phần Máy chủ'),
         ('Công cụ sử dụng', ', '.join(tools_used) if tools_used else 'Bộ công cụ kiểm thử bảo mật tiêu chuẩn'),
     ]
+    if view['passive_notes']:
+        scope_rows.append(('Ghi nhận thụ động (Chưa kết luận lỗi)', view['passive_notes']))
     if stack_bits:
         scope_rows.append(('Nền tảng kỹ thuật ghi nhận', ' | '.join(stack_bits)))
     if scan_ctx.get('db_identity'):
         scope_rows.append(('Ngữ cảnh tài khoản CSDL', scan_ctx['db_identity']))
+    if view['sanitization_note']:
+        scope_rows.append(('Quy ước ẩn danh hóa dữ liệu', view['sanitization_note']))
     kv_table(scope_rows)
     add(
-        'Phương pháp kiểm thử: Kết hợp dò quét có kiểm soát, phân tích phản hồi giao thức HTTP thực tế và rà soát đối chiếu thủ công '
-        'để loại bỏ cảnh báo nhiễu (false positive) trước khi xếp hạng CVSS v3.1 và xây dựng khuyến nghị khắc phục.',
+        'Phương pháp kiểm thử: Kết hợp kiểm thử có kiểm soát, phân tích gói tin HTTP Request/Response thực tế và đối chiếu thủ công '
+        'để tách biệt rõ kết quả đã xác nhận bằng bằng chứng với các ghi nhận thụ động trước khi chấm điểm CVSS v3.1.',
         small,
     )
 
@@ -241,7 +252,7 @@ def render_pdf(report, path):
     if not entries:
         add('Không có lỗ hổng bảo mật đã xác nhận nào được ghi nhận trong đợt kiểm thử này.')
     for e in entries:
-        story.append(CondPageBreak(180))
+        story.append(CondPageBreak(170))
         add(f"{e['pentest_id']}: {e['title']}", sub)
         cvss_line = (
             f"{e['cvss_score']} — {e['cvss_vector']}" if e['cvss_score'] and e['cvss_vector']
@@ -260,23 +271,32 @@ def render_pdf(report, path):
             ('Phương thức HTTP', e['method']),
         ])
 
+        if e['cvss_rationale']:
+            add('Giải thích cơ sở chấm điểm & Giả định bối cảnh CVSS v3.1', label_h)
+            block(e['cvss_rationale'])
+
         add('Mô tả kỹ thuật (Description)', label_h)
         block(e['description'])
 
-        add('Tác động kinh doanh & vận hành (Impact — Ngôn ngữ phi kỹ thuật)', label_h)
-        block(e['business_impact'])
+        add('Kết quả & Tác động đã xác nhận thực tế (Confirmed by Evidence)', label_h)
+        block(e['confirmed_impact'])
+
+        add('Tác động tiềm tàng đối với hoạt động & nghiệp vụ (Potential Impact — Ngôn ngữ phi kỹ thuật)', label_h)
+        block(e['potential_impact'])
 
         exchanges = e['http_exchanges']
         if exchanges:
-            # Show concise primary proof pair cleanly right inside Section 4 (Error/UNION preferred first for immediate visual proof)
             ranked = sorted(
                 exchanges,
                 key=lambda m: 0 if re.search(r'UNION|EXTRACTVALUE|XPATH|<script|<svg', str(m.get('request', '')) + str(m.get('response', '')), re.I) else 1,
             )
             primary_ex = ranked[0]
-            add('Yêu cầu HTTP minh chứng (Request)', label_h)
+            pkt_summary = '; '.join(ex.get('caption') or ex.get('id', '') for ex in exchanges[:4])
+            add(' Tóm tắt bằng chứng giao dịch HTTP (Chi tiết đầy đủ tại Phụ lục A)', label_h)
+            add(pkt_summary, small)
+            add(f"Yêu cầu HTTP minh chứng điển hình ({primary_ex.get('id', '')} — Request)", label_h)
             block(primary_ex.get('request', ''), mono=True)
-            add('Phản hồi HTTP minh chứng (Response)', label_h)
+            add(f"Phản hồi HTTP minh chứng điển hình ({primary_ex.get('id', '')} — Response)", label_h)
             block(primary_ex.get('response', ''), mono=True)
         elif e['raw_requests']:
             add('Yêu cầu HTTP minh chứng (Request)', label_h)
@@ -295,13 +315,17 @@ def render_pdf(report, path):
         if rem.get('urls'):
             add('Tài liệu tham chiếu OWASP: ' + ' | '.join(rem['urls'][:2]), small)
 
+        add('Kiểm tra xác nhận sau khắc phục (Retest / Verification)', label_h)
+        for r_item in e['retest_steps']:
+            add('• ' + r_item)
+
     # -------------------- 5. RISK RATINGS --------------------
     section(5, 'Thang đánh giá mức độ rủi ro')
     tier_defs = [
-        ('Nghiêm trọng — Critical (9.0 – 10.0)', 'Thực thi mã từ xa (RCE), vượt xác thực hoàn toàn, tiêm nhiễm SQL làm lộ lọt diện rộng dữ liệu trọng yếu không cần đăng nhập.', sum(e['severity_key'] == 'critical' for e in entries)),
-        ('Cao — High (7.0 – 8.9)', 'SQL Injection trong phiên xác thực, leo thang đặc quyền, truy cập CSDL trái phép, Stored XSS hoặc IDOR làm lộ dữ liệu người dùng.', sum(e['severity_key'] == 'high' for e in entries)),
-        ('Trung bình — Medium (4.0 – 6.9)', 'Reflected XSS, CSRF trên chức năng quan trọng, rò rỉ thông tin cấu hình nội bộ hoặc quản lý phiên chưa chặt chẽ.', sum(e['severity_key'] == 'medium' for e in entries)),
-        ('Thấp — Low (0.1 – 3.9)', 'Thiếu HTTP Security Headers, thông báo lỗi chi tiết, thiếu cờ bảo vệ phụ trên cookie hoặc thành phần phần mềm cũ.', sum(e['severity_key'] == 'low' for e in entries)),
+        ('Nghiêm trọng — Critical (9.0 – 10.0)', 'Thực thi mã từ xa (RCE), vượt xác thực hoàn toàn, SQL Injection khai thác trực tiếp không cần đăng nhập (PR:N).', sum(e['severity_key'] == 'critical' for e in entries)),
+        ('Cao — High (7.0 – 8.9)', 'SQL Injection yêu cầu phiên xác thực trước (PR:L, ví dụ 8.1), leo thang đặc quyền, truy cập CSDL trái phép hoặc Stored XSS.', sum(e['severity_key'] == 'high' for e in entries)),
+        ('Trung bình — Medium (4.0 – 6.9)', 'Reflected XSS đã xác minh thực thi (ví dụ 6.1), CSRF trên chức năng quan trọng hoặc lộ thông tin nội bộ nhạy cảm.', sum(e['severity_key'] == 'medium' for e in entries)),
+        ('Thấp — Low (0.1 – 3.9)', 'Thiếu HTTP Security Headers, rò rỉ thông báo lỗi chi tiết hoặc thông tin phiên bản phần mềm cũ.', sum(e['severity_key'] == 'low' for e in entries)),
     ]
     table(
         ['Mức độ rủi ro (CVSS v3.1)', 'Ý nghĩa đánh giá chuẩn Pentest', 'Số lỗ hổng'],
@@ -311,17 +335,19 @@ def render_pdf(report, path):
     has_input_cvss = any(bool(e['cvss_score']) for e in entries)
     if has_input_cvss:
         add(
-            'Lưu ý chấm điểm: Điểm số và chuỗi vector CVSS v3.1 tại Mục 4 được giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào kèm ngữ cảnh xác thực thực tế của phiên kiểm thử.',
+            'Nguyên tắc chấm điểm CVSS v3.1: Điểm số và chuỗi vector tại Mục 4 được giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào, '
+            'phản ánh bối cảnh xác thực thực tế của mục tiêu (PR:L khi cần đăng nhập trước so với PR:N khi mở công khai, và phạm vi quyền thực tế của tài khoản CSDL kết nối).',
             small,
         )
     else:
         add(
-            'Lưu ý chấm điểm: Mức độ nghiêm trọng được giữ nguyên theo kết quả đánh giá của công cụ kiểm thử; trong chuẩn CVSS v3.1, điểm số cụ thể phụ thuộc vào quyền truy cập cần thiết (PR:N hoặc PR:L).',
+            'Nguyên tắc chấm điểm CVSS v3.1: Mức độ nghiêm trọng giữ theo kết quả công cụ kiểm thử; điểm số CVSS cụ thể phụ thuộc vào yêu cầu quyền truy cập '
+            '(PR:L khi cần đăng nhập trước so với PR:N khi mở công khai) và phạm vi quyền thực tế của tài khoản CSDL kết nối.',
             small,
         )
 
     # -------------------- 6. REMEDIATION RECOMMENDATIONS --------------------
-    section(6, 'Khuyến nghị khắc phục tổng thể')
+    section(6, 'Khuyến nghị khắc phục tổng thể & Quy trình Retest')
     recs = view['global_recommendations']
     if recs:
         for idx_r, rec in enumerate(recs, 1):
@@ -332,6 +358,10 @@ def render_pdf(report, path):
     else:
         add('Duy trì kiểm thử bảo mật định kỳ và áp dụng danh mục kiểm tra bảo mật ứng dụng theo OWASP ASVS.')
 
+    add('Quy trình Kiểm tra xác nhận sau khắc phục (Post-Remediation Retest)', sub)
+    for step_text in view['retest_summary_steps']:
+        add('• ' + step_text)
+
     # -------------------- 7. APPENDIX --------------------
     section(7, 'Phụ lục bằng chứng kỹ thuật')
     any_http = [ex for e in entries for ex in e['http_exchanges']]
@@ -339,11 +369,14 @@ def render_pdf(report, path):
         add('Phụ lục A — Bằng chứng Giao dịch HTTP Request / Response chi tiết', sub)
         for e in entries:
             for idx_h, ex in enumerate(e['http_exchanges'][:4], 1):
-                add(f"{e['pentest_id']} — Gói tin minh chứng #{idx_h} ({ex.get('id', '')}):", bold_body)
+                cap = ex.get('caption') or f"Gói tin minh chứng #{idx_h} ({ex.get('id', '')})"
+                add(f"{e['pentest_id']} — {cap}", bold_body)
                 if ex.get('request'):
                     block(ex['request'], mono=True)
                 if ex.get('response'):
                     block(ex['response'], mono=True)
+            if e['excluded_http_note']:
+                callout('Đối chiếu tính nhất quán với toàn bộ tệp Log gốc', e['excluded_http_note'], info=True)
 
     add('Phụ lục B — Kết quả Trích xuất Công cụ Kiểm thử & Ghi nhận Hạ tầng', sub)
     for e in entries:
@@ -351,7 +384,7 @@ def render_pdf(report, path):
             add(f"Trích xuất kết quả cho {e['pentest_id']} ({e['title']}):", bold_body)
             block(e['evidence'][0], mono=True)
     if view['eol_clean']:
-        add('Ghi nhận vòng đời phần mềm nền tảng máy chủ:', bold_body)
+        add('Ghi nhận thụ động vòng đời phần mềm nền tảng máy chủ (Không tính là lỗ hổng độc lập):', bold_body)
         for note in view['eol_clean']:
             add('• ' + note)
 
@@ -377,7 +410,7 @@ def render_pdf(report, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = ReportDoc(
         str(path), pagesize=A4, leftMargin=44, rightMargin=44, topMargin=44, bottomMargin=55,
-        title='Báo cáo Kiểm thử Xâm nhập Ứng dụng Web', author=prepared_by,
+        title='Báo cáo Kiểm thử Xâm nhập Ứng dụng Web & CSDL', author=prepared_by,
     )
     doc.addPageTemplates(
         PageTemplate(id='report', frames=[Frame(44, 55, width, A4[1] - 99, id='main', leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)], onPage=footer)

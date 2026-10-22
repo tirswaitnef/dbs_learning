@@ -609,6 +609,118 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertIs(rt1, rt2)
                 self.assertEqual(len(init_calls), 1)
 
+    def test_peer_review_precision_scope_cvss_confirmed_vs_potential_packet_filter_and_retest(self):
+        from rag.parsers import load_findings
+        from rag.pdf_report import render_pdf
+        from rag.pentest_polish import prepare_pentest_view, render_pentest_markdown, sanitize_raw_scan_text
+        from rag.top10 import classify
+
+        sample_log = (
+            "Target URL: http://8.8.8.8/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+            "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=secretcookie777; security=low)\n"
+            "Pentest Scope Rule: Isolated Lab Deep DB PoC (--level=5 --risk=3, -p id,Submit, [y/N] Y, --dbs, --current-user, --current-db, --is-dba, -D dvwa --tables, raw HTTP traffic capture; NO --dump)\n"
+            "Analyst CVSS v3.1: 8.1 (High) — CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N\n"
+            "[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks\n"
+            "sqlmap identified the following injection point(s) with a total of 5340 HTTP(s) requests:\n"
+            "---\n"
+            "Parameter: id (GET)\n"
+            "    Type: boolean-based blind\n"
+            "    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)\n"
+            "    Payload: id=1' OR NOT 9227=9227-- esvd&Submit=Submit\n\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based - WHERE, HAVING, ORDER BY or GROUP BY clause (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(5879,CONCAT(0x5c,0x7170787671,(SELECT (ELT(5879=5879,1))),0x71706a7871))-- nWty&Submit=Submit\n\n"
+            "    Type: time-based blind\n"
+            "    Title: MySQL >= 5.0.12 AND time-based blind (query SLEEP)\n"
+            "    Payload: id=1' AND (SELECT 8294 FROM (SELECT(SLEEP(2)))ZCWs)-- PfnW&Submit=Submit\n\n"
+            "    Type: UNION query\n"
+            "    Title: Generic UNION query (NULL) - 2 columns\n"
+            "    Payload: id=1' UNION ALL SELECT CONCAT(0x7170787671,0x41,0x71706a7871),NULL-- -&Submit=Submit\n"
+            "---\n"
+            "web server operating system: Linux Debian 9 (stretch)\n"
+            "web application technology: Apache 2.4.25\n"
+            "back-end DBMS: MySQL >= 5.1 (MariaDB fork)\n"
+            "current user: 'app@localhost'\n"
+            "current database: 'dvwa'\n"
+            "current user is DBA: False\n"
+            "available databases [2]:\n"
+            "[*] dvwa\n"
+            "[*] information_schema\n"
+            "Database: dvwa\n"
+            "[2 tables]\n"
+            "+-----------+\n"
+            "| guestbook |\n"
+            "| users     |\n"
+            "+-----------+\n"
+            "HTTP request [#239]:\n"
+            "GET /vulnerabilities/sqli/?id=1%27%20AND%20EXTRACTVALUE%285879%2C1%29--%20nWty&Submit=Submit HTTP/1.1\n"
+            "Host: 8.8.8.8\n"
+            "Cookie: PHPSESSID=secretcookie777; security=low\n\n"
+            "HTTP response [#239] (200 OK):\n"
+            "HTTP/1.1 200 OK\n"
+            "<pre>XPATH syntax error: '\\qpxvq1qpjxq'</pre>\n"
+            "############################################################################\n"
+            "HTTP request [#1008]:\n"
+            "GET /vulnerabilities/sqli/?id=1&Submit=Submit%27%20AND%201%3D1--%20abc HTTP/1.1\n"
+            "Host: 8.8.8.8\n"
+            "Cookie: PHPSESSID=secretcookie777; security=low\n\n"
+            "HTTP response [#1008] (200 OK):\n"
+            "HTTP/1.1 200 OK\n"
+            "<pre>ID: 1</pre>\n"
+            "############################################################################\n"
+            "HTTP request [#5330]:\n"
+            "GET /vulnerabilities/sqli/?id=1%27%20UNION%20ALL%20SELECT%20table_name%2CNULL%20FROM%20INFORMATION_SCHEMA.TABLES--%20-&Submit=Submit HTTP/1.1\n"
+            "Host: 8.8.8.8\n"
+            "Cookie: PHPSESSID=secretcookie777; security=low\n\n"
+            "HTTP response [#5330] (200 OK):\n"
+            "HTTP/1.1 200 OK\n"
+            "<pre>First name: qpxvqguestbookqpjxq</pre><pre>First name: qpxvqusersqpjxq</pre>\n"
+            "############################################################################\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "scan.log"
+            p.write_text(sample_log, encoding="utf-8")
+            findings = load_findings(p, "sqlmap-log")
+            rows = []
+            for f in findings:
+                d = {
+                    "id": f.id, "title": f.title, "cwe": f.cwe, "severity": f.severity,
+                    "tool": f.tool, "location": f.location, "kind": f.kind,
+                    "evidence": list(f.evidence), "details": dict(f.details), "guidance": [],
+                }
+                d["owasp_top10"] = classify(d)
+                rows.append(d)
+            rep = {"schema_version": 1, "generated_at": "2026-10-22T00:00:00+00:00", "findings": rows, "report_metadata": {}}
+            view = prepare_pentest_view(rep)
+            # 1. Explicit IP sanitization disclosure + synchronized companion log
+            self.assertIn("target-app.local", view["sanitization_note"])
+            synced_log = sanitize_raw_scan_text(sample_log.encode("utf-8"), rep)
+            self.assertNotIn("8.8.8.8", synced_log)
+            self.assertNotIn("secretcookie777", synced_log)
+            self.assertIn("http://target-app.local/vulnerabilities/sqli/?id=1&Submit=Submit", synced_log)
+            # 2. Scope strictly scoped to SQL Injection on GET 'id', passive signals explicitly non-conclusive
+            self.assertIn("SQL Injection", view["active_scope"])
+            self.assertNotIn("Quản lý Phiên & Xác thực", view["active_scope"])
+            self.assertIn("heuristic", view["passive_notes"])
+            # 3. CVSS 8.1 explicitly explains PR:L vs PR:N
+            e0 = view["entries"][0]
+            self.assertIn("PR:L", e0["cvss_rationale"])
+            self.assertIn("PR:N", e0["cvss_rationale"])
+            # 4. Confirmed vs Potential impact separated & respects NO --dump boundary
+            self.assertIn("guestbook, users", e0["confirmed_impact"])
+            self.assertIn("không chạy --dump", e0["confirmed_impact"])
+            self.assertIn("nguy cơ tiềm tàng", e0["potential_impact"])
+            # 5. Packet filter keeps #239 & #5330 with captions and explains excluded #1008 on 'Submit'
+            self.assertEqual([m["id"] for m in e0["http_exchanges"]], ["#239", "#5330"])
+            self.assertIn("#1008", e0["excluded_http_note"])
+            self.assertIn("Submit", e0["excluded_http_note"])
+            # 6. Retest / Verification checklist included
+            self.assertGreaterEqual(len(e0["retest_steps"]), 4)
+            md = render_pentest_markdown(rep)
+            self.assertIn("Retest / Verification", md)
+            pdf_out = render_pdf(rep, Path(tmp) / "out.pdf")
+            self.assertTrue(pdf_out.is_file() and pdf_out.stat().st_size > 5000)
+
 
 if __name__ == "__main__":
     unittest.main()

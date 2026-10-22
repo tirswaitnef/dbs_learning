@@ -153,10 +153,10 @@
               </select>
             </label>
             <label>Ghi chú / PoC XSS sau khi verify thủ công (nếu giữ)<input id="meta-xss_poc" maxlength="1000" placeholder="Ví dụ: GET /...?id=1&lt;svg/onload=alert(1)&gt; thực thi hộp thoại trên trình duyệt"></label>
-            <label>Rà soát &amp; ẩn IP thực / Cookie / Đường dẫn nhạy cảm
+            <label>Rà soát &amp; đồng bộ địa chỉ mục tiêu giữa Báo cáo và Log
               <select id="meta-mask_public_ips">
-                <option value="true" selected>Tự động ẩn IP thực &amp; dữ liệu nhạy cảm (Khuyến nghị)</option>
-                <option value="false">Giữ nguyên địa chỉ IP gốc trong báo cáo</option>
+                <option value="true" selected>Ẩn IP thực sang tên miền đại diện &amp; xuất kèm Log đồng bộ (An toàn)</option>
+                <option value="false">Giữ nguyên IP gốc khớp 100% file Log gốc (Chỉ che Cookie/Token)</option>
               </select>
             </label>
             <label>Tên miền đại diện thay cho IP thực<input id="meta-target_alias" maxlength="120" value="target-app.local" placeholder="target-app.local"></label>

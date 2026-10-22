@@ -481,11 +481,15 @@ function renderJob(job) {
     dlMd.href = '/api/jobs/' + encodeURIComponent(job.id) + '/md' + (qTok ? '?' + qTok : '');
     dlMd.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.md';
 
+    const dlLog = element('a', 'json-link', 'Tải Log đồng bộ ẩn IP (.txt)');
+    dlLog.href = '/api/jobs/' + encodeURIComponent(job.id) + '/log' + (qTok ? '?' + qTok : '');
+    dlLog.download = 'log-kiem-thu-dong-bo-' + job.id.slice(0, 8) + '.txt';
+
     const dlJson = element('a', 'json-link', 'Tải dữ liệu JSON');
     dlJson.href = '/api/jobs/' + encodeURIComponent(job.id) + '/json' + (qTok ? '?' + qTok : '');
     dlJson.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.json';
 
-    actions.append(viewPdf, dlPdf, dlMd, dlJson);
+    actions.append(viewPdf, dlPdf, dlLog, dlMd, dlJson);
     download.append(actions);
 
     if (job.events && job.events.length) {
