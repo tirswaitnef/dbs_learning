@@ -342,6 +342,24 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertEqual(resp_inline.read()[:4], b"%PDF")
                 self.assertIn("inline;", resp_inline.headers.get("Content-Disposition", ""))
                 self.assertIn("object-src 'self'", resp_inline.headers.get("Content-Security-Policy", ""))
+
+                req_trace = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/jobs/{job['id']}/trace",
+                    headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie},
+                )
+                trace_json = json.loads(opener.open(req_trace).read().decode("utf-8"))
+                self.assertGreaterEqual(trace_json["call_count"], 5)
+                self.assertTrue(any("api/chat" in e["endpoint"] for e in trace_json["entries"]))
+                self.assertTrue(all(e["system_prompt"] and e["user_prompt"] and e["raw_response"] for e in trace_json["entries"]))
+
+                req_trace_txt = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/api/jobs/{job['id']}/trace-txt",
+                    headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie},
+                )
+                trace_txt = opener.open(req_trace_txt).read().decode("utf-8")
+                self.assertIn("NHẬT KÝ LỆNH GỬI AI & PHẢN HỒI NGUYÊN VĂN", trace_txt)
+                self.assertIn("SYSTEM PROMPT", trace_txt)
+                self.assertIn("ASSISTANT RAW OUTPUT", trace_txt)
             finally:
                 server.shutdown()
                 server.server_close()
@@ -849,6 +867,76 @@ class OllamaIntegrationTests(unittest.TestCase):
                 md2 = (out2 / "pentest_report.md").read_text(encoding="utf-8")
                 self.assertIn("Sinh viên B", md2)
                 self.assertIn("8.8.4.4", md2)
+                cached_trace = json.loads((out2 / "ai_trace.json").read_text(encoding="utf-8"))
+                self.assertTrue(cached_trace["from_cache"])
+                self.assertEqual(cached_trace["call_count"], 5)
+                self.assertEqual(len(cached_trace["entries"]), 5)
+                self.assertIn("SYSTEM PROMPT", (out2 / "ai_trace.txt").read_text(encoding="utf-8"))
+
+                # Forcing fresh AI execution (`force_fresh_ai="true"`) runs live LLM calls again!
+                out3 = tmp_p / "out3"
+                run_corpus_report(
+                    scan_file, out3, settings,
+                    raw_directory=raw_dir, store_directory=store_dir,
+                    format_="sqlmap-log", offline=True,
+                    report_metadata={"xss_decision": "drop", "force_fresh_ai": "true"},
+                )
+                self.assertEqual(len(llm_calls), first_call_count + 5)
+                live_trace = json.loads((out3 / "ai_trace.json").read_text(encoding="utf-8"))
+                self.assertFalse(live_trace["from_cache"])
+                self.assertEqual(live_trace["call_count"], 5)
+
+    def test_web_trace_endpoint_and_multi_tool_flexibility(self):
+        from rag.pentest_polish import prepare_pentest_view, render_pentest_markdown
+
+        zap_report = {
+            "schema_version": 1,
+            "generated_at": "2026-10-22T09:00:00+00:00",
+            "findings": [{
+                "id": "zap:90022",
+                "title": "Path Traversal on File Download Endpoint",
+                "cwe": "CWE-22",
+                "severity": "high",
+                "tool": "zap",
+                "location": "https://portal.example.org/download?file=../../etc/passwd",
+                "kind": "scanner_alert",
+                "evidence": ["root:x:0:0:root:/root:/bin/bash"],
+                "details": {
+                    "method": "GET",
+                    "parameter": "file",
+                    "description": "Arbitrary file path supplied in 'file' parameter reads local filesystem files.",
+                    "solution": "Canonicalize file paths against an explicit base directory allowlist before reading files.",
+                    "request": "GET /download?file=..%2F..%2Fetc%2Fpasswd HTTP/1.1\nHost: portal.example.org",
+                    "response": "HTTP/1.1 200 OK\n\nroot:x:0:0:root:/root:/bin/bash",
+                },
+                "owasp_top10": {"status": "in_scope", "categories": [{"id": "A01:2025", "title": "Broken Access Control"}], "reason": ""},
+                "guidance": [{
+                    "id": "S1",
+                    "title": "File Upload Cheat Sheet",
+                    "section": "Input Validation / Path Traversal Prevention",
+                    "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+                }],
+                "ai_analysis": {
+                    "status": "ai_reviewed",
+                    "claims": {
+                        "observations": [{"text_vi": "Công cụ ZAP ghi nhận tham số file tại /download đọc trực tiếp nội dung tệp /etc/passwd trên máy chủ."}],
+                        "potential_impacts": [{"text_vi": "Nếu ứng dụng chạy với quyền đọc rộng trên máy chủ, kẻ tấn công có thể đánh cắp tệp cấu hình và khóa bí mật nội bộ."}],
+                        "limitations": [],
+                    },
+                },
+            }],
+            "report_metadata": {"report_lang": "vi"},
+        }
+        view = prepare_pentest_view(zap_report)
+        e0 = view["entries"][0]
+        self.assertIn("/etc/passwd", e0["description"])
+        self.assertIn("khóa bí mật nội bộ", e0["impact_text"])
+        self.assertIn("Canonicalize file paths", e0["remediation"]["text"])
+        self.assertIn("Path Traversal Prevention", e0["remediation"]["text"])
+        md = render_pentest_markdown(zap_report)
+        self.assertIn("A01:2025 - Broken Access Control", md)
+        self.assertNotIn("sqlmap", md.lower())
+        self.assertNotIn("dvwa", md.lower())
 
 
 if __name__ == "__main__":

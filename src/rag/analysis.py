@@ -7,7 +7,7 @@ import json
 import re
 from collections import Counter
 from .db_scope import ai_source, attach_db_scope, scope_lines, scope_summary
-from .llm import GeminiLLM, OllamaLLM
+from .llm import GeminiLLM, OllamaLLM, trace_step, wrap_llm_for_trace
 from .report_view import cwe_origin, cwe_text
 from .top10 import cwe_label
 
@@ -239,6 +239,7 @@ def validate(data,sources):
 def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None,item_label=None):
     result={'status':'not_requested','claims':{},'sources':sources,'calls':0,
             'notice':'Kiểm tra cấu trúc/trích dẫn và rà soát bằng AI không bảo đảm đúng ngữ nghĩa.'}
+    traced_llm=wrap_llm_for_trace(llm)
     schema=_schema_for(sources)
     repair_note=None
     last_draft=None
@@ -250,15 +251,20 @@ def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None,item_label=
                 payload['previous_draft']=last_draft
                 payload['repair_note']=repair_note
                 if progress:progress(f"Đang tự hiệu chỉnh lần {attempt} cho {target} (đối chiếu lại trích dẫn & ngữ cảnh)...")
-            elif progress:
-                progress(f"Đang viết phân tích tiếng Việt cho {target}...")
+                draft_label=f"Tự sửa bản nháp AI (lần {attempt}) — {target}"
+            else:
+                if progress:
+                    progress(f"Đang viết phân tích tiếng Việt cho {target}...")
+                draft_label=f"Viết phân tích AI — {target}"
             result['calls']+=1
-            last_draft=llm.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
+            with trace_step(draft_label):
+                last_draft=traced_llm.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
             data=validate(json.loads(last_draft),sources)
             if progress:
                 progress(f"Đang kiểm tra trích dẫn & rà soát chéo AI cho {target}...")
             result['calls']+=1
-            verdict=json.loads(llm.generate(json.dumps({'sources':sources,'analysis':data},ensure_ascii=False),system=REVIEW_SYSTEM,schema=REVIEW_SCHEMA))
+            with trace_step(f"Kiểm duyệt chéo AI (Reviewer) — {target}"):
+                verdict=json.loads(traced_llm.generate(json.dumps({'sources':sources,'analysis':data},ensure_ascii=False),system=REVIEW_SYSTEM,schema=REVIEW_SCHEMA))
             keys={'supported','no_remediation','appropriately_uncertain','database_specific'}
             if not isinstance(verdict,dict) or set(verdict)!=keys or any(verdict[k] is not True for k in keys):
                 failed=[k for k in sorted(keys) if not isinstance(verdict,dict) or verdict.get(k) is not True]

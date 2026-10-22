@@ -922,6 +922,21 @@ footer span{margin:0 7px}
 }
 .again:hover{border-color:var(--accent);color:var(--accent)}
 
+.trace-panel summary{font-weight:600;color:var(--accent)}
+.trace-body{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+.trace-topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;background:#f4f7f5;border:1px solid var(--line);border-radius:8px;font-size:12px}
+.trace-mode-info{color:var(--ink-secondary);line-height:1.5}
+.trace-item{border:1px solid var(--line-strong);border-radius:10px;padding:11px 13px;background:#fff}
+.trace-item-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px}
+.trace-meta{font-size:11px;color:var(--muted);margin:4px 0 8px;overflow-wrap:anywhere}
+.trace-pill{font-size:11px;padding:2px 8px;border-radius:999px;font-weight:600;background:#e8f3ee;color:var(--accent)}
+.trace-pill.trace-running{background:#fff4db;color:#8a5800}
+.trace-pill.trace-retry{background:#fff4db;color:#8a5800}
+.trace-pill.trace-error{background:var(--err-bg);color:var(--err-ink)}
+.trace-sub{margin-top:6px;border:1px solid var(--line);border-radius:7px;padding:6px 10px;background:#fafcfb}
+.trace-sub summary{cursor:pointer;font-size:11.5px;font-weight:600;color:var(--ink)}
+.trace-pre{margin:7px 0 2px;padding:9px 10px;background:#161d1a;color:#e7f1ec;border-radius:6px;font-size:11px;line-height:1.55;max-height:260px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+
 .mobile-menu{display:none}
 .icon-button{border:0;background:transparent;padding:4px;color:var(--ink-secondary)}
 .toast{

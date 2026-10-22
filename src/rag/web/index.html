@@ -166,6 +166,12 @@
               </select>
             </label>
             <label>Tên miền đại diện thay cho IP thực<input id="meta-target_alias" maxlength="120" value="target-app.local" placeholder="target-app.local"></label>
+            <label>Chế độ gọi AI &amp; Bộ nhớ đệm (Cache)
+              <select id="meta-force_fresh_ai">
+                <option value="false" selected>Dùng lại Cache nếu trùng y hệt file cũ (Nhanh)</option>
+                <option value="true">Luôn gọi trực tiếp AI mới (Xem trực tiếp mọi lệnh gửi Ollama)</option>
+              </select>
+            </label>
           </div>
         </details>
 

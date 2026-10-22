@@ -159,6 +159,7 @@ def render_markdown(report):
 
 
 def write_report(report, output):
+    from .llm import format_ai_trace_text
     from .pentest_polish import prepare_pentest_view, render_pentest_markdown
     enforce(report)
     output = Path(output)
@@ -166,6 +167,18 @@ def write_report(report, output):
     view = prepare_pentest_view(report)
     sanitized_report = view['work']
     sanitized_report['privacy_audit'] = view['privacy_audit']
+    trace_obj = sanitized_report.get('ai_trace')
+    if trace_obj is None:
+        trace_obj = {
+            'mode': sanitized_report.get('mode', 'demo'),
+            'model': sanitized_report.get('model') or 'none',
+            'from_cache': False,
+            'call_count': 0,
+            'entries': [],
+        }
+        sanitized_report['ai_trace'] = trace_obj
+    (output / "ai_trace.json").write_text(json.dumps(trace_obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (output / "ai_trace.txt").write_text(format_ai_trace_text(trace_obj), encoding="utf-8")
     from .pdf_report import render_pdf
     pdf_path = output / "report.pdf"
     render_pdf(sanitized_report, pdf_path)

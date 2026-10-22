@@ -386,13 +386,28 @@ class Handler(BaseHTTPRequestHandler):
                         issues.append('Chưa thấy tài liệu Cheat Sheet Series trong data/raw/owasp/official.')
             return self.send_data(200,{'token':self.server.token,'demo':self.server.manager.demo,'provider':provider,'configured':configured or self.server.manager.demo,'model':model,'issues':issues,'formats':FORMATS,'max_bytes':MAX_UPLOAD})
         if path=='/api/jobs':return self.send_data(200,self.server.manager.list())
-        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md|log))?',path)
+        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md|log|trace|trace-txt))?',path)
         if match:
             try:job=self.server.manager.get(match[1])
             except KeyError:return self.send_data(404,{'error':'Không tìm thấy cuộc trò chuyện.'})
             if not match[2]:return self.send_data(200,job)
-            if job['status'] not in {'completed','partial'}:return self.send_data(409,{'error':'Báo cáo chưa sẵn sàng.'})
             kind=match[2]
+            if kind in {'trace','trace-txt'}:
+                out_folder=self.server.manager.directory/match[1]/'output'
+                if kind=='trace':
+                    tf_json=out_folder/'ai_trace.json'
+                    if tf_json.is_file():
+                        try:return self.send_data(200,json.loads(tf_json.read_text(encoding='utf-8')))
+                        except Exception:pass
+                    return self.send_data(200,{'mode':'demo' if job.get('demo') else 'live','model':'','from_cache':False,'call_count':0,'entries':[]})
+                tf_txt=out_folder/'ai_trace.txt'
+                if tf_txt.is_file():
+                    raw_txt=tf_txt.read_bytes()
+                else:
+                    from .llm import format_ai_trace_text
+                    raw_txt=format_ai_trace_text({'mode':'demo' if job.get('demo') else 'live','model':'','from_cache':False,'entries':[]}).encode('utf-8')
+                return self.send_data(200,raw_txt,'text/plain; charset=utf-8',{'Content-Disposition':f'attachment; filename="lenh-gui-ai-{match[1][:8]}.txt"'})
+            if job['status'] not in {'completed','partial'}:return self.send_data(409,{'error':'Báo cáo chưa sẵn sàng.'})
             fname={'md':'pentest_report.md','log':'sanitized_input.txt'}.get(kind,'report.'+kind)
             file=self.server.manager.directory/match[1]/'output'/fname
             if not file.is_file():return self.send_data(404,{'error':'Không tìm thấy file báo cáo.'})

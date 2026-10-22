@@ -29,6 +29,86 @@ const PIPELINE_STEPS = [
 ];
 
 let config = null, jobs = [], selected = null, files = [], uploading = false, timer = null, tickTimer = null, lastSignature = '';
+const traceOpenByJob = {};
+const traceCacheByJob = {};
+
+async function loadTraceForJob(jobId, container) {
+  try {
+    const data = await api('/api/jobs/' + encodeURIComponent(jobId) + '/trace');
+    traceCacheByJob[jobId] = data;
+    renderTraceBody(jobId, container, data);
+  } catch (err) {
+    container.textContent = 'Không tải được nhật ký lệnh AI: ' + err.message;
+  }
+}
+
+function renderTraceBody(jobId, container, data) {
+  container.textContent = '';
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
+  const qTok = BOOT_TOKEN ? ('?token=' + encodeURIComponent(BOOT_TOKEN)) : '';
+
+  const topBar = element('div', 'trace-topbar');
+  const modeInfo = element('div', 'trace-mode-info');
+  const modeTxt = data?.from_cache
+    ? `Tái sử dụng từ Cache SHA-256 (${entries.length} lượt gọi AI gốc) — Chọn "Luôn gọi trực tiếp AI mới" nếu muốn chạy lại trực tiếp.`
+    : entries.length
+      ? `Đã ghi nhận ${entries.length} lượt giao tiếp trực tiếp với mô hình ${data.model || 'AI'}.`
+      : (data?.mode === 'demo'
+          ? 'Đang ở chế độ Demo (--demo): không gọi AI (0 lượt). Hãy mở bằng start-web.bat để xem giao tiếp trực tiếp với Ollama.'
+          : 'Chưa phát sinh hoặc đang chuẩn bị gửi lệnh đầu tiên tới mô hình AI...');
+  modeInfo.textContent = modeTxt;
+  const dlTxt = element('a', 'json-link', 'Tải bản đầy đủ (.txt)');
+  dlTxt.href = '/api/jobs/' + encodeURIComponent(jobId) + '/trace-txt' + qTok;
+  dlTxt.download = 'lenh-gui-ai-' + jobId.slice(0, 8) + '.txt';
+  topBar.append(modeInfo, dlTxt);
+  container.append(topBar);
+
+  for (const item of entries) {
+    const card = element('div', 'trace-item');
+    const head = element('div', 'trace-item-head');
+    const left = element('strong', '', `#${item.seq} · ${item.step || 'Gọi mô hình AI'}`);
+    const statusMap = { running: 'Đang chờ AI trả lời...', ok: `Hoàn tất · ${item.duration_ms || 0} ms`, retry: `Thử lại · ${item.duration_ms || 0} ms`, error: 'Lỗi gọi AI' };
+    const pill = element('span', 'trace-pill trace-' + (item.status || 'ok'), statusMap[item.status] || item.status);
+    head.append(left, pill);
+    card.append(head);
+
+    const sub = element('div', 'trace-meta', `${item.endpoint || ''} · Model: ${item.model || ''} · Tham số: ${JSON.stringify(item.options || {})}`);
+    card.append(sub);
+
+    const mkBlock = (title, content, openDefault) => {
+      const d = element('details', 'trace-sub');
+      d.open = !!openDefault;
+      d.append(element('summary', '', title));
+      const pre = element('pre', 'trace-pre', content || '(Trống)');
+      d.append(pre);
+      return d;
+    };
+    card.append(
+      mkBlock('1. Lệnh hệ thống gửi đi (System Prompt)', item.system_prompt, false),
+      mkBlock('2. Dữ liệu gửi đi (User Payload JSON)', item.user_prompt, item.status === 'running'),
+      mkBlock('3. Phản hồi nguyên văn từ AI (Assistant JSON Output)', item.raw_response || item.error || '(Đang chờ mô hình AI trả lời...)', true)
+    );
+    container.append(card);
+  }
+}
+
+function buildTracePanel(job, autoOpen = false) {
+  const details = element('details', 'audit-log trace-panel');
+  const isOpen = traceOpenByJob[job.id] ?? autoOpen;
+  details.open = !!isOpen;
+  const sum = element('summary', '', 'Xem toàn bộ Lệnh gửi cho AI (Prompt) & Phản hồi nguyên văn của AI');
+  const body = element('div', 'trace-body', 'Đang tải nhật ký lệnh AI...');
+  details.append(sum, body);
+  details.addEventListener('toggle', () => {
+    traceOpenByJob[job.id] = details.open;
+    if (details.open) loadTraceForJob(job.id, body);
+  });
+  if (details.open) {
+    if (traceCacheByJob[job.id]) renderTraceBody(job.id, body, traceCacheByJob[job.id]);
+    loadTraceForJob(job.id, body);
+  }
+  return details;
+}
 
 function element(tag, className, text) {
   const el = document.createElement(tag);
@@ -391,6 +471,8 @@ function renderJob(job) {
       requestAnimationFrame(() => { listEl.scrollTop = listEl.scrollHeight; });
     }
 
+    process.append(buildTracePanel(job, false));
+
     bot.append(
       process,
       element('p', '', 'Bạn có thể mở “Tạo báo cáo mới” để chuẩn bị file khác — phiên xử lý hiện tại vẫn tiếp tục chạy nền cho đến khi xuất xong PDF.')
@@ -404,6 +486,7 @@ function renderJob(job) {
       details.append(element('summary', '', 'Xem nhật ký trước khi dừng (' + job.events.length + ' mốc)'), buildEventList(job.events));
       bot.append(details);
     }
+    bot.append(buildTracePanel(job, false));
   } else {
     const s = job.summary || { findings: 0, with_guidance: 0, scope_blocked: 0 };
     if (job.status === 'partial') {
@@ -485,12 +568,18 @@ function renderJob(job) {
     dlLog.href = '/api/jobs/' + encodeURIComponent(job.id) + '/log' + (qTok ? '?' + qTok : '');
     dlLog.download = 'log-kiem-thu-dong-bo-' + job.id.slice(0, 8) + '.txt';
 
+    const dlTrace = element('a', 'json-link', 'Tải Lệnh gửi AI (.txt)');
+    dlTrace.href = '/api/jobs/' + encodeURIComponent(job.id) + '/trace-txt' + (qTok ? '?' + qTok : '');
+    dlTrace.download = 'lenh-gui-ai-' + job.id.slice(0, 8) + '.txt';
+
     const dlJson = element('a', 'json-link', 'Tải dữ liệu JSON');
     dlJson.href = '/api/jobs/' + encodeURIComponent(job.id) + '/json' + (qTok ? '?' + qTok : '');
     dlJson.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.json';
 
-    actions.append(viewPdf, dlPdf, dlLog, dlMd, dlJson);
+    actions.append(viewPdf, dlPdf, dlLog, dlTrace, dlMd, dlJson);
     download.append(actions);
+
+    download.append(buildTracePanel(job, false));
 
     if (job.events && job.events.length) {
       const details = element('details', 'audit-log');
@@ -614,7 +703,7 @@ form.addEventListener('submit', async e => {
   try {
     const metaJson = JSON.stringify(
       Object.fromEntries(
-        ['report_lang', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias']
+        ['report_lang', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias', 'force_fresh_ai']
           .map(k => [k, ($('meta-' + k)?.value || '').trim()])
       )
     );

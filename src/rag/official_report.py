@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .db_scope import attach_db_scope
-from .llm import GeminiLLM, OllamaLLM
+from .llm import GeminiLLM, OllamaLLM, format_ai_trace_text, trace_llm_session, trace_step, wrap_llm_for_trace
 from .loader import load_documents
 from .report_builder import write_report, guidance_reason
 from .scanner_rules import cheatsheets_for
@@ -262,7 +262,8 @@ def select_sources(finding, candidates, settings, *, llm=None):
                              **({'techniques':details['techniques']} if details.get('techniques') else {}),
                              **({'stack_hints':stack_hints} if stack_hints else {}),
                              'top10':classify(finding)['categories']},'candidates':candidates}
-    model=llm or (OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings))
+    model=wrap_llm_for_trace(llm or (OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)),
+                             provider=settings.resolved_provider, model=settings.model_label)
     repair=None
     last_raw=None
     for attempt in range(2):
@@ -270,7 +271,10 @@ def select_sources(finding, candidates, settings, *, llm=None):
         if repair:
             payload['previous_draft']=last_raw
             payload['repair_note']=repair
-        last_raw=model.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
+        step_lbl=(f"Chọn hướng dẫn OWASP (RAG) — {finding.id} ({cwe_label(finding)})"
+                  if attempt==0 else f"Hiệu chỉnh chọn hướng dẫn OWASP (lần {attempt+1}) — {finding.id}")
+        with trace_step(step_lbl):
+            last_raw=model.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
         try:
             data=json.loads(last_raw)
             if not isinstance(data,dict) or set(data)!={'source_ids'}:raise ValueError('Invalid source selection schema')
@@ -436,16 +440,31 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
     scan_sha=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest()
     xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
     drop_obs=(xss_dec=='drop')
+    force_fresh=str((report_metadata or {}).get('force_fresh_ai') or '').strip().lower() in {'1','true','yes','on'}
+    out_dir=Path(output)
+    out_dir.mkdir(parents=True,exist_ok=True)
+    def _write_trace_files(snap: dict):
+        tmp_j=out_dir/'ai_trace.tmp.json'
+        tmp_t=out_dir/'ai_trace.tmp.txt'
+        tmp_j.write_text(json.dumps(snap,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        tmp_t.write_text(format_ai_trace_text(snap),encoding='utf-8')
+        tmp_j.replace(out_dir/'ai_trace.json')
+        tmp_t.replace(out_dir/'ai_trace.txt')
+
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
         'v':2,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':corpus_sha,
         'model':settings.model_label,'xss_decision':xss_dec,
     },sort_keys=True).encode('utf-8')).hexdigest()
     cache_file=cache_dir/f'{cache_key}.json'
-    if cache_file.is_file():
+    if not force_fresh and cache_file.is_file():
         try:
             cached_report=json.loads(cache_file.read_text(encoding='utf-8'))
             cached_report['generated_at']=datetime.now(timezone.utc).isoformat()
+            prev_trace=dict(cached_report.get('ai_trace') or {'mode':settings.resolved_provider,'model':settings.model_label,'call_count':0,'entries':[]})
+            prev_trace['from_cache']=True
+            cached_report['ai_trace']=prev_trace
+            _write_trace_files(prev_trace)
             from .report_view import attach_context
             attach_context(cached_report,scan_path,format_,report_metadata,display_filename)
             if progress:
@@ -455,14 +474,16 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         except Exception:
             pass
 
-    shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
-    report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
-                              scan_sha256=scan_sha,llm=shared_llm,progress=progress,
-                              drop_unverified_observations=drop_obs)
-    from .report_view import attach_context
-    attach_context(report,scan_path,format_,report_metadata,display_filename)
-    from .analysis import enrich_report
-    enrich_report(report,settings,llm=shared_llm,progress=progress,drop_unverified_observations=drop_obs)
+    with trace_llm_session(mode=settings.resolved_provider,model=settings.model_label,on_update=_write_trace_files) as trace_sess:
+        shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
+        report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
+                                  scan_sha256=scan_sha,llm=shared_llm,progress=progress,
+                                  drop_unverified_observations=drop_obs)
+        from .report_view import attach_context
+        attach_context(report,scan_path,format_,report_metadata,display_filename)
+        from .analysis import enrich_report
+        enrich_report(report,settings,llm=shared_llm,progress=progress,drop_unverified_observations=drop_obs)
+        report['ai_trace']=trace_sess.snapshot()
     active_rows=[r for r in report.get('findings',[]) if not (drop_obs and r.get('kind')=='observation')]
     if (all(r.get('ai_analysis',{}).get('status')=='ai_reviewed' for r in active_rows)
             and (not active_rows or report.get('ai_summary',{}).get('status')=='ai_reviewed')):

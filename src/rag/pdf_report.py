@@ -272,7 +272,7 @@ def render_pdf(report, path):
         add_bold_kv('Description' if en else 'Mô tả', e['description'])
         add_code_kv('Request' if en else 'Yêu cầu (Request)', e['request_text'])
         add_code_kv('Response' if en else 'Phản hồi (Response)', e['response_text'])
-        add_bold_kv('Impact' if en else 'Tác động', e['confirmed_impact'])
+        add_bold_kv('Impact' if en else 'Tác động', e['impact_text'])
         add_bold_kv('Remediation' if en else 'Khuyến nghị khắc phục', e['remediation']['text'])
 
     # 5. Risk Ratings
