@@ -174,10 +174,28 @@ def parse_zap(data, source_name):
                         observed.append(f"{key}: {instance[key]}")
                 inst_meta = dict(site_meta)
                 req_hdr = str(instance.get("request-header") or instance.get("requestHeader") or "")
+                req_body = str(instance.get("request-body") or instance.get("requestBody") or "")
+                resp_hdr = str(instance.get("response-header") or instance.get("responseHeader") or "")
+                resp_body = str(instance.get("response-body") or instance.get("responseBody") or "")
+                req_full = (
+                    f"{req_hdr.rstrip(chr(13) + chr(10))}\r\n\r\n{req_body}"
+                    if req_hdr and req_body
+                    else (req_hdr or req_body)
+                )
+                resp_full = (
+                    f"{resp_hdr.rstrip(chr(13) + chr(10))}\r\n\r\n{resp_body}"
+                    if resp_hdr and resp_body
+                    else (resp_hdr or resp_body)
+                )
+                zap_messages = (
+                    [{"request": req_full, "response": resp_full}]
+                    if (req_full.strip() or resp_full.strip())
+                    else []
+                )
                 if re.search(r"(?im)^\s*(?:Cookie|Authorization)\s*:", req_hdr):
                     inst_meta["auth_context"] = "Authenticated HTTP session header recorded in ZAP traffic ([REDACTED])"
                 dbms_hint = _infer_zap_dbms_hint(
-                    " ".join([str(alert.get("alert") or ""), evidence, str(instance.get("response-body") or "")])
+                    " ".join([str(alert.get("alert") or ""), evidence, resp_body])
                 )
                 findings.append(Finding(
                     f"ZAP-{si}-{ai}-{ii}", _text(alert.get("alert") or alert.get("name"), "alert"),
@@ -192,6 +210,7 @@ def parse_zap(data, source_name):
                              "scanner_solution": alert.get("solution", ""),
                              "description": alert.get("desc", ""),
                              **({"dbms": dbms_hint} if dbms_hint else {}),
+                             **({"http_messages": zap_messages} if zap_messages else {}),
                              **({"scan_telemetry": inst_meta} if inst_meta else {}),
                              "raw_instance": instance,
                              "raw_alert": {k: v for k, v in alert.items() if k != "instances"}}))

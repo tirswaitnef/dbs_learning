@@ -468,6 +468,10 @@ def _build_potential_impact(row: dict, state: str, ai_impacts: list[str], saniti
         )
         parts.append(f"**Phạm vi tác động đã chứng minh thực tế:** đã đọc được {', '.join(proven_bits)}{no_dump_note}.")
 
+    cross_corr = sanitize(str(det.get('cross_source_correlation') or '').strip())
+    if cross_corr:
+        parts.append(f"**Tương quan rủi ro liên nguồn:** {cross_corr}")
+
     for imp in ai_impacts[:2]:
         cleaned = clean_internal_jargon(imp)
         if cleaned:
@@ -491,6 +495,8 @@ def _build_potential_impact(row: dict, state: str, ai_impacts: list[str], saniti
 
 def prepare_dbsec_report(report: dict) -> dict:
     """Build complete structured model for Sections 1..10 of the official coursework template."""
+    if isinstance(report, dict) and 'general_info' in report and 'methodology' in report and 'quality_assessment' in report:
+        return copy.deepcopy(report)
     work = copy.deepcopy(report)
     enforce(work)
     meta = work.get('report_metadata') or {}
@@ -1043,16 +1049,16 @@ def prepare_dbsec_report(report: dict) -> dict:
     )
     methodology = {
         'method': (
-            'Phân tích kết hợp hai tầng (AI-First Direct Input Reading + Extractive OWASP RAG + Deterministic Verification): '
-            '(1) mô hình ngôn ngữ cục bộ đọc trực tiếp tệp kết quả kiểm thử / báo cáo đầu vào và đối khớp nguyên văn từng trích đoạn bằng chứng `E-xx`; '
+            'Phân tích kết hợp hai tầng (AI-First Direct Input Reading + Hybrid Extractive OWASP RAG + Deterministic Verification): '
+            '(1) mô hình ngôn ngữ cục bộ đọc trực tiếp tệp kết quả kiểm thử / báo cáo đầu vào, đối khớp nguyên văn từng trích đoạn bằng chứng `E-xx` và tương quan rủi ro liên nguồn (`I-xx`); '
             '(2) ánh xạ CWE sang `OWASP Top 10:2025` theo bảng chuẩn khóa cứng; '
-            '(3) truy xuất ngữ nghĩa đoạn hướng dẫn gốc từ kho `OWASP Cheat Sheet Series` chuyên biệt CSDL; '
+            '(3) truy xuất lai (Hybrid Search: `Multilingual-E5` Dense Cosine kết hợp `Okapi BM25` nhận biết tiêu đề mục theo `Reciprocal Rank Fusion - RRF`) trên kho `OWASP Cheat Sheet Series` chuyên biệt CSDL; '
             '(4) tổng hợp phân tích & tự động kiểm chứng chéo trích dẫn để loại bỏ suy diễn không có bằng chứng.'
             if is_ai_mode
             else 'Phân tích tất định dựa trên quy tắc chuẩn hóa dữ liệu đầu vào kết hợp đối chiếu trực tiếp `OWASP Top 10:2025` và thẻ tri thức `OWASP` đã phê duyệt (chế độ không gọi mô hình ngôn ngữ lớn).'
         ),
         'tools': (
-            f"Công cụ tạo dữ liệu đầu vào: `{tools_str}`; Mô hình nhúng truy xuất ngữ nghĩa: `intfloat/multilingual-e5-small`; "
+            f"Công cụ tạo dữ liệu đầu vào: `{tools_str}`; Tầng truy xuất lai: `intfloat/multilingual-e5-small` + `Okapi BM25` (`RRF`); "
             + (f"Mô hình ngôn ngữ cục bộ: `{model_raw}`." if is_ai_mode else 'Chế độ Demo cục bộ (`--demo`, không gọi LLM).')
         ),
         'references': (

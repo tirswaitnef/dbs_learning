@@ -33,6 +33,64 @@ from .top10 import mapping
 
 VALID_SEVERITIES = {'critical', 'high', 'medium', 'low', 'informational', 'unknown'}
 
+_LOG_LEVEL_BRACKET_RE = re.compile(r'\[(?:INFO|WARNING|CRITICAL|ERROR|DEBUG|NOTICE|PAYLOAD|TRAFFIC)\]')
+_CLI_NOISE_RE = re.compile(r'(?:--risk\s*=?\s*\d|--level\s*=?\s*\d|\bsecurity\s*=\s*(?:low|medium|high|impossible)\b)', re.I)
+_EXPLICIT_SEV_PATTERNS: dict[str, re.Pattern[str]] = {
+    'critical': re.compile(
+        r'(?:\b(?:severity|risk(?:\s*level|\s*factor)?|cvss[^.\n]{0,30}|mức\s*(?:độ(?:\s*nghiêm\s*trọng)?|rủi\s*ro))\b[^\n]{0,40}\b(?:critical|nghiêm\s*trọng|rất\s*cao)\b'
+        r'|["\'<](?:severity|risk_factor)["\'>\s:=]*(?:critical|4)\b'
+        r'|["\'<]riskcode["\'>\s:=]*["\']?4\b'
+        r'|\[\s*critical\s*\])',
+        re.I,
+    ),
+    'high': re.compile(
+        r'(?:\b(?:severity|risk(?:\s*level|\s*factor)?|cvss[^.\n]{0,30}|mức\s*(?:độ(?:\s*nghiêm\s*trọng)?|rủi\s*ro))\b[^\n]{0,40}\b(?:high|cao)\b'
+        r'|["\'<](?:severity|risk_factor|riskdesc)["\'>\s:=]*["\']?high\b'
+        r'|["\'<]riskcode["\'>\s:=]*["\']?3\b'
+        r'|severity\s*=\s*["\']3["\']'
+        r'|\[\s*high\s*\])',
+        re.I,
+    ),
+    'medium': re.compile(
+        r'(?:\b(?:severity|risk(?:\s*level|\s*factor)?|cvss[^.\n]{0,30}|mức\s*(?:độ(?:\s*nghiêm\s*trọng)?|rủi\s*ro))\b[^\n]{0,40}\b(?:medium|moderate|trung\s*bình)\b'
+        r'|["\'<](?:severity|risk_factor|riskdesc)["\'>\s:=]*["\']?(?:medium|moderate)\b'
+        r'|["\'<]riskcode["\'>\s:=]*["\']?2\b'
+        r'|severity\s*=\s*["\']2["\']'
+        r'|\[\s*medium\s*\])',
+        re.I,
+    ),
+    'low': re.compile(
+        r'(?:\b(?:severity|risk(?:\s*level|\s*factor)?|cvss[^.\n]{0,30}|mức\s*(?:độ(?:\s*nghiêm\s*trọng)?|rủi\s*ro))\b[^\n]{0,40}\b(?:low|thấp)\b'
+        r'|["\'<](?:severity|risk_factor|riskdesc)["\'>\s:=]*["\']?low\b'
+        r'|["\'<]riskcode["\'>\s:=]*["\']?1\b'
+        r'|severity\s*=\s*["\']1["\']'
+        r'|\[\s*low\s*\])',
+        re.I,
+    ),
+    'informational': re.compile(
+        r'(?:\b(?:severity|risk(?:\s*level|\s*factor)?|mức\s*(?:độ(?:\s*nghiêm\s*trọng)?|rủi\s*ro))\b[^\n]{0,40}\b(?:informational|info|none|thông\s*tin)\b'
+        r'|["\'<](?:severity|risk_factor|riskdesc)["\'>\s:=]*["\']?(?:informational|info|none)\b'
+        r'|["\'<]riskcode["\'>\s:=]*["\']?0\b'
+        r'|severity\s*=\s*["\']0["\']'
+        r'|\[\s*info\s*\])',
+        re.I,
+    ),
+}
+
+
+def _verify_explicit_severity(sev: str, clean_text: str) -> str:
+    """Deterministically clamp LLM-hallucinated severity to `'unknown'` unless explicitly present in input."""
+    s = str(sev or 'unknown').strip().lower()
+    if s == 'info':
+        s = 'informational'
+    if s not in VALID_SEVERITIES or s == 'unknown':
+        return 'unknown'
+    scrubbed = _CLI_NOISE_RE.sub(' ', _LOG_LEVEL_BRACKET_RE.sub(' ', clean_text or ''))
+    pat = _EXPLICIT_SEV_PATTERNS.get(s)
+    if pat and pat.search(scrubbed):
+        return s
+    return 'unknown'
+
 REPORT_EXTRACT_SCHEMA = {
     'type': 'object',
     'properties': {
@@ -454,9 +512,7 @@ def extract_findings_from_report_with_ai(
                 cwe = raw_cwe if raw_cwe in allowed_cwes else _infer_keyword_cwe(title + ' ' + ' '.join(item.get('evidence_quotes') or []))
                 if cwe not in allowed_cwes:
                     cwe = 'unknown'
-                sev = str(item.get('severity') or 'unknown').strip().lower()
-                if sev not in VALID_SEVERITIES:
-                    sev = 'unknown'
+                sev = _verify_explicit_severity(item.get('severity'), clean)
                 state = str(item.get('state') or 'confirmed').strip().lower()
                 loc = str(item.get('location') or 'unknown').strip() or 'unknown'
                 param = str(item.get('parameter') or '').strip()
@@ -715,7 +771,96 @@ def read_bundle_with_ai(
         merged_meta['target_object'] = ' ; '.join(target_parts)[:240]
     if dbms_parts:
         merged_meta['dbms_override'] = ' ; '.join(dbms_parts)[:240]
+    all_findings = _correlate_bundle_findings(all_findings, updated_sources, dbms_parts)
     return all_findings, merged_meta, updated_sources
+
+
+_HOST_KEY_RE = re.compile(
+    r'(?:https?://)?(\b(?:\d{1,3}\.){3}\d{1,3}\b|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,})',
+    re.I,
+)
+
+
+def _extract_host_key(location: str) -> str:
+    m = _HOST_KEY_RE.search(str(location or ''))
+    return m.group(1).lower() if m else ''
+
+
+def _correlate_bundle_findings(
+    findings: list[Finding],
+    sources: list[dict],
+    dbms_parts: list[str],
+) -> list[Finding]:
+    """Deterministically correlate web-layer and DB/infrastructure findings across multi-file bundles."""
+    if len(sources) < 2 or len(findings) < 2:
+        return findings
+
+    fid_to_src: dict[str, str] = {}
+    for s_idx, src in enumerate(sources, 1):
+        sid = f'I-{s_idx:02d}'
+        for fid in src.get('finding_ids') or []:
+            fid_to_src[str(fid)] = sid
+
+    host_dbms: dict[str, str] = {}
+    for f in findings:
+        hk = _extract_host_key(f.location)
+        det = f.details if isinstance(f.details, dict) else {}
+        db_val = str(det.get('dbms') or (det.get('scan_telemetry') or {}).get('dbms') or '').strip()
+        if hk and db_val and hk not in host_dbms:
+            host_dbms[hk] = db_val
+    fallback_dbms = dbms_parts[0] if len(dbms_parts) == 1 else ''
+
+    infra_db_cwes = {'CWE-306', 'CWE-1393', 'CWE-521', 'CWE-287', 'CWE-319', 'CWE-295', 'CWE-327', 'CWE-250', 'CWE-284'}
+    web_db_cwes = {'CWE-89', 'CWE-564', 'CWE-943', 'CWE-209', 'CWE-200'}
+
+    enriched: list[Finding] = []
+    for f in findings:
+        hk = _extract_host_key(f.location)
+        src_self = fid_to_src.get(f.id, '')
+        det = dict(f.details or {})
+        inferred_db = host_dbms.get(hk) or fallback_dbms
+        cur_db = str(det.get('dbms') or '').strip()
+        if (
+            inferred_db
+            and (f.cwe in web_db_cwes or f.cwe in infra_db_cwes)
+            and (not cur_db or (re.search(r'\d', inferred_db) and not re.search(r'\d', cur_db)))
+        ):
+            det['dbms'] = inferred_db
+
+        peers = [
+            p for p in findings
+            if p.id != f.id
+            and fid_to_src.get(p.id, '') != src_self
+            and p.evidence
+            and ((hk and _extract_host_key(p.location) == hk) or not hk or not _extract_host_key(p.location))
+        ]
+        corr_notes: list[str] = []
+        if f.cwe in web_db_cwes:
+            infra_peers = [p for p in peers if p.cwe in infra_db_cwes]
+            if infra_peers:
+                refs = ', '.join(
+                    f"`{fid_to_src[p.id]}:{p.id}` ({p.cwe} tại `{p.location}`)"
+                    for p in infra_peers[:2]
+                )
+                corr_notes.append(
+                    f"Ghi nhận cùng mục tiêu với điểm yếu tầng dịch vụ/xác thực CSDL từ nguồn chéo {refs}; "
+                    f"cần đồng thời tham số hóa truy vấn ở tầng ứng dụng và khóa chặt xác thực/mạng ở tầng hệ quản trị CSDL."
+                )
+        elif f.cwe in infra_db_cwes:
+            web_peers = [p for p in peers if p.cwe in web_db_cwes]
+            if web_peers:
+                refs = ', '.join(
+                    f"`{fid_to_src[p.id]}:{p.id}` ({p.cwe} tại `{p.location}`)"
+                    for p in web_peers[:2]
+                )
+                corr_notes.append(
+                    f"Ghi nhận cùng mục tiêu với lỗ hổng truy vấn tầng ứng dụng web từ nguồn chéo {refs}; "
+                    f"cấu hình yếu ở tầng CSDL làm gia tăng mức độ lộ lọt khi tầng ứng dụng bị khai thác."
+                )
+        if corr_notes:
+            det['cross_source_correlation'] = ' '.join(corr_notes)
+        enriched.append(replace(f, details=det) if det != (f.details or {}) else f)
+    return enriched
 
 
 def resolve_unmapped_findings_with_ai(

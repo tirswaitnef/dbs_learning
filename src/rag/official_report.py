@@ -341,7 +341,9 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
                     row['generation_status']=state
                     row['guidance']=[guidance_from_source(s,cwe_label(finding)) for s in selected]
             else:
-                results=get_results(query)
+                results=(get_results(query,finding)
+                         if getattr(get_results,'_accepts_finding',False)
+                         else get_results(query))
                 candidates=source_candidates(results,documents,preferred_sources(finding),finding=finding)
                 row['retrieval']=candidates
                 row['status']='no_supported_guidance'
@@ -443,16 +445,20 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         tmp_t.replace(out_dir/'ai_trace.txt')
 
     store_probe_sha=''
-    meta_path=Path(store_directory)/'metadata.json'
-    if meta_path.is_file():
-        try:
-            store_probe_sha=str(json.loads(meta_path.read_text(encoding='utf-8')).get('corpus_sha256') or '')
-        except Exception:
-            store_probe_sha=''
+    for cand_meta in ('vector_store.meta.json','metadata.json'):
+        meta_path=Path(store_directory)/cand_meta
+        if meta_path.is_file():
+            try:
+                store_probe_sha=str(json.loads(meta_path.read_text(encoding='utf-8')).get('corpus_sha256') or '')
+                if store_probe_sha:
+                    break
+            except Exception:
+                store_probe_sha=''
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
-        'v':5,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':store_probe_sha,
-        'model':settings.model_label,'xss_decision':xss_dec,'xss_poc':extra_poc,
+        'v':6,'retrieval':'hybrid-rrf-v1','scan_sha256':scan_sha,'format':format_,
+        'corpus_sha256':store_probe_sha,'model':settings.model_label,
+        'xss_decision':xss_dec,'xss_poc':extra_poc,
     },sort_keys=True).encode('utf-8')).hexdigest()
     cache_file=cache_dir/f'{cache_key}.json'
     if not force_fresh and cache_file.is_file():
@@ -518,34 +524,38 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         def search(_):return []
         if eligible:
             if progress:
-                progress('[step=2|pct=14] Đang kiểm tra kho OWASP chuyên biệt CSDL và mô hình ngữ nghĩa E5...')
+                progress('[step=2|pct=14] Đang kiểm tra kho OWASP chuyên biệt CSDL và chỉ mục Hybrid (E5 + BM25 RRF)...')
             from .embeddings import embed_query_safe
+            from .hybrid import expand_retrieval_queries, hybrid_search_multi_query
             store, documents, corpus_sha, encoder = load_corpus_runtime(
                 raw_directory, store_directory, settings, offline=offline
             )
             if progress:
-                progress(f"[step=2|pct=19] Kho OWASP CSDL ({len(documents)} tài liệu) và mô hình E5 đã sẵn sàng")
-            def search(query):
-                sub_queries=[query]
-                if query.startswith('CWE-89 '):
-                    sub_queries.extend([
-                        'Query Parameterization prepared statement parameterized query example',
-                        'SQL injection additional defenses least privilege allow-list input validation',
-                        'error handling generic error response log server side SQL exception',
-                    ])
-                elif query.startswith('CWE-79 '):
-                    sub_queries.extend([
-                        'Cross Site Scripting Prevention output encoding HTML entity context Content Security Policy',
-                    ])
-                elif any(query.startswith(prefix) for prefix in ('CWE-1393 ','CWE-306 ','CWE-521 ','CWE-287 ')):
-                    sub_queries.append('Database Security authentication localhost bind permissions mysql_secure_installation')
-                merged={}
-                for sq in sub_queries:
-                    for hit in store.search(embed_query_safe(encoder,sq,overlap=settings.chunk_overlap),top_k=max(24,settings.top_k),min_score=settings.min_score):
-                        key=(hit['source'],hit['start'],hit['end'])
-                        if key not in merged or hit['score']>merged[key]['score']:
-                            merged[key]=hit
-                return sorted(merged.values(),key=lambda h:-h['score'])
+                progress(f"[step=2|pct=19] Kho OWASP CSDL ({len(documents)} tài liệu) và chỉ mục Hybrid (E5 + BM25 RRF) đã sẵn sàng")
+            def search(query, finding=None):
+                sub_queries=expand_retrieval_queries(finding,query)
+                if finding is None:
+                    if query.startswith('CWE-89 '):
+                        sub_queries.extend([
+                            'Query Parameterization prepared statement parameterized query example',
+                            'SQL injection additional defenses least privilege allow-list input validation',
+                            'error handling generic error response log server side SQL exception',
+                        ])
+                    elif query.startswith('CWE-79 '):
+                        sub_queries.extend([
+                            'Cross Site Scripting Prevention output encoding HTML entity context Content Security Policy',
+                        ])
+                    elif any(query.startswith(prefix) for prefix in ('CWE-1393 ','CWE-306 ','CWE-521 ','CWE-287 ')):
+                        sub_queries.append('Database Security authentication localhost bind permissions mysql_secure_installation')
+                return hybrid_search_multi_query(
+                    store,
+                    documents,
+                    lambda sq: embed_query_safe(encoder,sq,overlap=settings.chunk_overlap),
+                    sub_queries,
+                    top_k=max(24,settings.top_k),
+                    min_score=settings.min_score,
+                )
+            search._accepts_finding=True
 
         llm_for_rows=shared_llm if findings else None
         report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
