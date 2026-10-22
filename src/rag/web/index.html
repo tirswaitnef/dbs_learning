@@ -139,7 +139,7 @@
         </div>
 
         <details class="report-options" open>
-          <summary>Tùy chọn mẫu Báo cáo Pentest (Ngôn ngữ, Trang bìa, XSS &amp; Ẩn IP)</summary>
+          <summary>Tùy chọn mẫu Báo cáo Pentest (Ngôn ngữ, Trang bìa &amp; Chế độ AI)</summary>
           <div class="report-fields">
             <label>Ngôn ngữ báo cáo xuất ra
               <select id="meta-report_lang">
@@ -147,25 +147,17 @@
                 <option value="en">English (Giống 100% nhãn &amp; bố cục file mẫu)</option>
               </select>
             </label>
-            <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Để trống sẽ tự lấy theo tên/host trong log"></label>
+            <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Để trống sẽ tự lấy theo tên/host trong file"></label>
             <label>Đơn vị tiếp nhận (Prepared for)<input id="meta-client" maxlength="180" placeholder="Ví dụ: Hội đồng Đánh giá / Đơn vị Chủ quản"></label>
-            <label>Người thực hiện kiểm thử (Prepared by)<input id="meta-prepared_by" maxlength="180" placeholder="Họ tên kiểm thử viên / sinh viên"></label>
-            <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Mặc định lấy theo thời gian trong log"></label>
+            <label>Người thực hiện kiểm thử (Prepared by)<input id="meta-prepared_by" maxlength="180" placeholder="Để trống sẽ tự ghi tên công cụ từ file đầu vào"></label>
+            <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Để trống sẽ tự lấy thời gian trong file"></label>
             <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="CONFIDENTIAL"></label>
-            <label>Xác minh thủ công cảnh báo XSS sơ bộ
+            <label>Lọc bản ghi quan sát sơ bộ / mở cổng
               <select id="meta-xss_decision">
-                <option value="drop" selected>Loại bỏ cảnh báo chưa verify thủ công (Chuẩn Pentest)</option>
-                <option value="confirm">Đã tự verify là lỗ hổng thật — Giữ thành W-002: Reflected XSS</option>
+                <option value="drop" selected>Chỉ đưa lỗ hổng đã xác nhận vào Mục 4 (Mặc định)</option>
+                <option value="confirm">Bao gồm cả các ghi nhận sơ bộ / quan sát dịch vụ</option>
               </select>
             </label>
-            <label>Ghi chú / PoC XSS sau khi verify thủ công (nếu giữ)<input id="meta-xss_poc" maxlength="1000" placeholder="Ví dụ: GET /...?id=1&lt;svg/onload=alert(1)&gt; thực thi hộp thoại trên trình duyệt"></label>
-            <label>Rà soát &amp; đồng bộ địa chỉ mục tiêu giữa Báo cáo và Log
-              <select id="meta-mask_public_ips">
-                <option value="true" selected>Ẩn IP thực sang tên miền đại diện &amp; xuất kèm Log đồng bộ (An toàn)</option>
-                <option value="false">Giữ nguyên IP gốc khớp 100% file Log gốc (Chỉ che Cookie/Token)</option>
-              </select>
-            </label>
-            <label>Tên miền đại diện thay cho IP thực<input id="meta-target_alias" maxlength="120" value="target-app.local" placeholder="target-app.local"></label>
             <label>Chế độ gọi AI &amp; Bộ nhớ đệm (Cache)
               <select id="meta-force_fresh_ai">
                 <option value="false" selected>Dùng lại Cache nếu trùng y hệt file cũ (Nhanh)</option>

@@ -566,15 +566,15 @@ class OllamaIntegrationTests(unittest.TestCase):
             r["guidance"] = []
         base_report = {"schema_version": 1, "generated_at": "2026-10-22T00:00:00+00:00", "findings": rows, "report_metadata": {}}
 
-        # Default `drop`: unverified XSS observation excluded + public IP & cookie & path completely scrubbed
+        # Default `drop`: unverified observation excluded; public IP kept verbatim while cookies/local paths stay redacted
         view_drop = prepare_pentest_view(base_report)
         self.assertEqual([e["pentest_id"] for e in view_drop["entries"]], ["W-001"])
         self.assertEqual(view_drop["dropped_observations"], 1)
         md_drop = render_pentest_markdown(base_report)
-        self.assertNotIn("8.8.4.4", md_drop)
+        self.assertIn("8.8.4.4", md_drop)
+        self.assertNotIn("target-app.local", md_drop)
         self.assertNotIn("secretcookie999", md_drop)
         self.assertNotIn("AppData", md_drop)
-        self.assertIn("target-app.local", md_drop)
 
         # Manual `confirm`: verified Reflected XSS promoted cleanly to W-002 (Medium, CVSS 6.1)
         base_confirm = {**base_report, "report_metadata": {"xss_decision": "confirm", "xss_poc": "GET /vulnerabilities/sqli/?id=1<svg/onload=alert(1)> -> alert(1)"}}
@@ -719,12 +719,11 @@ class OllamaIntegrationTests(unittest.TestCase):
                 rows.append(d)
             rep = {"schema_version": 1, "generated_at": "2026-10-22T00:00:00+00:00", "findings": rows, "report_metadata": {}}
             view = prepare_pentest_view(rep)
-            # 1. Explicit IP sanitization disclosure + synchronized companion log
-            self.assertIn("target-app.local", view["sanitization_note"])
+            # 1. Target IP preserved verbatim by default while session cookies stay redacted
             synced_log = sanitize_raw_scan_text(sample_log.encode("utf-8"), rep)
-            self.assertNotIn("8.8.8.8", synced_log)
+            self.assertIn("http://8.8.8.8/vulnerabilities/sqli/?id=1&Submit=Submit", synced_log)
+            self.assertNotIn("target-app.local", synced_log)
             self.assertNotIn("secretcookie777", synced_log)
-            self.assertIn("http://target-app.local/vulnerabilities/sqli/?id=1&Submit=Submit", synced_log)
             # 2. Scope strictly scoped to SQL Injection on GET 'id', passive signals explicitly non-conclusive
             self.assertIn("SQL Injection", view["active_scope"])
             self.assertNotIn("Quản lý Phiên & Xác thực", view["active_scope"])
@@ -887,56 +886,99 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertEqual(live_trace["call_count"], 5)
 
     def test_web_trace_endpoint_and_multi_tool_flexibility(self):
+        from dataclasses import asdict
+        from rag.parsers import parse_zap
+        from rag.parsers.native import parse_nuclei
         from rag.pentest_polish import prepare_pentest_view, render_pentest_markdown
+        from rag.top10 import classify
 
-        zap_report = {
-            "schema_version": 1,
-            "generated_at": "2026-10-22T09:00:00+00:00",
-            "findings": [{
-                "id": "zap:90022",
-                "title": "Path Traversal on File Download Endpoint",
-                "cwe": "CWE-22",
-                "severity": "high",
-                "tool": "zap",
-                "location": "https://portal.example.org/download?file=../../etc/passwd",
-                "kind": "scanner_alert",
-                "evidence": ["root:x:0:0:root:/root:/bin/bash"],
-                "details": {
-                    "method": "GET",
-                    "parameter": "file",
-                    "description": "Arbitrary file path supplied in 'file' parameter reads local filesystem files.",
-                    "solution": "Canonicalize file paths against an explicit base directory allowlist before reading files.",
-                    "request": "GET /download?file=..%2F..%2Fetc%2Fpasswd HTTP/1.1\nHost: portal.example.org",
-                    "response": "HTTP/1.1 200 OK\n\nroot:x:0:0:root:/root:/bin/bash",
-                },
-                "owasp_top10": {"status": "in_scope", "categories": [{"id": "A01:2025", "title": "Broken Access Control"}], "reason": ""},
-                "guidance": [{
-                    "id": "S1",
-                    "title": "File Upload Cheat Sheet",
-                    "section": "Input Validation / Path Traversal Prevention",
-                    "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+        # 1) Real OWASP ZAP JSON with HTML `<p>` description/solution & raw_instance HTTP headers
+        raw_zap = {
+            "@version": "2.15.0",
+            "@generated": "Thu, 22 Oct 2026 09:30:00",
+            "site": [{
+                "@name": "http://203.0.113.77:8080",
+                "alerts": [{
+                    "pluginid": "90022",
+                    "alert": "Path Traversal",
+                    "riskcode": "3",
+                    "confidence": "3",
+                    "cweid": "22",
+                    "desc": "<p>Arbitrary file path supplied in file parameter reads local filesystem files.</p>",
+                    "solution": "<p>Canonicalize file paths against an explicit base directory allowlist before reading files.</p>",
+                    "instances": [{
+                        "uri": "http://203.0.113.77:8080/download?file=../../etc/passwd",
+                        "method": "GET",
+                        "param": "file",
+                        "attack": "../../etc/passwd",
+                        "evidence": "root:x:0:0:root:/root:/bin/bash",
+                        "requestHeader": "GET /download?file=..%2F..%2Fetc%2Fpasswd HTTP/1.1\r\nHost: 203.0.113.77:8080",
+                        "responseHeader": "HTTP/1.1 200 OK\r\nContent-Type: text/plain",
+                        "responseBody": "root:x:0:0:root:/root:/bin/bash",
+                    }],
                 }],
-                "ai_analysis": {
-                    "status": "ai_reviewed",
-                    "claims": {
-                        "observations": [{"text_vi": "Công cụ ZAP ghi nhận tham số file tại /download đọc trực tiếp nội dung tệp /etc/passwd trên máy chủ."}],
-                        "potential_impacts": [{"text_vi": "Nếu ứng dụng chạy với quyền đọc rộng trên máy chủ, kẻ tấn công có thể đánh cắp tệp cấu hình và khóa bí mật nội bộ."}],
-                        "limitations": [],
-                    },
-                },
             }],
-            "report_metadata": {"report_lang": "vi"},
         }
+        zap_findings = parse_zap(raw_zap, "zap.json")
+        zap_row = {**asdict(zap_findings[0]), "evidence": list(zap_findings[0].evidence)}
+        zap_row["owasp_top10"] = classify(zap_row)
+        zap_row["guidance"] = [{
+            "id": "S1",
+            "title": "File Upload Cheat Sheet",
+            "section": "Input Validation / Path Traversal Prevention",
+            "url": "https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html",
+        }]
+        zap_row["ai_analysis"] = {
+            "status": "ai_reviewed",
+            "claims": {
+                "observations": [{"text_vi": "Công cụ ZAP ghi nhận tham số file tại /download đọc trực tiếp nội dung tệp /etc/passwd trên máy chủ."}],
+                "potential_impacts": [{"text_vi": "Nếu ứng dụng chạy với quyền đọc rộng trên máy chủ, kẻ tấn công có thể đánh cắp tệp cấu hình và khóa bí mật nội bộ."}],
+                "limitations": [],
+            },
+        }
+        zap_report = {"schema_version": 1, "generated_at": "2026-10-22T09:00:00+00:00", "findings": [zap_row], "report_metadata": {"report_lang": "vi"}}
         view = prepare_pentest_view(zap_report)
         e0 = view["entries"][0]
+        self.assertIn("203.0.113.77:8080", e0["url"])
+        self.assertIn("GET /download?file=..%2F..%2Fetc%2Fpasswd HTTP/1.1", e0["request_text"])
+        self.assertIn("HTTP/1.1 200 OK", e0["response_text"])
         self.assertIn("/etc/passwd", e0["description"])
         self.assertIn("khóa bí mật nội bộ", e0["impact_text"])
         self.assertIn("Canonicalize file paths", e0["remediation"]["text"])
+        self.assertNotIn("<p>", e0["remediation"]["text"])
         self.assertIn("Path Traversal Prevention", e0["remediation"]["text"])
         md = render_pentest_markdown(zap_report)
-        self.assertIn("A01:2025 - Broken Access Control", md)
+        self.assertIn("A01:2025 Broken Access Control", md)
         self.assertNotIn("sqlmap", md.lower())
         self.assertNotIn("dvwa", md.lower())
+
+        # 2) Real Nuclei JSONL with curl-command, native CVSS & native remediation
+        nuc_line = json.dumps({
+            "template-id": "ssrf-aws-metadata",
+            "type": "http",
+            "matched-at": "http://198.51.100.99/fetch?url=http://169.254.169.254/latest/meta-data/",
+            "curl-command": "curl -X GET 'http://198.51.100.99/fetch?url=http://169.254.169.254/latest/meta-data/'",
+            "response": "HTTP/1.1 200 OK\r\n\r\nami-id\niam/",
+            "info": {
+                "name": "Server-Side Request Forgery to Cloud Metadata",
+                "severity": "critical",
+                "remediation": "Validate outbound destination hosts against an explicit allowlist and block link-local metadata ranges.",
+                "classification": {
+                    "cwe-id": ["CWE-918"],
+                    "cvss-score": 9.1,
+                    "cvss-metrics": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:N",
+                },
+            },
+        })
+        nuc_f = parse_nuclei(nuc_line, "nuclei.jsonl")[0]
+        nuc_row = {**asdict(nuc_f), "evidence": list(nuc_f.evidence), "guidance": []}
+        nuc_row["owasp_top10"] = classify(nuc_row)
+        nuc_view = prepare_pentest_view({"schema_version": 1, "generated_at": "2026-10-22T09:00:00+00:00", "findings": [nuc_row], "report_metadata": {"report_lang": "en"}})
+        ne0 = nuc_view["entries"][0]
+        self.assertEqual(ne0["cvss_score"], "9.1")
+        self.assertIn("curl -X GET", ne0["request_text"])
+        self.assertIn("ami-id", ne0["response_text"])
+        self.assertIn("Validate outbound destination hosts", ne0["remediation"]["text"])
 
 
 if __name__ == "__main__":

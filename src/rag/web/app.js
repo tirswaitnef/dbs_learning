@@ -505,12 +505,12 @@ function renderJob(job) {
     const badge = element('div', 'pdf-icon');
     badge.append(icon('file'));
     const label = element('div');
-    const subMeta = ['Báo cáo Pentest A4 chuẩn OWASP', 'Đã rà soát ẩn dữ liệu nhạy cảm'];
+    const subMeta = ['Báo cáo Pentest A4 chuẩn OWASP', 'Bám sát 100% dữ liệu đầu vào'];
     label.append(element('strong', '', 'Báo cáo Kiểm thử Xâm nhập đã sẵn sàng'), element('p', '', subMeta.join(' · ')));
     headLeft.append(badge, label);
     head.append(headLeft);
-    const maskedTotal = (s.privacy_audit?.ips_masked || 0) + (s.privacy_audit?.secrets_masked || 0) + (s.privacy_audit?.paths_masked || 0);
-    head.append(element('span', 'sha-tag', maskedTotal > 0 ? ('Đã ẩn ' + maskedTotal + ' mục IP/nhạy cảm') : 'Không phát hiện IP công khai rò rỉ'));
+    const maskedSecrets = (s.privacy_audit?.secrets_masked || 0) + (s.privacy_audit?.paths_masked || 0);
+    head.append(element('span', 'sha-tag', maskedSecrets > 0 ? ('Đã che ' + maskedSecrets + ' phiên/đường dẫn nhạy cảm') : 'Giữ nguyên IP & URL mục tiêu'));
     download.append(head);
 
     const thirdMetric = [String(s.dropped_observations || 0), 'Cảnh báo nhiễu đã lọc'];
@@ -564,10 +564,6 @@ function renderJob(job) {
     dlMd.href = '/api/jobs/' + encodeURIComponent(job.id) + '/md' + (qTok ? '?' + qTok : '');
     dlMd.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.md';
 
-    const dlLog = element('a', 'json-link', 'Tải Log đồng bộ ẩn IP (.txt)');
-    dlLog.href = '/api/jobs/' + encodeURIComponent(job.id) + '/log' + (qTok ? '?' + qTok : '');
-    dlLog.download = 'log-kiem-thu-dong-bo-' + job.id.slice(0, 8) + '.txt';
-
     const dlTrace = element('a', 'json-link', 'Tải Lệnh gửi AI (.txt)');
     dlTrace.href = '/api/jobs/' + encodeURIComponent(job.id) + '/trace-txt' + (qTok ? '?' + qTok : '');
     dlTrace.download = 'lenh-gui-ai-' + job.id.slice(0, 8) + '.txt';
@@ -576,7 +572,7 @@ function renderJob(job) {
     dlJson.href = '/api/jobs/' + encodeURIComponent(job.id) + '/json' + (qTok ? '?' + qTok : '');
     dlJson.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.json';
 
-    actions.append(viewPdf, dlPdf, dlLog, dlTrace, dlMd, dlJson);
+    actions.append(viewPdf, dlPdf, dlTrace, dlMd, dlJson);
     download.append(actions);
 
     download.append(buildTracePanel(job, false));
@@ -703,7 +699,7 @@ form.addEventListener('submit', async e => {
   try {
     const metaJson = JSON.stringify(
       Object.fromEntries(
-        ['report_lang', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias', 'force_fresh_ai']
+        ['report_lang', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'force_fresh_ai']
           .map(k => [k, ($('meta-' + k)?.value || '').trim()])
       )
     );
