@@ -13,8 +13,6 @@ This cheat sheet provides a starting point for securing a Kubernetes cluster. It
 - Kubernetes Security Best Practices: Deploy Phase
 - Kubernetes Security Best Practices: Runtime Phase
 
-For more information about Kubernetes, refer to the Appendix.
-
 ## Receive Alerts for Security Updates and Reporting Vulnerabilities
 
 Join the kubernetes-announce group (<https://kubernetes.io/docs/reference/issues-security/security/>) for emails about security announcements. See the security reporting page (<https://kubernetes.io/docs/reference/issues-security/security>) for more on how to report vulnerabilities.
@@ -355,7 +353,7 @@ Open Source projects such as [Trivy](https://github.com/aquasecurity/trivy), [Gr
 
 ### Apply security context to your pods and containers
 
-The security context is a property that is defined in the deployment yaml and controls the security parameters for all pod/container/volumes, and it should be applied throughout your infrastructure. When the security context property is properly implemented everywhere, it can eliminate entire classes of attacks that rely on privileged access. For example, any attack that depends on installing software or writing to the file system will be stopped if you specify read-only root file systems in the security context.
+Use [Pod and container security contexts](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/) to restrict process privileges and filesystem access. Set `readOnlyRootFilesystem: true` in each container's `securityContext` to prevent writes to its root filesystem. This does not make mounted volumes read-only or prevent attacks that do not require filesystem writes.
 
 When you are configuring the security context for your pods, only grant the privileges that are needed for the resources to function in your containers and volumes. Some of the important parameters in the security context property are:
 
@@ -375,21 +373,21 @@ Security Context Settings:
 
 #### Security context example: A pod definition that includes security context parameters
 
+This illustrative manifest assumes an application image configured to run as a numeric non-root user and without writes to the root filesystem. Replace the example image with your application image.
+
 ```yaml
 apiVersion: v1
-
 kind: Pod
 metadata:
   name: hello-world
 spec:
-  containers:
-  # specification of the pod’s containers
-  # ...
-  # ...
-  # Security Context
   securityContext:
-    readOnlyRootFilesystem: true
     runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.example.com/app:tag
+      securityContext:
+        readOnlyRootFilesystem: true
 ```
 
 For more information on security context for Pods, refer to the documentation at <https://kubernetes.io/docs/tasks/configure-pod-container/security-context>
@@ -425,7 +423,7 @@ metadata:
     pod-security.kubernetes.io/warn: restricted
 ```
 
-Cluster administrators should properly organize and and enforce policy on cluster namespaces, only permitting the privileged policy on namespaces where it is absolutely required, such as for critical cluster services that require access to the underlying host. Namespaces should be set to the lowest Pod Security Policy that can be enforced and supports their risk level.
+Cluster administrators should properly organize and enforce policy on cluster namespaces, only permitting the privileged policy on namespaces where it is absolutely required, such as for critical cluster services that require access to the underlying host. Namespaces should be set to the lowest Pod Security Policy that can be enforced and supports their risk level.
 
 If more granular policy enforcement is required beyond the three profiles (Privileged, Baseline, Restricted), Third party admission controllers like OPA Gatekeeper or Kyverno, or built-in Validating Admission Policy can be utilized.
 
@@ -440,7 +438,7 @@ All security policies should include the following conditions:
 - Privilege escalation is not allowed.
 - The root filesystem is read-only.
 - The default (masked) /proc filesystem mount is used.
-- The host network or process space should NOT be used - using `hostNetwork: true` will cause NetworkPolicies to be ignored since the Pod will use its host network.
+- Avoid sharing the host network or process namespace. [NetworkPolicy behavior for `hostNetwork` Pods depends on the network plugin](https://kubernetes.io/docs/concepts/services-networking/network-policies/#networkpolicy-and-hostnetwork-pods); verify enforcement rather than assuming these Pods receive the same isolation as other Pods.
 - Unused and unnecessary Linux capabilities are eliminated.
 - Use SELinux options for more fine-grained process controls.
 - Give each application its own Kubernetes Service Account.
@@ -540,11 +538,11 @@ And finally, OPA can regulate use of service mesh architectures. Often, administ
 
 ### Limiting resource usage on a cluster
 
-It is important to define resource quotas for containers in Kubernetes, since all resources in a Kubernetes cluster are created with unbounded CPU limits and memory requests/limits by default. If you run resource-unbound containers, your system will be in risk of Denial of Service (DoS) or “noisy neighbor” scenarios. Fortunately, OPA can use resource quotas on a namespace, which will limit the number or capacity of resources granted to that namespace and restrict that namespace by defining its CPU capacity, memory, or persistent disk space.
+Use Kubernetes [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/) to limit aggregate resource requests, limits, and object counts within a namespace, reducing resource-exhaustion risks between tenants. This is a built-in admission control; it does not require OPA.
 
-Additionally, the OPA can limit how many pods, services, or volumes exist in each namespace, and it can restrict the maximum or minimum size of some of the resources above. The resource quotas provide default limits when none are specified and prevent users from requesting unreasonably high or low values for commonly reserved resources like memory.
+Use [LimitRange](https://kubernetes.io/docs/concepts/policy/limit-range/) for per-Pod or per-container minimum and maximum allocations and default requests or limits. ResourceQuota does not supply these defaults or enforce a minimum allocation for each Pod.
 
-Below is an example of defining namespace resource quota in the appropriate yaml. It limits the number of pods in the namespace to 4, limits their CPU requests between 1 and 2 and memory requests between 1GB to 2GB.
+The example below permits at most four non-terminal Pods in the namespace. Across those Pods, total CPU requests cannot exceed 1 CPU and total memory requests cannot exceed 1 GiB; total CPU limits cannot exceed 2 CPUs and total memory limits cannot exceed 2 GiB. These are namespace totals, not a per-Pod range.
 
 `compute-resources.yaml`:
 
@@ -572,36 +570,34 @@ For more information on configuring resource quotas, refer to the Kubernetes doc
 
 ### Use Kubernetes network policies to control traffic between pods and clusters
 
-If your cluster runs different applications, a compromised application could attack other neighboring applications. This scenario might happen because Kubernetes allows every pod to contact every other pod by default. If ingress from an external network endpoint is allowed, the pod will be able to send its traffic to an endpoint outside the cluster.
+A compromised application can attack neighboring applications. By default, Pods are non-isolated for ingress and egress. Configure policies for each direction you need to restrict; allowing inbound traffic does not itself configure an outbound policy.
 
 It is strongly recommended that developers implement network segmentation, because it is a key security control that ensures that containers can only communicate with other approved containers and prevents attackers from pursuing lateral movement across containers. However, applying network segmentation in the cloud is challenging because of the “dynamic” nature of container network identities (IPs).
 
-While users of Google Cloud Platform can benefit from automatic firewall rules, which prevent cross-cluster communication, other users can apply similar implementations by deploying on-premises using network firewalls or SDN solutions. Also, the Kubernetes Network SIG is working on methods that will greatly improve the pod-to-pod communication policies. A new network policy API should address the need to create firewall rules around pods, limiting the network access that a containerized can have.
+Use the current [`networking.k8s.io/v1` NetworkPolicy API](https://kubernetes.io/docs/concepts/services-networking/network-policies/). Your cluster must use a network plugin that enforces NetworkPolicy; creating the resource alone has no effect without one.
 
-The following is an example of a network policy that controls the network for “backend” pods, which only allows inbound network access from “frontend” pods:
+This illustrative ingress policy selects `segment=backend` Pods in `tenant-a` and allows TCP port 80 from `segment=frontend` Pods in that same namespace. Policies are additive: another policy can allow additional traffic. This policy does not restrict egress, and traffic from a Pod's own node remains allowed.
 
-```json
-POST /apis/net.alpha.kubernetes.io/v1alpha1/namespaces/tenant-a/networkpolicys
-{
-  "kind": "NetworkPolicy",
-  "metadata": {
-    "name": "pol1"
-  },
-  "spec": {
-    "allowIncoming": {
-      "from": [{
-        "pods": { "segment": "frontend" }
-      }],
-      "toPorts": [{
-        "port": 80,
-        "protocol": "TCP"
-      }]
-    },
-    "podSelector": {
-      "segment": "backend"
-    }
-  }
-}
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: pol1
+  namespace: tenant-a
+spec:
+  podSelector:
+    matchLabels:
+      segment: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              segment: frontend
+      ports:
+        - port: 80
+          protocol: TCP
 ```
 
 For more information on configuring network policies, refer to the Kubernetes documentation at <https://kubernetes.io/docs/concepts/services-networking/network-policies>.
@@ -618,7 +614,7 @@ It is best for secrets to be mounted into read-only volumes in your containers, 
 
 Always encrypt your backups using a well reviewed backup and encryption solution and consider using full disk encryption where possible, because the etcd database contains any information accessible via the Kubernetes API. Access to this database could provide an attacker with significant visibility into the state of your cluster.
 
-Kubernetes supports encryption at rest, a feature introduced in 1.7, and v1 beta since 1.13, which will encrypt Secret resources in etcd and prevent parties with access to your etcd backups from viewing the content of those secrets. While this feature is currently beta, it offers an additional level of defense when backups are not encrypted or an attacker gains read access to etcd.
+Kubernetes [supports encryption at rest](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/) for Secret resources in etcd, but the API server stores resources without at-rest encryption by default. Configure a non-`identity` encryption provider as the first provider for Secrets and [rewrite existing Secrets](https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/#ensure-all-secrets-are-encrypted) to encrypt previously stored data. This helps protect secrets against read access to etcd or backups, but does not protect them if an attacker also obtains the decryption keys.
 
 #### Alternatives to Kubernetes Secret resources
 
@@ -721,7 +717,7 @@ Kubernetes supplies cluster-based logging, which allows you to log container act
 
 #### Enable audit logging
 
-The audit logger is a beta feature that records actions taken by the API for later analysis in the event of a compromise. It is recommended to enable audit logging and archive the audit file on a secure server
+Kubernetes [audit logging](https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/) records API activity according to the configured audit policy for later analysis. Enable audit logging and archive the audit file on a secure server.
 
 Ensure logs that are monitoring for anomalous or unwanted API calls, especially any authorization failures (these log entries will have a status message “Forbidden”). Authorization failures could mean that an attacker is trying to abuse stolen credentials.
 
@@ -731,15 +727,13 @@ Managed Kubernetes providers, including GKE, provide access to this data in thei
 
 Audit logs can be useful for compliance as they should help you answer the questions of what happened, who did what and when. Kubernetes provides flexible auditing of kube-apiserver requests based on policies. These help you track all activities in chronological order.
 
-Here is an example of an audit log:
+Here is an illustrative [`audit.k8s.io/v1` audit event](https://kubernetes.io/docs/reference/config-api/apiserver-audit.v1/#audit-k8s-io-v1-Event):
 
 ```json
 {
   "kind":"Event",
-  "apiVersion":"audit.k8s.io/v1beta1",
-  "metadata":{ "creationTimestamp":"2019-08-22T12:00:00Z" },
+  "apiVersion":"audit.k8s.io/v1",
   "level":"Metadata",
-  "timestamp":"2019-08-22T12:00:00Z",
   "auditID":"23bc44ds-2452-242g-fsf2-4242fe3ggfes",
   "stage":"RequestReceived",
   "requestURI":"/api/v1/namespaces/default/persistentvolumeclaims",
@@ -800,13 +794,13 @@ To apply the manifest, run:
 kubectl apply -f example.yaml
 ```
 
-To take a look the logs for this container, run:
+To look at the logs for this container, run:
 
 ```bash
-kubectl log <container-name> command.
+kubectl logs example
 ```
 
-For persisting container logs, the common approach is to write logs to a log file and then use a sidecar container. As shown below in the pod configuration above, a sidecar container will run in the same pod along with the application container, mounting the same volume and processing the logs separately.
+For persisting container logs, the common approach is to write logs to a log file and then use a sidecar container. As shown in the pod configuration below, a sidecar container will run in the same pod along with the application container, mounting the same volume and processing the logs separately.
 
 An example of a Pod Manifest is seen below:
 
@@ -855,7 +849,7 @@ Depending on what operating system and additional services you’re running on y
 For example, systemd logs can be retrieved using the following command:
 
 ```bash
-journalctl -u
+journalctl -u kubelet
 ```
 
 ##### Cluster logging
@@ -951,25 +945,5 @@ For example, a deployment containing a vulnerability with severity score of 7 or
 
 ## References
 
-Control plane documentation - <https://kubernetes.io>
-
-1. Kubernetes Security Best Practices everyone must follow - <https://www.cncf.io/blog/2019/01/14/9-kubernetes-security-best-practices-everyone-must-follow>
-2. Securing a Cluster - <https://kubernetes.io/docs/tasks/administer-cluster/securing-a-cluster>
-3. Security Best Practices for Kubernetes Deployment - <https://kubernetes.io/blog/2016/08/security-best-practices-kubernetes-deployment>
-4. Kubernetes Security Best Practices - <https://phoenixnap.com/kb/kubernetes-security-best-practices>
-5. Kubernetes Security 101: Risks and 29 Best Practices - <https://www.stackrox.com/post/2020/05/kubernetes-security-101>
-6. 15 Kubernetes security best practice to secure your cluster - <https://www.mobilise.cloud/15-kubernetes-security-best-practice-to-secure-your-cluster>
-7. The Ultimate Guide to Kubernetes Security - <https://neuvector.com/container-security/kubernetes-security-guide>
-8. A hacker's guide to Kubernetes security - <https://techbeacon.com/enterprise-it/hackers-guide-kubernetes-security>
-9. 11 Ways (Not) to Get Hacked - <https://kubernetes.io/blog/2018/07/18/11-ways-not-to-get-hacked>
-10. 12 Kubernetes configuration best practices - <https://www.stackrox.com/post/2019/09/12-kubernetes-configuration-best-practices/#6-securely-configure-the-kubernetes-api-server>
-11. A Practical Guide to Kubernetes Logging - <https://logz.io/blog/a-practical-guide-to-kubernetes-logging>
-12. Kubernetes Web UI (Dashboard) - <https://kubernetes.io/docs/tasks/access-application-cluster/web-ui-dashboard>
-13. Tesla cloud resources are hacked to run cryptocurrency-mining malware - <https://arstechnica.com/information-technology/2018/02/tesla-cloud-resources-are-hacked-to-run-cryptocurrency-mining-malware>
-14. OPEN POLICY AGENT: CLOUD-NATIVE AUTHORIZATION - <https://blog.styra.com/blog/open-policy-agent-authorization-for-the-cloud>
-15. Introducing Policy As Code: The Open Policy Agent (OPA) - <https://www.magalix.com/blog/introducing-policy-as-code-the-open-policy-agent-opa>
-16. What service mesh provides - <https://aspenmesh.io/wp-content/uploads/2019/10/AspenMesh_CompleteGuide.pdf>
-17. Three Technical Benefits of Service Meshes and their Operational Limitations, Part 1 - <https://glasnostic.com/blog/service-mesh-istio-limits-and-benefits-part-1>
-18. Open Policy Agent: What Is OPA and How It Works (Examples) - <https://spacelift.io/blog/what-is-open-policy-agent-and-how-it-works>
-19. Send Kubernetes Metrics To Kibana and Elasticsearch - <https://logit.io/sources/configure/kubernetes/>
-20. Kubernetes Security Checklist - <https://kubernetes.io/docs/concepts/security/security-checklist/>
+- [Kubernetes: Securing a Cluster](https://kubernetes.io/docs/tasks/administer-cluster/securing-a-cluster)
+- [Kubernetes Security Checklist](https://kubernetes.io/docs/concepts/security/security-checklist/)

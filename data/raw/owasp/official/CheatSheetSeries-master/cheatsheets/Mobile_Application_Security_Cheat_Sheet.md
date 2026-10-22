@@ -61,8 +61,12 @@ from the OWASP Mobile Top 10.
 
 - Perform authentication/authorization server-side and only load data on
 the device after successful authentication.
-- If storing data locally, encrypt it using a key derived from the user's
-login credentials.
+- For sensitive local data, encrypt it and protect encryption keys using
+[platform key storage](https://mas.owasp.org/MASWE/MASVS-STORAGE/MASWE-0003/).
+If the design requires password-derived keys, use a
+[dedicated password-based key derivation function](https://mas.owasp.org/MASWE/MASVS-CRYPTO/MASWE-0014/)
+with a unique random salt and an appropriate work factor; a password or a fast
+hash of it is not a suitable encryption key.
 - Do not store user passwords on the device; use device-specific tokens
 that can be revoked.
 - Avoid using spoofable values like device identifiers for authentication.
@@ -79,7 +83,11 @@ secure, revocable access tokens.
 
 ### 3. Passwords and PIN Policy
 
-- Require password complexity.
+- For account passwords, allow long passphrases without character-composition
+requirements and block common or compromised passwords, following
+[NIST's password guidance](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/).
+See [password strength controls](Authentication_Cheat_Sheet.md#implement-proper-password-strength-controls)
+for length and other policy requirements.
 - Do not allow short PINs such as 4 digits.
 - Use platform specific secure storage mechanisms, such as
 Keychain (iOS) or Keystore (Android).
@@ -307,10 +315,15 @@ it can execute even if the device is locked.
 - Sensitive app functionalities triggered via Shortcuts should always
 require device unlock before execution.
 
-- **How**: Store secure tokens in Keychain that the app validates before
-executing sensitive shortcuts. Implement checks with
-`UIApplication.shared.isProtectedDataAvailable` to restrict execution
-of sensitive actions when the device is locked.
+- **How**: For sensitive App Intents (iOS/iPadOS 16+), set
+[`authenticationPolicy`](https://developer.apple.com/documentation/appintents/appintent/authenticationpolicy)
+to [`.requiresLocalDeviceAuthentication`](https://developer.apple.com/documentation/appintents/intentauthenticationpolicy/requireslocaldeviceauthentication).
+This requires unlocking the device running the intent if it is locked; it does
+not require fresh authentication when that device is already unlocked. Continue
+to enforce the app's session and authorization checks.
+[`isProtectedDataAvailable`](https://developer.apple.com/documentation/uikit/uiapplication/isprotecteddataavailable)
+reports protected-file availability and can be true when content protection is
+disabled; do not use it as an authentication check.
 
 #### Siri Permissions
 
@@ -318,13 +331,13 @@ of sensitive actions when the device is locked.
   https://support.apple.com/guide/iphone/change-siri-accessibility-settings-iphaff1d606/ios.)
   commands, which is by default accessible even when the device is locked
   potentially enabling unauthorized actions.
-- **How**: Configure `requiresUserAuthentication` to `true` on intents that expose
-sensitive information or functionality. Additionally, set
-`INIntent.userConfirmationRequired = true` for operations requiring explicit
-user confirmation. These settings ensure proper authentication
-(e.g., Face ID or PIN) and explicit approval before Siri can
-execute sensitive commands. (For more information, see Apple Developer's
-[SiriKit](https://developer.apple.com/documentation/sirikit) documentation.)
+- **How**: Apply the App Intent authentication policy above to sensitive Siri
+actions. For explicit approval before destructive work, call
+[`requestConfirmation()`](https://developer.apple.com/documentation/appintents/appintent/requestconfirmation())
+and stop if the user cancels; confirmation does not replace authentication or
+authorization. For legacy SiriKit intents handled by the app, set the supported
+intent's Authentication level to **Restricted While Locked** in Xcode, which
+configures [`INIntentsRestrictedWhileLocked`](https://developer.apple.com/documentation/bundleresources/information-property-list/inintentsrestrictedwhilelocked).
 
 #### Deep Link Security
 
@@ -350,14 +363,11 @@ documentation for more information.)
 
 - Widgets on the lock screen may display sensitive data, potentially
 exposing it without the device being unlocked.
-- **How**: For iOS/iPadOS versions 17 and higher, use `WidgetInfo.isLocked`
-to detect lock screen state. For earlier iOS versions, implement custom
-logic based on available widget states since `widgetFamily` alone doesn't
-directly provide lock screen information. Apply conditional logic to mask
-or restrict sensitive widget content when appropriate security conditions
-aren't met. (See Apple's [WidgetKit security](
-https://support.apple.com/guide/security/widgetkit-security-secbb0a1f9b4/web)
-for more information.)
+- **How**: Mark sensitive views with `privacySensitive(_:)` and provide redacted
+placeholders so WidgetKit can honor the user's privacy settings. If the widget
+must hide its content while the device is locked, enable the Data Protection
+capability for the widget extension and select `NSFileProtectionComplete`.
+Follow Apple's [widget privacy guidance](https://developer.apple.com/documentation/widgetkit/creating-a-widget-extension).
 
 #### Additional Security Considerations
 
@@ -403,3 +413,9 @@ For further reading, visit the
 [OWASP Mobile Top 10 Project](https://owasp.org/www-project-mobile-top-10/).
 For a more detailed framework for mobile security, see the
 [OWASP Mobile Application Security Project](https://mas.owasp.org/).
+
+## References
+
+- [OWASP MASVS-STORAGE-1: Secure Storage of Sensitive Data](https://mas.owasp.org/MASVS/controls/MASVS-STORAGE-1/)
+- [Android Keystore System](https://developer.android.com/privacy-and-security/keystore)
+- [Apple Platform Security: The Secure Enclave](https://support.apple.com/guide/security/the-secure-enclave-sec59b0b31ff/web)

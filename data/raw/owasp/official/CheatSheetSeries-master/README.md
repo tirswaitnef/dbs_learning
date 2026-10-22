@@ -17,11 +17,6 @@ In order to read the cheat sheets and **reference** them, use the project [offic
 - [Jakub Maćkowski](https://github.com/mackowski)
 - [Gabriel Corona](https://github.com/randomstuff)
 
-### Core team
-
-- [Kevin W. Wall](https://github.com/kwwall)
-- [Shlomo Zalman Heigh](https://github.com/szh)
-
 ## Chat With Us
 
 We're easy to find on Slack:
@@ -50,7 +45,6 @@ This [link](https://cheatsheetseries.owasp.org/bundle.zip) allows you to downloa
 The OWASP Cheat Sheet Series website can be built and tested locally by issuing the following commands:
 
 ```sh
-make install-python-requirements
 make generate-site
 make serve  # Binds port 8000
 ```

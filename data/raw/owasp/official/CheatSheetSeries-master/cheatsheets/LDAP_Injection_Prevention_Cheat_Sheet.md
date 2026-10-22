@@ -79,8 +79,7 @@ For more information on search filter escaping visit [RFC4515](https://datatrack
 
 #### Safe Java Escaping Example
 
-The following solution uses an allowlist to sanitize user input so that the filter string contains only valid characters. In this code, userSN may contain
-only letters and spaces.
+The following example validates `userSN` with an allowlist. With Java's default [predefined character classes](https://docs.oracle.com/javase/8/docs/api/java/util/regex/Pattern.html#predef), it accepts ASCII letters, digits, underscores, and whitespace (including tabs and line breaks); `*` also permits an empty string. This illustrative rule is not a general validation policy for personal names. Choose an allowlist that matches the application's requirements and apply the appropriate LDAP escaping for values outside that restricted set.
 
 ```java
 // String userSN = "Sherlock Holmes"; // Valid
@@ -102,7 +101,7 @@ and LDAP in the absence of a comprehensive normalization and allowlisting-based 
 sanitized, safe values before they are added to the allowlist expression against which input will be validated. Likewise, normalization of user input should
 occur before the validation step (source: [Prevent LDAP injection](https://wiki.sei.cmu.edu/confluence/spaces/flyingpdf/pdfpageexport.action?pageId=88487534)).
 
-For further information visit [OWASP ESAPI Java Encoder Project which includes encodeForLDAP(String) and encodeForDN(String)](https://owasp.org/www-project-java-encoder/).
+The [OWASP ESAPI `Encoder` API](https://javadoc.io/static/org.owasp.esapi/esapi/2.7.0.0/org/owasp/esapi/Encoder.html) provides `encodeForLDAP(String)` for search-filter values and `encodeForDN(String)` for distinguished-name values. Choose the method for the LDAP context where the value will be used.
 
 #### Insecure vs Secure Java LDAP Query Construction
 
@@ -129,7 +128,7 @@ NamingEnumeration<SearchResult> results =
 
 `Encoder.LdapFilterEncode` encodes input according to [RFC4515](https://datatracker.ietf.org/doc/html/rfc4515) where unsafe values are converted to `\XX` where `XX` is the representation of the unsafe character.
 
-`Encoder.LdapDistinguishedNameEncode` encodes input according to [RFC2253](https://tools.ietf.org/html/rfc2253) where unsafe characters are converted to `#XX` where `XX` is the representation of the unsafe character and the comma, plus, quote, slash, less than and great than signs are escaped using slash notation (`\X`). In addition to this a space or octothorpe (`#`) at the beginning of the input string is `\` escaped as is a space at the end of a string.
+Use `Encoder.LdapDistinguishedNameEncode` for distinguished-name attribute values. In [DN string escaping](https://datatracker.ietf.org/doc/html/rfc4514#section-2.4), `\XX` represents an escaped byte using two hexadecimal digits; selected special characters can instead be prefixed with a backslash. Escape leading spaces or `#` and trailing spaces. A leading `#` followed by hexadecimal pairs represents an entire attribute value encoded using Basic Encoding Rules (BER), not individual character escapes.
 
 `LdapDistinguishedNameEncode(string, bool, bool)` is also provided so you may turn off the initial or final character escaping rules, for example if you are concatenating the escaped distinguished name fragment into the midst of a complete distinguished name.
 
@@ -153,15 +152,15 @@ To minimize the potential damage of a successful LDAP injection attack, you shou
 
 ### Enabling Bind Authentication
 
-If LDAP protocol is configured with bind Authentication, attackers would not be able to perform LDAP injection attacks because of verification
-and authorization checks that are performed against valid credentials passed by the user.
-An attacker can still bypass bind authentication through an anonymous connection or by exploiting the use of unauthenticated bind: Anonymous Bind (LDAP) and Unauthenticated Bind (LDAP).
+Authenticated LDAP bind establishes an [authenticated authorization state](https://datatracker.ietf.org/doc/html/rfc4513#section-5.1.3); it does not prevent user input from changing a search filter constructed by the application. Continue to apply the [primary injection defenses](#primary-defenses), including [search-filter escaping](https://datatracker.ietf.org/doc/html/rfc4515#section-3), even when the application binds with valid credentials.
+
+When using name/password authentication, reject empty passwords before binding. A nonempty name with an empty password can perform an [unauthenticated bind](https://datatracker.ietf.org/doc/html/rfc4513#section-5.1.2) that establishes anonymous authorization; a successful result in that case does not prove the user's identity. Require authenticated access to protected directory data and use a least-privileged binding account.
 
 ### Allow-List Input Validation
 
 Input validation can be used to detect unauthorized input before it is passed to the LDAP query. For more information please see the [Input Validation Cheat Sheet](Input_Validation_Cheat_Sheet.md).
 
-## Related Articles
+## References
 
-- OWASP article on [LDAP Injection](https://owasp.org/www-community/attacks/LDAP_Injection) Vulnerabilities.
-- [OWASP Testing Guide](https://owasp.org/www-project-web-security-testing-guide/) article on how to [Test for LDAP Injection](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/07-Input_Validation_Testing/06-Testing_for_LDAP_Injection.html) Vulnerabilities.
+- [RFC 4515: LDAP String Representation of Search Filters](https://datatracker.ietf.org/doc/html/rfc4515)
+- [RFC 4514: LDAP String Representation of Distinguished Names](https://datatracker.ietf.org/doc/html/rfc4514)

@@ -5,7 +5,7 @@
 This cheat sheet provides guidance on implementing transport layer protection for applications using Transport Layer Security (TLS). It primarily focuses on how to use TLS to protect clients connecting to a web application over HTTPS, though much of this guidance is also applicable to other uses of TLS. When correctly implemented, TLS can provide several security benefits:
 
 - **Confidentiality**: Provides protection against attackers reading the contents of the traffic.
-- **Integrity**: Provides protection against traffic modification, such as an attacker replaying requests against the server.
+- **Integrity**: Provides protection against traffic tampering, such as an attacker modifying or replaying intercepted requests against the server.
 - **[Authentication](Authentication_Cheat_Sheet.md)**: Enables the client to confirm they are connected to the legitimate server. Note that the identity of the client is not verified unless [client certificates](#client-certificates-and-mutual-tls) are employed.
 
 ### SSL vs TLS
@@ -35,7 +35,9 @@ If TLS 1.2 is still required, prefer AEAD‑based suites there as well and avoid
 - Null ciphers;
 - Anonymous ciphers (`TLS_*_anon_*`);
 - EXPORT ciphers (`TLS_*_EXPORT_*`);
-- RSA transport (`TLS_RSA_*`) and ephemeral/static Diffie-Hellman key agreement (`TLS_DH_*`, `TLS_ECDH_*`) which do not provide forward secrecy.
+- RSA key transport (`TLS_RSA_*`) and static Diffie-Hellman key agreement (`TLS_DH_*`, `TLS_ECDH_*`), which [do not provide forward secrecy](https://www.rfc-editor.org/rfc/rfc9325.html#section-4.1).
+
+For TLS 1.2, prefer [ECDHE cipher suites with authenticated encryption](https://www.rfc-editor.org/rfc/rfc9325.html#section-4.2). Ephemeral Diffie-Hellman provides forward secrecy; finite-field DHE suites (`TLS_DHE_*`) are nevertheless discouraged in TLS 1.2 because of construction and parameter-negotiation weaknesses, as explained in [RFC 9325 Section 4.1](https://www.rfc-editor.org/rfc/rfc9325.html#section-4.1).
 
 The Mozilla Foundation provides an [easy-to-use secure configuration generator](https://ssl-config.mozilla.org/) for web, database and mail servers. This tool allows site administrators to select the software they are using and receive a configuration file that is optimized to balance security and compatibility for a wide variety of browser versions and server software.
 
@@ -78,6 +80,8 @@ For TLS 1.2 or earlier versions it is recommended not to set Diffie-Hellman para
 ### Disable Compression
 
 TLS compression should be disabled in order to protect against a vulnerability (nicknamed [CRIME](https://threatpost.com/crime-attack-uses-compression-ratio-tls-requests-side-channel-hijack-secure-sessions-091312/77006/)) which could potentially allow sensitive information such as session cookies to be recovered by an attacker.
+
+TLS compression is not available in TLS v1.3 for this reason.
 
 ### Patch Cryptographic Libraries
 
@@ -190,9 +194,11 @@ API-only endpoints should disable HTTP altogether and only support encrypted con
 
 A page that is available over TLS should not include any resources (such as JavaScript or CSS) files which are loaded over unencrypted HTTP. These unencrypted resources could allow an attacker to sniff session cookies or inject malicious code into the page. Modern browsers will also block attempts to load active content over unencrypted HTTP into secure pages.
 
-### Use the "Secure" Cookie Flag
+### Use "Secure" Cookies
 
-All cookies should be marked with the "[Secure](https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies#Secure_and_HttpOnly_cookies)" attribute, which instructs the browser to only send them over encrypted HTTPS connections, in order to prevent them from being sniffed from an unencrypted HTTP connection. This is important even if the website does not listen on HTTP (port 80), as an attacker performing an active man in the middle attack could present a spoofed web server on port 80 to the user in order to steal their cookie.
+All cookies must be marked with the "[Secure](https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies#Secure_and_HttpOnly_cookies)" attribute. This instructs the browser to only send them over encrypted HTTPS connections. This is important even if the website does not listen on HTTP, as an attacker performing an active man in the middle attack could redirect the user to a spoofed web server served over HTTP in order to steal their cookie.
+
+In addition, you must use the `__Secure-` prefix for the cookie to ensure that a man in the middle cannot modify the cookie over plain HTTP. This type of attacks could for example be exploited in session fixation attacks.
 
 ### Prevent Caching of Sensitive Data
 
@@ -214,12 +220,9 @@ HTTP Strict Transport Security (HSTS) instructs the user's browser to always req
 
 ### Client Certificates and Mutual TLS
 
-In a typical TLS configuration, a certificate on the server allows the client to verify the server's identity and provides an encrypted connection between them. However, this approach has two main weaknesses:
+A typical TLS connection authenticates the server, while mutual TLS (mTLS) also authenticates the client using a client certificate and proof of its private key. In TLS 1.3, this proof is bound to the handshake transcript by [CertificateVerify](https://www.rfc-editor.org/rfc/rfc8446.html#section-4.4.3). This [channel binding](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/#verifimpers) prevents an intermediary from relaying the client's authentication onto a separate TLS connection to the legitimate server.
 
-- The server lacks a mechanism to verify the client's identity.
-- An attacker, obtaining a valid certificate for the domain, can intercept the connection. This interception is often used by businesses to inspect TLS traffic, by installing a trusted CA certificate on their client systems.
-
-Client certificates, central to mutual TLS (mTLS), address these issues. In mTLS, both the client and server authenticate each other using TLS. The client proves their identity to the server with their own certificate. This not only enables strong authentication of the client but also prevents an intermediate party from decrypting TLS traffic, even if they have a trusted CA certificate on the client system.
+TLS provides [confidentiality between its endpoints](https://www.rfc-editor.org/rfc/rfc8446.html#section-1); mTLS does not make data confidential from a TLS endpoint whose server certificate the client accepts. If the client accepts an attacker's certificate for the target domain, the attacker can read application data sent to that endpoint, even when the client uses a certificate. Validate the server's identity and trust configuration independently; see [Public Key Pinning](#public-key-pinning) for applications that need to restrict server trust further.
 
 Challenges and Considerations
 
@@ -239,15 +242,7 @@ Public key pinning was added to browsers in the HTTP Public Key Pinning (HPKP) s
 
 However, public key pinning can still provide security benefits for mobile applications, thick clients and server-to-server communication. This is discussed in further detail in the [Pinning Cheat Sheet](Pinning_Cheat_Sheet.md).
 
-## Related Articles
+## References
 
-- OWASP - [Testing for Weak TLS](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/09-Testing_for_Weak_Cryptography/01-Testing_for_Weak_Transport_Layer_Security)
-- OWASP - [Application Security Verification Standard (ASVS) - Communication Security Verification Requirements (V9)](https://github.com/OWASP/ASVS/blob/v4.0.1/4.0/en/0x17-V9-Communications.md)
-- Mozilla - [Mozilla Recommended Configurations](https://wiki.mozilla.org/Security/Server_Side_TLS#Recommended_configurations)
-- NIST - [SP 800-52 Rev. 2 Guidelines for the Selection, Configuration, and Use of Transport Layer Security (TLS) Implementations](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-52r2.pdf)
-- NIST - [NIST SP 800-57 Recommendation for Key Management, Revision 5](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-57pt1r5.pdf)
-- NIST - [SP 800-95 Guide to Secure Web Services](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-95.pdf)
-- IETF - [RFC 5280 Internet X.509 Public Key Infrastructure Certificate and Certificate Revocation List (CRL) Profile](https://tools.ietf.org/html/rfc5280)
-- IETF - [RFC 2246 The Transport Layer Security (TLS) Protocol Version 1.0 (JAN 1999)](https://tools.ietf.org/html/rfc2246)
-- IETF - [RFC 4346 The Transport Layer Security (TLS) Protocol Version 1.1 (APR 2006)](https://tools.ietf.org/html/rfc4346)
-- IETF - [RFC 5246 The Transport Layer Security (TLS) Protocol Version 1.2 (AUG 2008)](https://tools.ietf.org/html/rfc5246)
+- [TLS Reference: Server-Side TLS](https://docs.tlsref.org/server-side-tls.html)
+- [SP 800-52 Rev. 2 Guidelines for the Selection, Configuration, and Use of Transport Layer Security (TLS) Implementations](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-52r2.pdf)

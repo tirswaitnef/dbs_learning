@@ -285,17 +285,19 @@ Example of validation not vulnerable because MAC algorithms are not accepted:
 decoded = jwt.decode(token, public_key_bytes, algorithms=["ES256"])
 ```
 
-Example of validation not vulnerable because the key is strictly typed:
+Illustrative signature verification using [joserfc's typed key import](https://jose.authlib.org/en/guide/jwk/#import-keys) and a trusted EC public key. [Claim validation](https://jose.authlib.org/en/guide/jwt/#validate-claims) is still required before accepting the token. Replace the example key with your issuer's trusted public key; `encoded` is the received token string.
 
 ```python
 from joserfc import jwt, jwk
 
-# {"kty":"EC",
-#  "crv":"P-256",
-#  "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
-#  "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}
-public_key = jwk.import_key(jwk)
-decoded = jwt.decode(encoded, public_key)
+public_jwk = {
+    "kty": "EC",
+    "crv": "P-256",
+    "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+    "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0",
+}
+public_key = jwk.import_key(public_jwk)
+decoded = jwt.decode(encoded, public_key, algorithms=["ES256"])
 ```
 
 References:
@@ -483,7 +485,7 @@ Before implementing such a JWT denylist, you should consider whether there is a 
 - Token Status List is a scalable solution for revocation of the JWT by the issuer.
 - Freshness and replay protection can often by implementing by using a `nonce` bound to the session in the JWT claims. This approach is [used in OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html#NonceNotes).
 - Token reuse can be mitigated by using short expiration time in the JWT.
-- The risk of token exfiltration can be mitigated by using sender constrained JWT (such a [DPoP](https://datatracker.ietf.org/doc/html/rfc9449) or [TLS-bound JWT](https://www.rfc-editor.org/info/rfc8705/#section-3)).
+- Sender-constrained access tokens, such as [DPoP-bound tokens](https://datatracker.ietf.org/doc/html/rfc9449#section-2) or [mutual-TLS certificate-bound tokens](https://www.rfc-editor.org/rfc/rfc8705.html#section-3), limit an attacker's ability to use a stolen token without its associated private key. They do not prevent token disclosure. Protect tokens and keys, use HTTPS, and prevent [untrusted code from using the client's signing key](https://datatracker.ietf.org/doc/html/rfc9449#section-11.4).
 
 ## Token Confidentiality and JWE
 
@@ -519,28 +521,7 @@ Full JWE implementation guidance is out of scope for this cheat sheet and will b
 
 ## References
 
-Main JWT and JOSE specifications:
-
-- [RFC 7515](https://datatracker.ietf.org/doc/html/rfc7515), JSON Web Signature (JWS)
-- [RFC 7516](https://datatracker.ietf.org/doc/html/rfc7516), JSON Web Encryption (JWE)
-- [RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517), JSON Web Key (JWK)
-- [RFC 7519](https://datatracker.ietf.org/doc/html/rfc7519), JSON Web Token (JWT)
-- [RFC 8725](https://datatracker.ietf.org/doc/html/rfc8725), JWT Best Practices
-
-Some applications of JWTs:
-
-- [JWT Profile for OAuth 2.0 Access Tokens](https://datatracker.ietf.org/doc/html/rfc9068)
-
-IANA registries:
-
-- [JSON Object Signing and Encryption (JOSE) IANA Reguistry](https://www.iana.org/assignments/jose/jose.xhtml)
-- [JSON Web Token IANA Reguistry (JWT)](https://www.iana.org/assignments/jwt/jwt.xhtml)
-
-Attacks on JWT and JOSE:
-
-- [{JWT}.{Attack}.Playbook](https://github.com/ticarpi/jwt_tool/wiki) - A project documents the known attacks and potential security vulnerabilities and misconfigurations of JSON Web Tokens.
-- [JWT.io Discussion Forum](https://community.auth0.com/c/jwt/8) (Hosted by [Auth0](https://auth0.com/))
-
-Other useful links:
-
-- [JWT IANA Registry](https://www.iana.org/assignments/jwt/jwt.xhtml)
+- [RFC 7519: JSON Web Token](https://datatracker.ietf.org/doc/html/rfc7519)
+- [RFC 8725: JSON Web Token Best Current Practices](https://datatracker.ietf.org/doc/html/rfc8725)
+- [RFC 7516: JSON Web Encryption](https://datatracker.ietf.org/doc/html/rfc7516)
+- [RFC 7517: JSON Web Key](https://datatracker.ietf.org/doc/html/rfc7517)

@@ -4,7 +4,7 @@
 
 Business logic vulnerabilities are flaws in the way an application implements its intended workflow. They aren't missing input sanitization or unescaped output. The code does what the developer told it to do, but what the developer told it to do doesn't match what the business actually needs. A user skips a required step, submits a request out of order, pays a negative price, stacks coupons in a way nobody planned for, or wins a race against the server's own bookkeeping.
 
-No scanner will find these bugs for you. They don't have a signature to match on. They show up in code that looks perfectly fine in isolation because the bug isn't in any single function. It's in the gap between what the developer assumed and what a user can actually do.
+Generic scanners often miss business logic flaws because they lack the application's business rules. Automated analysis can still detect some patterns, including [workflow enforcement weaknesses](https://cwe.mitre.org/data/definitions/841.html). Combine tools with review and testing that checks the intended business process.
 
 This cheat sheet covers practical patterns for preventing business logic abuse. It's aimed at developers building features, not at penetration testers looking for them. For testing guidance, see the [OWASP Web Security Testing Guide, Business Logic Testing section](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/10-Business_Logic_Testing/).
 
@@ -18,7 +18,7 @@ Key takeaways:
 
 ## Why Business Logic Flaws Are Different
 
-Most well-known web vulnerabilities (SQL injection, XSS, CSRF, path traversal) have a clear technical signature. A security scanner can fuzz parameters, look for reflected payloads, and produce a reasonable report. Business logic bugs don't work that way.
+Most well-known web vulnerabilities (SQL injection, XSS, CSRF, path traversal) have a clear technical signature. A security scanner can fuzz parameters, look for reflected payloads, and produce a reasonable report. Business logic flaws often require additional knowledge of the intended workflow.
 
 Consider an e-commerce checkout. The server accepts a request containing a product ID, quantity, and coupon code. Every input is validated: the product ID exists, the quantity is a positive integer, the coupon code matches a known pattern. No technical rule is broken. But the application recalculates the total from the client-submitted price instead of looking it up server-side, so a user can pay one cent for a television. That's a business logic bug, and no amount of input validation helps, because the input is syntactically perfect.
 
@@ -29,7 +29,7 @@ The patterns repeat across industries:
 - An endpoint performs two operations (check balance, then debit) without a lock, so two concurrent requests both pass the balance check and both debit.
 - A feature intended to reward legitimate use (referrals, points, promo credits) has no controls against one user creating many accounts.
 
-None of these are subtle once you see them. They're just invisible to tools that don't understand the business process.
+Review these patterns against the application's business rules; a clean scanner report does not show that those rules are enforced.
 
 ## Always Re-derive Security-relevant Values Server-side
 
@@ -112,7 +112,11 @@ The most broadly available fix is a database transaction with the right isolatio
 
 ### Use Idempotency Keys for External Actions
 
-For operations that talk to external systems (charge a card, send money, issue a voucher), a retry from the client should not result in a duplicate action. Accept a client-supplied idempotency key, store it with the result, and return the cached result on retry. Stripe and other payment providers implement this pattern, and the same idea applies to any non-idempotent operation your own service exposes.
+For external actions such as charging a card, use the provider's idempotency mechanism and reuse the same key when retrying the same operation. Follow its key-generation, parameter-matching, and retention rules; for example, [Stripe rejects changed parameters and can treat a key as new after its stored record expires](https://docs.stripe.com/api/idempotent_requests).
+
+For your own API, scope stored keys to the authenticated caller and operation, bind them to the original request parameters, and reject reuse with different parameters. Authorize the request before returning a cached result; possession of a key is not authorization. Coordinate concurrent requests atomically so only one starts the action, and record its state and result durably. [AWS describes caller-scoped identifiers, atomic processing, and parameter-mismatch checks](https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/).
+
+Define the retry and retention window, including recovery when the [external result is unknown](https://docs.stripe.com/error-low-level.md). A local database transaction alone cannot make an external side effect atomic with saving its result. After the retry window expires, reconcile the external outcome before resubmitting.
 
 ### Don't Assume "Fast Enough"
 
@@ -125,7 +129,7 @@ A common rationalization is "the window between the check and the update is micr
 | Read-modify-write on a single row | `SELECT ... FOR UPDATE` then `UPDATE`, inside a transaction |
 | Conditional decrement on a counter | `UPDATE ... SET value = value - 1 WHERE value > 0`, check affected rows |
 | One-per-user bonus | Unique constraint on (user_id, bonus_type) and let the database reject duplicates |
-| External non-idempotent call | Idempotency key table plus a transactional write of the result |
+| External non-idempotent call | Provider-supported idempotency, with durable state for retries and recovery |
 | Cross-row consistency | Serializable transaction with explicit retry logic |
 
 ## Protect Abuse-friendly Features
@@ -150,6 +154,8 @@ Some features are inherently abuse magnets because they dispense value in respon
 - **Asymmetric consequences.** Actions that give value should be harder than actions that don't. Making someone wait 30 seconds, or complete a CAPTCHA, to claim a reward is fine. The legitimate user clicks once and moves on; the automated abuser suffers a per-request cost.
 
 ## Threat Model from the Business Process
+
+See the [Abuse Case Cheat Sheet](Abuse_Case_Cheat_Sheet.md) for identifying misuse scenarios.
 
 Most threat modeling is done from a technical angle: data flow diagrams, trust boundaries, STRIDE categories. That's useful, but it misses the bugs where the code is technically correct and the process is the problem. Business logic threat modeling asks different questions.
 
@@ -208,6 +214,8 @@ Map every sensitive operation to every entry point that can trigger it, and veri
 For general access control guidance, see the [Access Control Cheat Sheet](Access_Control_Cheat_Sheet.md) and the [Authorization Cheat Sheet](Authorization_Cheat_Sheet.md). For the higher-sensitivity case of financial or state-changing transactions, see the [Transaction Authorization Cheat Sheet](Transaction_Authorization_Cheat_Sheet.md).
 
 ## Validate Inputs for Business Meaning, Not Just Format
+
+See the [Input Validation Cheat Sheet](Input_Validation_Cheat_Sheet.md) for validation controls.
 
 Input validation typically focuses on format: is this a well-formed integer, is this within length limits, does it match a whitelist of characters. That catches injection attacks but not business logic abuse. The input can be perfectly formatted and still semantically invalid.
 
@@ -329,7 +337,7 @@ Before shipping any feature that handles money, permissions, or state, walkthrou
 - Are all security-relevant values (prices, permissions, identity, ownership) derived server-side, not accepted from the client?
 - Is every multi-step workflow represented as an explicit state machine in server-side storage, with each transition validated?
 - Is every check-then-act operation atomic (transaction, row lock, or conditional update)?
-- Do external non-idempotent calls accept an idempotency key?
+- Do retries of external actions reuse the same idempotency key within the provider's documented retry window?
 - Does every value-dispensing feature have a per-action cap, a per-account cap, and a rate limit?
 - Are all invariants written down and tested?
 - Is every entry point for a sensitive operation subject to the same business rules?
@@ -338,12 +346,6 @@ Before shipping any feature that handles money, permissions, or state, walkthrou
 
 ## References
 
-- [OWASP Web Security Testing Guide - Business Logic Testing](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/10-Business_Logic_Testing/)
 - [CWE-840: Business Logic Errors](https://cwe.mitre.org/data/definitions/840.html)
 - [CWE-841: Improper Enforcement of Behavioral Workflow](https://cwe.mitre.org/data/definitions/841.html)
-- [CWE-367: Time-of-check Time-of-use (TOCTOU) Race Condition](https://cwe.mitre.org/data/definitions/367.html)
-- [OWASP Authorization Cheat Sheet](Authorization_Cheat_Sheet.md)
-- [OWASP Access Control Cheat Sheet](Access_Control_Cheat_Sheet.md)
-- [OWASP Transaction Authorization Cheat Sheet](Transaction_Authorization_Cheat_Sheet.md)
-- [OWASP Input Validation Cheat Sheet](Input_Validation_Cheat_Sheet.md)
-- [OWASP Abuse Case Cheat Sheet](Abuse_Case_Cheat_Sheet.md)
+- [CWE-367: Time-of-check Time-of-use Race Condition](https://cwe.mitre.org/data/definitions/367.html)

@@ -12,8 +12,6 @@ A secure toolchain is not a silver bullet. It is one piece of an overall strateg
 
 The OWASP [ESAPI C++](https://code.google.com/p/owasp-esapi-cplusplus/source) project eats its own dog food. Many of the examples you will see in this article come directly from the ESAPI C++ project.
 
-Finally, a Cheat Sheet is available for those who desire a terse treatment of the material. Please visit [C-Based Toolchain Hardening Cheat Sheet](C-Based_Toolchain_Hardening_Cheat_Sheet.md) for the abbreviated version.
-
 ## Wisdom
 
 Code **must** be correct. It **should** be secure. It **can** be efficient.
@@ -50,7 +48,7 @@ For GCC, optimizations and debug symbolication are controlled through two switch
 
 `-O0` turns off optimizations and `-g3` ensures maximum debug information is available. You may need to use `-O1` so some analysis is performed. Otherwise, your debug build will be missing a number of warnings not present in release builds. `-g3` ensures maximum debugging information is available for the debug session, including symbolic constants and `#defines`. `-ggdb` includes extensions to help with a debug session under GDB. For completeness, Jan Krachtovil stated `-ggdb` currently has no effect in a private email.
 
-Release builds should also consider the configuration pair of `-mfunction-return=thunk` and `-mindirect-branch=thunk`. These are the "Reptoline" fix which is an indirect branch used to thwart speculative execution CPU vulnerabilities such as Spectre and Meltdown. The CPU cannot tell what code to `speculatively` execute because it is an indirect (as opposed to a direct) branch. This is an extra layer of indirection, like calling a pointer through a pointer.
+For x86 builds, choose speculative-execution mitigations for the target CPU and operating system. [GCC's `-mindirect-branch=thunk`](https://gcc.gnu.org/onlinedocs/gcc/x86-Options.html) replaces indirect calls and jumps with call-and-return thunks; `-mfunction-return=thunk` transforms function returns. [Retpoline mitigates specific Spectre variant 2 attack paths](https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/spectre.html), not speculative-execution vulnerabilities in general. Follow current platform guidance rather than assuming these flags protect against every Spectre variant or Meltdown.
 
 Debug build should also define `DEBUG`, and ensure `NDEBUG` is not defined. `NDEBUG` removes "program diagnostics" and has undesirable behavior and side effects which are discussed below in more detail. The defines should be present for all code, and not just the program. You use it for all code (your program and included libraries) because you need to know how they fail, too (remember, you take the bug report - not the third party library).
 
@@ -98,7 +96,7 @@ Auto configuration tools are popular on many Linux and Unix based systems, and t
 
 When using auto configuration tools, there are a few files of interest worth mentioning. The files are part of the Autotools chain and include `m4` and the various `*.in`, `*.ac` (Autoconf), and `*.am` (Automake) files. At times, you will have to open them, or the resulting makefiles, to tune the "stock" configuration.
 
-There are three downsides to the command-line configuration tools in the toolchain: (1) they often ignore user requests, (2) they cannot create configurations, and (3) security is often not a goal.
+There are three downsides to the command-line configuration tools in the toolchain: (1) they often ignore user requests, (2) switching build flags may reuse objects from an earlier configuration, and (3) security is often not a goal.
 
 To demonstrate the first issue, configure your project with the following: `configure` `CFLAGS="-Wall` `-fPIE"` `CXXFLAGS="-Wall` `-fPIE"` `LDFLAGS="-pie"`. You will probably find that Autotools ignored your request, which means the command below will not produce expected results. As a workaround, you will have to open an `m4` script, `makefile.in` or `makefile.am`, and fix the configuration.
 
@@ -108,7 +106,7 @@ $ configure CFLAGS="-Wall -Wextra -Wconversion -fPIE -Wno-unused-parameter
     LDFLAGS="-pie -z,noexecstack -z,noexecheap -z,relro -z,now"
 ```
 
-For the second point, you will probably be disappointed to learn [Automake does not support the concept of configurations](https://lists.gnu.org/archive/html/automake/2012-12/msg00019.html). It's not entirely Autoconf's or Automake's fault - _Make_ and its inability to detect changes is the underlying problem. Specifically, _Make_ only [checks modification times of prerequisites and targets](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/make.html), and does not check things like `CFLAGS` and `CXXFLAGS`. The net effect is you will not receive expected results when you issue `make` `debug` and then `make` `test` or `make` `release`.
+For the second point, use [separate build directories for different configurations](https://www.gnu.org/software/automake/manual/html_node/VPATH-Builds.html). Make [checks modification times of prerequisites and targets](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/make.html), so changing `CFLAGS` or `CXXFLAGS` alone does not ensure that existing objects are rebuilt. Separate debug, test, and release build directories help prevent reuse of objects compiled with different hardening flags.
 
 Finally, you will probably be disappointed to learn tools such as Autoconf and Automake miss many security related opportunities and ship insecure out of the box. There are a number of compiler switches and linker flags that improve the defensive posture of a program, but they are not 'on' by default. Tools like Autoconf - which are supposed to handle this situation - often provide settings to serve the lowest of all denominators.
 
@@ -558,7 +556,7 @@ struct sockaddr_in addr;
 addr.sin_port = htons(atoi(argv[2]));
 ```
 
-The following would probably serve you much better. Notice `atoi` and friends are not used because they can silently fail. In addition, the code is instrumented so you don't need to waste a lot of time debugging potential problems:
+The following would probably serve you much better. Notice `atoi` and friends are not used because they can silently fail. In addition, the code is instrumented so you don't need to waste a lot of time debugging potential problems: Check the [16-bit transport port range](https://www.rfc-editor.org/rfc/rfc6335.html#section-6) before narrowing the value; the maximum value of `unsigned int` may be larger than a port can represent.
 
 ```c
 const char* cstr = GetPortString();
@@ -580,8 +578,8 @@ ASSERT(t > 0);
 if(!(t > 0))
     throw runtime_error("WTF??? Port is too small");
 
-ASSERT(t < static_cast<long long>(numeric_limits<unsigned int>::max()));
-if(!(t < static_cast<long long>(numeric_limits<unsigned int>::max())))
+ASSERT(t <= 65535);
+if(!(t <= 65535))
     throw runtime_error("WTF??? Port is too large");
 
 // OK to use port
@@ -656,3 +654,9 @@ Finally, for runtime hardening, Microsoft provides **Windows Defender Exploit Gu
 Additionally, the [Process Mitigation Management Tool](https://docs.microsoft.com/en-us/windows/security/threat-protection/windows-defender-exploit-guard/customize-exploit-protection) (`ProcessMitigations` module) allows administrators to configure exploit mitigation policies via PowerShell and Group Policy.
 
 ![Windows2](../assets/C-Based_Toolchain_Hardening_Windows2.png)
+
+## References
+
+- [GCC: Instrumentation Options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)
+- [Clang Compiler User’s Manual](https://clang.llvm.org/docs/UsersManual.html)
+- [Microsoft: Security Best Practices for C++](https://learn.microsoft.com/en-us/cpp/security/security-best-practices-for-cpp?view=msvc-170)

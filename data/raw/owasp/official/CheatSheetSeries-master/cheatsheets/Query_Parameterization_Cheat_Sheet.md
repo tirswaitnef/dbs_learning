@@ -63,7 +63,7 @@ Inventory inv = (Inventory) session.createCriteria(Inventory.class).add
 String query = "SELECT account_balance FROM user_data WHERE user_name = ?";
 try {
    OleDbCommand command = new OleDbCommand(query, connection);
-   command.Parameters.Add(new OleDbParameter("customerName", CustomerName Name.Text));
+   command.Parameters.Add(new OleDbParameter("customerName", CustomerName.Text));
    OleDbDataReader reader = command.ExecuteReader();
    // …
 } catch (OleDbException se) {
@@ -218,5 +218,5 @@ END
 
 ## References
 
-- [The Bobby Tables site (inspired by the XKCD webcomic) has numerous examples in different languages of parameterized Prepared Statements and Stored Procedures](http://bobby-tables.com/)
-- OWASP [SQL Injection Prevention Cheat Sheet](SQL_Injection_Prevention_Cheat_Sheet.md)
+- [Oracle JDBC: Using Prepared Statements](https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html)
+- [PHP PDO: Prepared Statements and Stored Procedures](https://www.php.net/pdo.prepared-statements)

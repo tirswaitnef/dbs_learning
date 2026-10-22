@@ -101,7 +101,7 @@ Project chưa có lockfile. Sau khi cài và chạy ổn, nên lưu
 
 1. Cài Ollama từ https://ollama.com/download rồi tải model tiếng Việt:
    `ollama pull qwen2.5:7b` (hoặc `ollama pull qwen2.5:3b` nếu máy RAM 8 GB / chỉ chạy CPU).
-2. `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`, `OLLAMA_MODEL=qwen2.5:7b`
+2. `LLM_PROVIDER=ollama`, `OLLAMA_BASE_URL=http://127.0.0.1:11434`, `OLLAMA_MODEL=qwen3:4b`
    (tùy chọn đám mây: đặt `LLM_PROVIDER=gemini` kèm `GEMINI_API_KEY` và `GEMINI_CHAT_MODEL`).
 3. Giữ `EMBED_MODEL=intfloat/multilingual-e5-small`; nên điền `EMBED_REVISION` bằng
    commit model đã dùng.
@@ -525,7 +525,7 @@ chỉnh trên dữ liệu gán nhãn.
 | `lab/` | Compose dựng lab quét: DVWA + hai CSDL cấu hình yếu |
 | `cap-nhat.bat`, `cap-nhat.sh` | Cập nhật code mới nhất từ GitHub (không đụng `.env`/`data/`/`.venv`) |
 | `data/raw/owasp/cards.json` | 2 thẻ hướng dẫn (SQLi, XSS) |
-| `data/raw/owasp/official/CheatSheetSeries-master/` | OWASP Cheat Sheet Series, chỉ `cheatsheets/*.md` + `templates/` + license (CC BY-SA 4.0) |
+| `data/raw/owasp/official/CheatSheetSeries-master/` | OWASP Cheat Sheet Series (`08bda3ac`, 2026-10-21, 137 `cheatsheets/*.md` + `templates/` + license CC BY-SA 4.0) |
 | `data/raw/owasp/documents/` | 2 tài liệu minh họa tự viết cho Tập 02–04, không phải tài liệu OWASP |
 | `data/raw/scans/` | 2 file scan mẫu; các file khác bị ignore |
 | `data/processed/`, `data/reports/`, `data/web/` | Sinh tự động khi chạy, đã ignore |

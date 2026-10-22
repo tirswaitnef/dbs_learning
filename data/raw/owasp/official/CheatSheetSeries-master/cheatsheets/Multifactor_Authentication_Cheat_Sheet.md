@@ -2,15 +2,13 @@
 
 ## Introduction
 
-Multifactor Authentication (MFA) or Two-Factor Authentication (2FA) is when a user is required to present more than one type of evidence in order to authenticate on a system. There are five different types of evidence (or factors) and any combination of these can be used, however in practice only the first three are common in web applications. The five types are as follows:
+Multifactor Authentication (MFA) requires evidence from at least two distinct authentication factors: something you know, something you have, and something you are. Location and other risk signals can inform authentication decisions, but do not substitute for an authentication factor, as explained in [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/aal/).
 
 | Factor | Examples |
 |--------|----------|
-| [Something You Know](#something-you-know) | [Passwords and PINs](#passwords-and-pins), [Security Questions](#security-questions) |
-| [Something You Have](#something-you-have) | [OTP Tokens](#one-time-password-tokens), [U2F Tokens](#universal-second-factor), [Certificates](#certificates),[Smart Cards](#smart-cards), [Email](#email), [SMS and Phone Calls](#sms-messages-and-phone-calls) |
-| [Something You Are](#something-you-are) | [Fingerprints, Facial Recognition, Iris Scans](#biometrics) |
-| [Somewhere You Are](#somewhere-you-are) | [Source IP Address](#source-ip-address), [Geolocation](#geolocation), [Geofencing](#geofencing) |
-| [Something You Do](#something-you-do) | [Behavioral Profiling](#behavioral-profiling), [Keystroke & Mouse Dynamics](#keystroke--mouse-dynamics), [Gait Analysis](#gait-analysis) |
+| [Something You Know](#something-you-know) | [Passwords and PINs](#passwords-and-pins) |
+| [Something You Have](#something-you-have) | [OTP Tokens](#one-time-password-tokens), [U2F Tokens](#universal-second-factor), [Certificates](#certificates), [Smart Cards](#smart-cards), [SMS and Phone Calls (restricted)](#sms-messages-and-phone-calls) |
+| [Something You Are](#something-you-are) | [Fingerprints, Facial Recognition, Iris Scans](#biometrics), [Behavioral Biometrics](#something-you-do) |
 
 It should be noted that requiring multiple instances of the same authentication factor (such as needing both a password and a PIN) **does not constitute MFA** and offers minimal additional security. The factors used should be independent of each other and should not be able to be compromised by the same attack. While the following sections discuss the disadvantage and weaknesses of various different types of MFA, in many cases these are only relevant against targeted attacks. **Any MFA is better than no MFA**.
 
@@ -106,11 +104,11 @@ Having to frequently login with MFA creates an additional burden for users, and 
 
 - Requiring MFA when the user logs in from a new device or location.
 - Requiring MFA when the user logs in from a location that is considered to be high risk.
-- Allowing corporate IP ranges (or using [geolocation](#geolocation) as an additional factor).
+- Using corporate IP ranges or [geolocation](#geolocation) as risk signals when deciding whether to require additional authentication.
 
 #### Passkeys
 
-[Passkeys](https://passkeys.dev/) based on the FIDO2 standard are a new form of MFA that combines characteristics of [possession-based](#something-you-have) and either [knowledge-based](#something-you-know) or [inherence-based](#something-you-are) authentication. The user is required to have a physical device (such as a mobile phone) and to enter a [PIN](#passwords-and-pins) or use [biometric authentication](#biometrics) in order to authenticate. The user's device then generates a cryptographic key that is used to authenticate with the server. This is a very secure form of MFA and is resistant to phishing attacks while also being frictionless for the user.
+Passkeys can provide phishing-resistant MFA by combining possession of the credential private key with local [PIN](#passwords-and-pins) or [biometric](#biometrics) verification. When using passkeys as MFA, require user verification and [validate the returned user-verification flag on the server](https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion); a touch confirming user presence alone is not a second factor. The credential key pair is created during [registration](https://www.w3.org/TR/webauthn-3/#sctn-registering-a-new-credential); authentication uses the existing private key to sign a challenge. For registration, verification, and recovery guidance, see the [Passkey Security Cheat Sheet](Passkey_Security_Cheat_Sheet.md).
 
 ### Failed Login Attempts
 
@@ -228,7 +226,7 @@ Hardware OTP Tokens generate a constantly changing numeric codes, which must be 
 
 #### Software OTP Tokens
 
-A cheaper and easier alternative to hardware tokens is using software to generate Time-based One-Time Password (TOTP) codes. This would typically involve the user installing a TOTP application on their mobile phone, and then scanning a QR code provided by the web application which provides the initial seed. The authenticator app then generates a six digit number every 60 seconds, in much the same way as a hardware token.
+A cheaper and easier alternative to hardware tokens is using software to generate Time-based One-Time Password (TOTP) codes. This would typically involve the user installing a TOTP application on their mobile phone, and then scanning a QR code provided by the web application which provides the initial seed. The authenticator app generates a numeric code using a configured time step; [RFC 6238 recommends a default of 30 seconds](https://www.rfc-editor.org/rfc/rfc6238.html#section-5.2). The app and server must use the same time-step value.
 
 Most websites use standardized TOTP tokens, allowing the user to install any authenticator app that supports TOTP. However, a small number of applications use their own variants of this (such as Symantec), which requires the users to install a specific app in order to use the service. This should be avoided in favor of a standards-based approach.
 
@@ -237,7 +235,7 @@ Most websites use standardized TOTP tokens, allowing the user to install any aut
 - The absence of physical tokens greatly reduces the cost and administrative overhead of implementing the system.
 - When users lose access to their TOTP app, a new one can be configured without needing to ship a physical token to them.
 - TOTP is widely used, and many users will already have at least one TOTP app installed.
-- As long as the user has a screen lock on their phone, an attacker will be unable to use the code if they steal the phone.
+- A screen lock reduces theft risk but does not guarantee protection if the phone is stolen while unlocked. Enable authenticator-app access protection where available; for example, [Google Authenticator’s Privacy Screen](https://support.google.com/accounts/answer/1066447?hl=en-rd) requires device verification before app use.
 
 ##### Cons
 
@@ -371,11 +369,11 @@ The are a number of common types of biometrics that are used, including:
 
 ## Somewhere You Are
 
-Location-based authentication is based on the user's physical location. It is sometimes argued that location is used when deciding whether or not to require MFA (as discussed [above](#when-to-require-mfa)) however this is effectively the same as considering it to be a factor in its own right. Two prominent examples of this are the [Conditional Access Policies](https://docs.microsoft.com/en-us/azure/active-directory/conditional-access/overview) available in Microsoft Azure, and the [Network Unlock](https://docs.microsoft.com/en-us/windows/security/information-protection/bitlocker/bitlocker-how-to-enable-network-unlock) functionality in BitLocker.
+Location can inform access restrictions and risk-based authentication decisions. It is not an independent authentication factor: a password combined with a trusted IP address or location does not constitute MFA. [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b/aal/) explicitly distinguishes these risk signals from authentication factors.
 
 ### Source IP Address
 
-The source IP address the user is connecting from can be used as a factor, typically in an allow-list based approach. This could either be based on a static list (such as corporate office ranges) or a dynamic list (such as previous IP addresses the user has authenticated from).
+The source IP address the user is connecting from can be used as a risk signal or access restriction, typically in an allow-list based approach. This could either be based on a static list (such as corporate office ranges) or a dynamic list (such as previous IP addresses the user has authenticated from).
 
 #### Pros
 
@@ -420,7 +418,7 @@ Geofencing is a more precise version of geolocation, which allows the user to de
 
 ## Something You Do
 
-Behavior-based authentication is based on the user's behavior, such as the way they type, move their mouse, or use their mobile device. This is the least common form of MFA and is combined with other factors to increase the level of assurance in the user's identity. It is also the most difficult to implement and may require specific hardware along with a significant amount of data and processing power to analyze the user's behavior.
+Behavioral biometrics, such as keystroke patterns or gait, are a form of "something you are," not a separate authentication factor. Under [NIST's biometric requirements](https://pages.nist.gov/800-63-4/sp800-63b.html#biometric_use), biometric comparison must be combined with an authenticated physical authenticator. General activity signals, such as login times or navigation patterns, can inform risk decisions but do not by themselves constitute MFA.
 
 ### Behavioral Profiling
 
@@ -488,7 +486,7 @@ If risk is detected, the system may:
 - Enforce re-authentication
 - Deny access and trigger alerting or account protection flows
 
-For more details on when to trigger reauthentication after high-risk events—such as account recovery or suspicious activity—see the [Reauthentication After Risk Events](Authentication_Cheat_Sheet.md#reauthentication-after-risk-events) section in the Authentication Cheat Sheet
+For more details on when to trigger reauthentication after high-risk events—such as account recovery or suspicious activity—see the [Reauthentication After Risk Events](Authentication_Cheat_Sheet.md#re-authentication-after-risk-events) section in the Authentication Cheat Sheet
 
 This method is widely used in modern authentication systems to balance usability and security. However, developers must ensure that risk signals cannot be spoofed and that fallback mechanisms are not weaker than the primary MFA methods.
 
@@ -551,16 +549,8 @@ Attackers attempt to force authentication through legacy protocols or authentica
 - Prevent fallback from phishing-resistant authenticators to lower-assurance authentication methods unless required by a documented security policy.
 - Follow OAuth 2.0 Security Best Current Practice (RFC 9700) to prevent OAuth protocol-level downgrade and mix-up attacks.
 
-## References and Further Reading
+## References
 
-- [NIST SP 800‑63B](https://pages.nist.gov/800-63-4/sp800-63b.html)
-- [NIST SP 800-63](https://pages.nist.gov/800-63-3/sp800-63b.html)
-- [Your Pa$$word doesn't matter](https://techcommunity.microsoft.com/t5/Azure-Active-Directory-Identity/Your-Pa-word-doesn-t-matter/ba-p/731984)
-- [FIDO2](https://fidoalliance.org/fido2/)
-- [ENISA Handbook on Security of Personal Data Processing](https://www.enisa.europa.eu/publications/handbook-on-security-of-personal-data-processing/@@download/fullReport)
-- [Google Cloud Adding MFA](https://cloud.google.com/identity-platform/docs/web/mfa)
-- [CISA – Implementing Phishing-Resistant MFA](https://www.cisa.gov/sites/default/files/publications/fact-sheet-implementing-phishing-resistant-mfa-508c.pdf)
-- [FIDO Alliance Specifications](https://fidoalliance.org/specifications/)
-- [W3C WebAuthn](https://www.w3.org/TR/webauthn-3/)
-- [RFC 6238 – TOTP](https://datatracker.ietf.org/doc/html/rfc6238)
-- [OAuth 2.0 Security Best Current Practice (RFC 9700)](https://datatracker.ietf.org/doc/rfc9700/)
+- [NIST SP 800-63B-4: Authentication and Authenticator Management](https://pages.nist.gov/800-63-4/sp800-63b.html)
+- [W3C Web Authentication Level 3](https://www.w3.org/TR/webauthn-3/)
+- [RFC 6238: Time-Based One-Time Password Algorithm](https://datatracker.ietf.org/doc/html/rfc6238)

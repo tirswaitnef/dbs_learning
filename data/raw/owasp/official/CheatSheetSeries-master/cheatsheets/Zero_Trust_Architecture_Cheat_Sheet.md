@@ -20,7 +20,7 @@ Every connection must be encrypted and authenticated, whether it's between your 
 
 ### 3. Access to Resources is Granted on a Per-Session Basis
 
-Don't give permanent access to anything. Each time someone tries to access a resource, evaluate whether they should be allowed. [Sessions](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) should be short-lived and require re-authentication when they expire. No "set it and forget it" access.
+Authorize each resource session with the least privileges needed. Authorization for one resource must not automatically grant access to another. [NIST SP 800-207, Section 2.1](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf) permits a sufficiently recent trust evaluation; it does not require a new interactive login for every request. Set [session expiration and reauthentication requirements](Session_Management_Cheat_Sheet.md#automatic-session-expiration) according to resource sensitivity and risk.
 
 ### 4. Access is Determined by Dynamic Policy
 
@@ -32,11 +32,11 @@ Continuously check the health and security of all devices and systems. If you ca
 
 ### 6. All Authentication and Authorization is Dynamic and Strictly Enforced
 
-Security decisions happen in real-time for every access request. Don't rely on static rules or permanent permissions. The system should automatically adjust access based on current risk levels, revoke access for compromised accounts, and isolate suspicious devices.
+Enforce authentication and authorization before granting access, and reevaluate ongoing sessions according to policy. Trigger reauthentication or reauthorization when policy requires it, such as after a time limit, a request for another resource, or suspicious activity. Revoke access when the applicable policy no longer permits it, balancing security with availability and usability as described in [NIST SP 800-207, Section 2.1](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf).
 
 ### 7. Collect Information to Improve Security Posture
 
-Gather as much security data as possible about users, devices, network traffic, and system behavior. Use this information to detect threats, improve policies, and make better security decisions. This data is essential for compliance and incident investigation.
+Collect asset posture, traffic, and access-request data to improve security decisions. Assess and mitigate the privacy risks of this monitoring, as described in [NIST SP 800-207, Section 6.2](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf). Apply the [Logging Cheat Sheet](Logging_Cheat_Sheet.md#data-to-exclude) guidance on excluding sensitive data and protecting collected logs.
 
 ## Core Zero Trust Architecture Components
 
@@ -48,7 +48,7 @@ Zero Trust uses three main parts that work together:
 
 **Policy Enforcement Point** - These actually block or allow access attempts. This includes firewalls, proxy servers, application gateways, and API gateways. The important thing is that enforcement happens everywhere, not just at your network edge.
 
-These three parts work together on every access request in real time, creating security that adapts to changing situations.
+These components decide, establish, monitor, and terminate resource access according to policy; this does not require a new interactive login at every enforcement point.
 
 ## How Zero Trust Addresses Modern Security Challenges
 
@@ -133,9 +133,11 @@ You need [MFA](https://cheatsheetseries.owasp.org/cheatsheets/Multifactor_Authen
 
 **Most Secure (Highly Phishing-Resistant):**
 
-- **FIDO2 hardware security keys**: Physical devices that use public key cryptography
-- **WebAuthn-based platform authenticators**: Passkeys using fingerprints or face recognition
+- **FIDO2 hardware security keys**: Use with a PIN, biometric activation, or a separate password to provide MFA
+- **WebAuthn-based platform authenticators**: Passkeys with required user verification using a device PIN or biometrics
 - **Smart cards or PIV cards**: PKI-based authentication
+
+Biometrics alone do not provide MFA. They can activate a physical cryptographic authenticator, combining possession of that authenticator with a biometric match. See [NIST SP 800-63B-4, Section 3.2.3](https://pages.nist.gov/800-63-4/sp800-63b/authenticators/) and the [Passkey Security Cheat Sheet](Passkey_Security_Cheat_Sheet.md#verify-the-authentication-response).
 
 **Good Options:**
 
@@ -204,7 +206,7 @@ Implement these network protections:
 
 - **DNS filtering**: Block access to malicious websites
 - **Web filtering**: Control what websites users can visit
-- **Replace VPNs**: Use Zero Trust Network Access (ZTNA) instead
+- **Limit remote access**: Prefer access to specific resources over broad network access. During migration, restrict and monitor any VPN access that remains necessary; a VPN connection alone must not authorize access to other resources.
 - **Monitor traffic**: Analyze all network connections
 
 ## Application and Data Protection
@@ -214,7 +216,7 @@ Implement these network protections:
 Protect your applications with these controls:
 
 - **Identity-aware proxy**: Check user identity before allowing app access
-- **Web Application Firewalls (WAFs)**: Block OWASP Top 10 attacks at the application layer. Deploy at network edge, internal segments, or as part of API gateways
+- **Web Application Firewalls (WAFs)**: Use request filtering as defense in depth for common attack patterns, such as those covered by [OWASP CRS](https://devguide.owasp.org/en/09-operations/04-crs/). A WAF does not replace application authorization or business-rule enforcement; enforce [access control in trusted server-side code](https://top10.owasp.org/2025/A01_2025-Broken_Access_Control/#how-to-prevent).
 - **API security gateways**: Authenticate every API call, validate request schemas, and enforce rate limits for microservices communication using [REST security best practices](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html)
 - **Secure development**: Build security into your development process
 
@@ -249,21 +251,21 @@ Monitor these important numbers:
 
 ## Implementation Steps
 
-Zero Trust implementation requires a structured approach. It's not like installing one security tool - it's more like updating your entire security approach while keeping everything running. Here's what actually works:
+Plan migration around your resources, risks, and dependencies. [NIST SP 800-207, Section 7](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf) recommends incremental migration and allows existing and Zero Trust workflows to coexist. The phases below are illustrative activities, not a fixed schedule.
 
-### Phase 1: Get the Basics Right (Months 1-6)
+### Phase 1: Get the Basics Right
 
 Before you invest in new Zero Trust technologies, you need to know what you're protecting:
 
 **Figure out what you have** - Make a list of all users, devices, applications, and how data moves around. This sounds easy but takes longer than you think. You'll find forgotten systems, shadow IT, and connections nobody documented.
 
-**Set up strong MFA everywhere** - This provides significant security improvement. Use FIDO2 hardware keys or biometric authentication. Don't use SMS codes - they're too easy to hack. Plan for user training since this changes how people log in.
+**Set up strong MFA everywhere** - Use phishing-resistant MFA as described in [Multi-Factor Authentication](#multi-factor-authentication-mfa), rather than treating a biometric match alone as MFA. Plan for user training since this changes how people log in.
 
-**Replace your VPN** - Regular VPNs give too much access once someone logs in. Switch to Zero Trust Network Access (ZTNA) that only gives access to specific applications. This is usually a significant change users notice.
+**Narrow remote access** - Move suitable workflows to application-specific access, such as Zero Trust Network Access (ZTNA). Test authentication and resource authorization before retiring existing access paths. Restrict and monitor legacy VPN paths during the transition rather than treating network admission as authorization.
 
 **Control admin access** - Set up privileged access management (PAM) for administrative accounts. Remove permanent admin rights and switch to temporary access. This may slow some processes initially.
 
-### Phase 2: Add Real Zero Trust Controls (Months 6-18)
+### Phase 2: Add Zero Trust Controls
 
 Now you start building actual Zero Trust capabilities:
 
@@ -271,9 +273,9 @@ Now you start building actual Zero Trust capabilities:
 
 **Monitor devices constantly** - Set up systems that continuously check device health, updates, and security. Devices that aren't secure automatically lose access or get limited access. This creates pressure for people to keep their devices updated.
 
-**Secure applications properly** - Add identity-aware proxies and web application firewalls (WAFs) that make security decisions based on who's trying to access what, not just where they're connecting from.
+**Secure applications properly** - Enforce identity-aware access at application entry points and [resource-level authorization](Authorization_Cheat_Sheet.md#validate-the-permissions-on-every-request) within the application. WAF filtering complements these checks; it does not establish the user's right to access an object or perform a business action.
 
-### Phase 3: Advanced Capabilities (Months 18-36)
+### Phase 3: Advanced Capabilities
 
 Build advanced capabilities:
 
@@ -293,9 +295,7 @@ Zero Trust is never done:
 
 **Measure what matters** - Track how fast you detect threats, how fast you respond, how many policy violations happen, and whether users are happy. Use this data to keep improving.
 
-**Reality check:** Most organizations take 3-5 years to fully implement Zero Trust, and that's with dedicated teams and management support. Don't expect quick results - this takes time.
-
-These phases line up with the [CISA Zero Trust Maturity Model v2.0](https://www.cisa.gov/zero-trust-maturity-model), but your timeline will depend on your organization's size and resources.
+Use the [CISA Zero Trust Maturity Model v2.0](https://www.cisa.gov/sites/default/files/2023-04/zero_trust_maturity_model_v2_508.pdf) to assess progress across identity, devices, networks, applications and workloads, and data. Its Traditional, Initial, Advanced, and Optimal stages describe capabilities, not calendar deadlines; pillars may progress at different rates.
 
 ## Legacy System Challenges
 
@@ -361,7 +361,7 @@ For containerized applications:
 
 **Skipping user training** - Zero Trust changes how people authenticate, access applications, and handle security alerts. If you don't invest in educating your staff about why these changes are necessary and how to work with them, you'll face constant resistance and support tickets. Plan for comprehensive training programs, not just email announcements.
 
-**Moving too fast** - Some organizations try to implement Zero Trust in a few months, which usually leads to broken workflows, user frustration, and incomplete security coverage. Zero Trust is a multi-year journey that requires careful planning and phased implementation. Rushing the process often means having to redo work later when problems surface.
+**Skipping migration validation** - Pilot changes on selected workflows, verify that legitimate access still works, and monitor policy decisions before expanding deployment. Choose the next workflow based on risk and dependencies, as described in [NIST SP 800-207, Section 7.3](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf).
 
 **Vendor lock-in** - Zero Trust involves many different technologies, and some vendors will try to sell you a complete "Zero Trust platform" that locks you into their ecosystem. Keep your options open by choosing solutions that support open standards and can integrate with multiple vendors. Your security architecture should be flexible enough to adapt as threats and technologies evolve.
 
@@ -385,15 +385,17 @@ Zero Trust architecture helps organizations meet various compliance requirements
 Zero Trust requires several technology categories working together:
 
 - **Identity and Access Management**: Strong authentication (MFA) and risk-based access decisions
-- **Zero Trust Network Access (ZTNA)**: Application-level access instead of network-level VPNs
+- **Zero Trust Network Access (ZTNA)**: Resource-specific access controls, with restricted legacy access paths during migration
 - **Web Application Security**: Protect applications and APIs from OWASP Top 10 attacks
 - **Security Monitoring**: Real-time visibility and automated response to threats
 
 ### Policy-as-Code + Continuous Verification + Telemetry Signals
 
+The following are implementation options for cloud-native workloads, not universal Zero Trust requirements. [NIST SP 800-207, Section 2.1](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf) defines technology-agnostic principles. For implementation guidance, see [Kubernetes policy management](Kubernetes_Security_Cheat_Sheet.md#implementing-centralized-policy-management) and [CI/CD Security](CI_CD_Security_Cheat_Sheet.md).
+
 #### 1. Policy-as-Code (PaC)
 
-Zero Trust policies should be defined as **code**, not manually, ensuring consistency, reproducibility, and auditability.
+Policy-as-code can make supported policy changes version-controlled, testable, and auditable. Choose enforcement mechanisms that fit the resources and workflows being protected.
 
 **Key principles:**
 
@@ -419,7 +421,7 @@ Zero Trust policies should be defined as **code**, not manually, ensuring consis
 
 #### 2. Continuous Verification
 
-Zero Trust requires **every access, deployment, and configuration change** to be automatically verified.
+Automated deployment and configuration checks can help enforce workload security policies. They complement the resource-access authentication and authorization described above.
 
 **Verification examples:**
 
@@ -430,7 +432,7 @@ Zero Trust requires **every access, deployment, and configuration change** to be
 - Network policy drift detection
 - Automated enforcement at admission
 
-This approach prevents risky components from entering clusters during CI/CD.
+Admission checks can reject deployments that violate configured policies; they do not replace runtime resource authorization.
 
 #### 3. Telemetry Signals
 
@@ -458,9 +460,9 @@ Zero Trust decisions rely on **telemetry signals** collected continuously across
 3. **Telemetry Signals** → Runtime signals provide continuous monitoring.
 4. **Feedback Loop** → Collected signals are used to refine policies.
 
-This three-part approach makes Zero Trust a **dynamic, continuously adaptive security model**.
+Use this feedback loop to improve the selected controls without treating a particular tool or deployment pipeline as proof of Zero Trust.
 
 ## References
 
-- [OWASP Application Security Verification Standard (ASVS)](https://owasp.org/www-project-application-security-verification-standard/)
-- [NIST SP 800-207: Zero Trust Architecture](https://csrc.nist.gov/pubs/sp/800/207/final)
+- [NIST SP 800-207: Zero Trust Architecture](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-207.pdf)
+- [CISA: Zero Trust Maturity Model, Version 2.0](https://www.cisa.gov/sites/default/files/2023-04/zero_trust_maturity_model_v2_508.pdf)

@@ -138,9 +138,9 @@ To secure the implementation with the `issue_comment` trigger:
 
 Alternatively, consider replacing the `issue_comment` trigger with label-based triggers.
 When using the `pull_request` trigger with the labeled event, `github.event.pull_request.head.sha` contains the latest commit SHA for the pull request.
-Labels can only be applied by authorized users (i.e., GitHub accounts with write permissions), so the workflow does not need to implement additional authorization checks.
-Additionally, since the event is triggered by a user with write permissions, the workflow can consume `GITHUB_TOKEN` with `write` permissions and required GitHub secrets.
-The workflow should check out the code using the trusted commit SHA available via `github.event.pull_request.head.sha`, which reflects the state of the pull request at the time the label was applied.
+Users with [triage access can apply labels](https://docs.github.com/en/issues/using-labels-and-milestones-to-track-work/managing-labels#applying-a-label). Verify that the actor applying a workflow-triggering label is authorized for that operation; permission to label does not establish that the commit has been reviewed.
+Applying a label does not elevate workflow permissions. For pull requests from forks of public repositories, `pull_request` workflows still receive a read-only `GITHUB_TOKEN` and no other secrets, as described in [GitHub's fork workflow restrictions](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflows-in-forked-repositories).
+After reviewing the proposed code, check out the exact commit SHA available via `github.event.pull_request.head.sha`, which reflects the state of the pull request at the time the label was applied. Do not treat the label as approval for later commits.
 
 > [!IMPORTANT]
 > In general, never check out code using mutable references (e.g., pull request numbers or branch names) - always use immutable references such as a full commit SHA.
@@ -184,6 +184,7 @@ Although some input contexts may appear relatively safe, it is better to always 
 
 Try to eliminate all static credentials (e.g., personal access tokens, static cloud keys) used in workflows. Migrate to OIDC-based short-lived authentication tokens ("Trusted publishing").
 Currently, many major registries and cloud providers [support](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments) this feature.
+For cloud deployment trust restrictions and credential handling, see the [Workload Identity Federation Cheat Sheet](Workload_Identity_Federation_Cheat_Sheet.md).
 
 #### Secure handling of static credentials (if elimination is unavoidable)
 
@@ -196,8 +197,8 @@ If complete elimination cannot be achieved:
 
 #### Eliminate `secrets: inherit` while reusing workflows
 
-When using the `inherit` keyword while invoking a reusable workflow, all the calling workflow’s secrets (organization, repository and environment secrets) are passed to the called workflow, even if the called workflow does not need them.
-When you call a reusable workflow, explicitly pass each secret required by the called workflow.
+When invoking a reusable workflow, `secrets: inherit` passes all secrets available to the calling workflow, including secrets the called workflow may not need. [Explicitly pass only the required secrets](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows#using-inputs-and-secrets-in-a-reusable-workflow).
+Also review any `environment` selected by a job inside the reusable workflow: GitHub documents that the environment's secrets are used there and can override secrets passed by the caller. An explicit caller secret map does not remove that separate source of access.
 
 #### Mask sensitive data
 
@@ -219,9 +220,5 @@ This prevents Git credentials from being persisted to the workflow's environment
 
 ## References
 
-- [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use)
-- [Keeping your GitHub Actions and workflows secure Part 1: Preventing pwn requests](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests)
-- [Keeping your GitHub Actions and workflows secure Part 2: Untrusted input](https://securitylab.github.com/resources/github-actions-untrusted-input)
-- [Keeping your GitHub Actions and workflows secure Part 3: How to trust your building blocks](https://securitylab.github.com/resources/github-actions-building-blocks)
-- [Keeping your GitHub Actions and workflows secure Part 4: New vulnerability patterns and mitigation strategies](https://securitylab.github.com/resources/github-actions-new-patterns-and-mitigations)
-- [Securing GitHub Actions Workflows](https://wellarchitected.github.com/library/application-security/recommendations/actions-security/)
+- [GitHub Actions: Secure Use Reference](https://docs.github.com/en/actions/reference/security/secure-use)
+- [GitHub Actions: OpenID Connect](https://docs.github.com/en/actions/concepts/security/openid-connect)

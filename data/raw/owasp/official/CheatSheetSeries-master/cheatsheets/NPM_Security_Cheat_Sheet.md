@@ -131,11 +131,11 @@ Supply-chain attacks increasingly target build artifacts, registries and CI cred
 
 - Sign artifacts and build provenance (for example, use Sigstore / cosign or similar signing tools) so consumers can verify integrity before installing.
 
-  Sigstore Example:
+  Illustrative [Sigstore 5 verification example](https://github.com/sigstore/sigstore-js/tree/main/packages/client#verifybundle-payload-options), assuming a [GitHub Actions signing workflow](https://docs.sigstore.dev/quickstart/verification-cheat-sheet/#verifying-a-signature-created-by-a-workflow). Replace the placeholder repository and workflow with your trusted release policy. Verify both the expected issuer and certificate identity; identity patterns are regular expressions, so anchor them and escape literal dots. Never derive this policy from the untrusted bundle.
 
   ```javascript
-  // sign-and-verify.js
-  // npm install sigstore fs
+  // sign-and-verify.mjs
+  // npm install sigstore@5
 
   import * as fs from 'fs';
   import * as sigstore from 'sigstore';
@@ -150,7 +150,11 @@ Supply-chain attacks increasingly target build artifacts, registries and CI cred
   console.log('Signed:', artifact);
 
   // --- Verify ---
-  await sigstore.verify(payload, bundle);
+  await sigstore.verify(bundle, payload, {
+    certificateIssuer: 'https://token.actions.githubusercontent.com',
+    certificateIdentityURI:
+      '^https://github\\.com/OWNER/REPOSITORY/\\.github/workflows/release\\.yml@refs/heads/main$',
+  });
   console.log('Verified OK!');
   ```
 
@@ -291,3 +295,8 @@ Closing our list of npm security best practices are the following tips to reduce
 - Be extra-careful when copy-pasting package installation instructions into the terminal. Make sure to verify in the source code repository as well as on the npm registry that this is indeed the package you are intending to install. You might verify the metadata of the package with `npm info` to fetch more information about contributors and latest versions.
 - Default to having an npm logged-out user in your daily work routines so your credentials won’t be the weak spot that would lead to easily compromising your account.
 - When installing packages, append the `--ignore-scripts` to reduce the risk of arbitrary command execution. For example: `npm install my-malicious-package --ignore-scripts`
+
+## References
+
+- [npm: Trusted Publishing with OIDC](https://docs.npmjs.com/trusted-publishers/)
+- [npm: Configuring Two-Factor Authentication](https://docs.npmjs.com/configuring-two-factor-authentication/)

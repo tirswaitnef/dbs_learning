@@ -6,6 +6,8 @@ This cheat sheet was previously named the AJAX Security Cheat Sheet.
 
 This document will provide a starting point for AJAX security and will hopefully be updated and expanded reasonably often to provide more detailed information about specific frameworks and technologies.
 
+For applications that compose independently deployed frontend features, see the [Micro-Frontend Security Cheat Sheet](Micro_Frontend_Security_Cheat_Sheet.md) for runtime isolation, cross-application messaging, and host-to-remote trust boundaries.
+
 **Before applying any specific control, developers must adopt a fundamental security mindset:**
 All data should be considered untrusted unless explicitly validated and safely handled.
 This applies to:
@@ -66,7 +68,7 @@ document.getElementById('content').innerHTML = DOMPurify.sanitize(userInput); //
 ##### Alternatives
 
 - Use Templating Engines (with auto-escaping) for reusable, structured HTML snippets.
-- Use Modern Frameworks (React, Vue, Angular, Svelte) for complex applications. They standardize DOM manipulation, provide reactivity, and inherently handle sanitization for dynamic data. However, developers must avoid unsafe APIs (e.g., `dangerouslySetInnerHTML` in React, `[innerHTML]` in Angular) to prevent XSS vulnerabilities.
+- Use framework text bindings, which generally escape text rather than sanitize arbitrary markup; [Vue documents this distinction](https://vuejs.org/guide/best-practices/security). Raw-HTML APIs such as [React's `dangerouslySetInnerHTML`](https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html) require trusted, sanitized HTML. URL and style bindings need controls appropriate to their context; see [Framework Security](Cross_Site_Scripting_Prevention_Cheat_Sheet.md#framework-security).
 
 #### Use of `textContent` or `innerText` for DOM updates (for text-only content)
 
@@ -141,9 +143,9 @@ Just like building HTML or SQL you may cause XML injection bugs, so stay away fr
 
 Anything sent to the client can be read or modified by the user, so keep all that secret stuff on the server please.
 
-#### Don't perform encryption in client-side code
+#### Choose encryption for the threat model
 
-Use TLS/SSL and encrypt on the server!
+Use TLS for transport. Client-side encryption can also be appropriate for end-to-end protection or encryption before upload, as described in the [Web Cryptography use cases](https://www.w3.org/TR/webcrypto/#use-cases). Use reviewed protocols and implementations rather than designing a cryptographic protocol yourself. Browser cryptography does not protect plaintext or keys from malicious code running in the application; account for XSS and key management as described in the [Web Cryptography security considerations](https://www.w3.org/TR/webcrypto/#security-considerations).
 
 #### Don't perform security impacting logic on client-side
 
@@ -200,3 +202,8 @@ Use the framework to serialize data; building payloads by hand can introduce sec
 #### Use JSON and XML schema for web services
 
 Use a third-party library to validate web service inputs.
+
+## References
+
+- [MDN: innerHTML Security Considerations](https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML#security_considerations)
+- [DOMPurify: HTML Sanitization](https://github.com/cure53/DOMPurify#what-does-it-do)

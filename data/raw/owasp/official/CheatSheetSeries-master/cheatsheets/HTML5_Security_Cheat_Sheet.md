@@ -36,7 +36,7 @@ Web Messaging (also known as Cross Domain Messaging) provides a means of messagi
 
 ### Server-Sent Events
 
-- Validate URLs passed to the `EventSource` constructor, even though only same-origin URLs are allowed.
+- Validate URLs passed to the `EventSource` constructor. [Cross-origin connections use CORS](https://html.spec.whatwg.org/multipage/server-sent-events.html#dom-eventsource) and require permission from the event-stream server.
 - As mentioned before, process the messages (`event.data`) as data and never evaluate the content as HTML or script code.
 - Always check the origin attribute of the message (`event.origin`) to ensure the message is coming from a trusted domain. Use an allow-list approach.
 
@@ -57,7 +57,7 @@ Web Messaging (also known as Cross Domain Messaging) provides a means of messagi
 
 - Web SQL Database was deprecated by the W3C in 2010 and is **removed from all major browsers**: Chromium dropped support in version 119 (October 2023) and Safari/Firefox never shipped it for third-party origins. Do not use Web SQL. If you specifically need an SQL interface in the browser, prefer running an embedded engine such as the official [SQLite WebAssembly build (`sqlite-wasm`)](https://sqlite.org/wasm/doc/trunk/about.md), backed by IndexedDB or the Origin Private File System (OPFS) for persistence.
 - The current standard for client-side structured storage is **[IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)**, a transactional key-value store that has been a W3C Recommendation since 2015 and is supported in all evergreen browsers.
-- Underlying storage mechanisms vary across user agents and operating systems. A user (or any process running with that user's privileges, including malware) with read access to the browser profile directory on disk can read or modify the stored data, so do not assume client-side storage provides confidentiality. Do not store session tokens, credentials, or other secrets in IndexedDB unless they are encrypted with a key that is not itself recoverable from the browser (for example, derived from a user-supplied passphrase that is never persisted, or wrapped by a non-extractable [Web Crypto](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) `CryptoKey`).
+- Underlying storage mechanisms vary across user agents and operating systems. A user or process with access to the browser profile can read or modify stored data; do not assume IndexedDB provides confidentiality. Avoid storing session tokens, credentials, or other secrets there. If sensitive data must be stored locally, design encryption and key management for the device-access threat. A non-extractable `CryptoKey` restricts Web Crypto export operations, but [does not guarantee protection of persisted keys from device access or prevent hostile scripts from using the key](https://www.w3.org/TR/webcrypto/#security-developers).
 - A single [Cross-Site Scripting](https://owasp.org/www-community/attacks/xss/) vulnerability can read or write any data in IndexedDB; treat its contents as untrusted input on read.
 - Apply the same input validation and output encoding rules to data coming from IndexedDB as you would to data coming from the network.
 
@@ -93,12 +93,12 @@ As the behavior using the elements above is different between the browsers, eith
 - For [HTML links](https://www.scaler.com/topics/html/html-links/), add the attribute `rel="noopener noreferrer"` to every link.
 - For JavaScript, use this function to open a window (or tab):
 
-``` javascript
-function openPopup(url, name, windowFeatures){
-  //Open the popup and set the opener and referrer policy instruction
-  var newWindow = window.open(url, name, 'noopener,noreferrer,' + windowFeatures);
-  //Reset the opener link
-  newWindow.opener = null;
+```javascript
+function openPopup(url, name, windowFeatures = "") {
+  const features = ["noopener", "noreferrer", windowFeatures]
+    .filter(Boolean)
+    .join(",");
+  window.open(url, name, features);
 }
 ```
 
@@ -127,15 +127,15 @@ It is possible to have a [fine-grained control](https://html.spec.whatwg.org/mul
 
 ## Credential and Personally Identifiable Information (PII) Input hints
 
-- Protect the input values from being cached by the browser.
+Form attributes provide input and autofill hints; they are not a guarantee that the browser will avoid storing sensitive values.
 
-> Access a financial account from a public computer. Even though one is logged-off, the next person who uses the machine can log-in because the browser autocomplete functionality. To mitigate this, we tell the input fields not to assist in any way.
+For sensitive fields where autofill is inappropriate, `autocomplete="off"` requests that the browser not remember or prefill the value. However, [browsers may still offer to save and autofill login credentials](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Attributes/autocomplete#description). Do not treat this attribute as protection against credential reuse on a shared computer.
 
 ```html
-<input type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></input>
+<input type="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off">
 ```
 
-Text areas and input fields for PII (name, email, address, phone number) and login credentials (username, password) should be prevented from being stored in the browser. Use these HTML5 attributes to prevent the browser from storing PII from your form:
+These attributes can adjust input assistance, but do not enforce a no-storage policy:
 
 - `spellcheck="false"`
 - `autocomplete="off"`
@@ -148,8 +148,8 @@ Text areas and input fields for PII (name, email, address, phone number) and log
 - Service Workers run on a separate, scriptable thread and intercept network requests for the registered scope. Because they can transparently serve cached responses, they have a significant security impact:
     - Only register Service Workers from your own origin and **only serve the worker script over HTTPS** with a long-cache-busting filename (e.g. `sw.<hash>.js`).
     - Validate that the scope of the Service Worker is restricted (use the `scope` option or the `Service-Worker-Allowed` response header) so a compromised worker cannot intercept unrelated paths.
-    - A malicious or compromised Service Worker can intercept *every* request from its scope until it is unregistered or the cache TTL expires; have a documented kill-switch (e.g. an unregister flow you can ship in a hotfix).
-    - Do not cache responses that contain sensitive data. Send `Cache-Control: no-store` on those responses so the Cache API will not retain them.
+    - A malicious or compromised Service Worker can intercept requests from the pages it controls. Have a documented recovery process that [updates or unregisters the worker](https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API) and removes affected caches. Expiring cached data does not unregister a worker.
+    - Do not put responses containing sensitive data into the Cache API. [`Cache` does not honor HTTP caching headers, and entries do not expire automatically](https://developer.mozilla.org/en-US/docs/Web/API/Cache); service-worker code must explicitly exclude these responses and delete any sensitive entries already stored. Continue sending `Cache-Control: no-store` to control HTTP caches.
 
 ## Progressive Enhancements and Graceful Degradation Risks
 
@@ -158,3 +158,8 @@ Text areas and input fields for PII (name, email, address, phone number) and log
 ## HTTP Headers to enhance security
 
 Consult the project [OWASP Secure Headers](https://owasp.org/www-project-secure-headers/) in order to obtains the list of HTTP security headers that an application should use to enable defenses at browser level.
+
+## References
+
+- [MDN: Window.postMessage() security concerns](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)
+- [MDN: IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API)

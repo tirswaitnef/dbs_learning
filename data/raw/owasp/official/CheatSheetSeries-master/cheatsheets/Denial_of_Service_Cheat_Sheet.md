@@ -106,7 +106,7 @@ For more information on network attacks, see:
 
 Rate limiting is the process of controlling traffic rate from and to a server or component. It can be implemented on infrastructure as well as on an application level. Rate limiting can be based on (offending) IPs, on IP block lists, on geolocation, etc.
 
-- **Define a minimum ingress data rate limit** and drop all connections below that rate. Note that if the rate limit is set too low, this could impact clients. Inspect the logs to establish a baseline of genuine traffic rate. (Protection against slow HTTP attacks)
+- **Define a minimum ingress data rate** with request-read timeouts to mitigate slow HTTP attacks; see [Apache's minimum-rate and timeout controls](https://httpd.apache.org/docs/current/mod/mod_reqtimeout.html#requestreadtimeout) for an example. A minimum rate set too high can reject legitimate slow clients; setting it too low weakens protection against slow senders. Inspect the logs to establish a baseline of genuine traffic rates.
 - **Define an absolute connection timeout**
 - **Define a maximum ingress data rate limit** then drop all connections above that rate.
 - **Define a total bandwidth size limit** to prevent bandwidth exhaustion
@@ -119,10 +119,11 @@ Rate limiting is the process of controlling traffic rate from and to a server or
 
 ### Global-Level remediations: Commercial cloud filter services
 
-- Consider using a filter service in order to resist larger attacks (up to 500GBit/s)
+- Consider a DDoS filtering service for larger attacks. [Assess the provider's mitigation capacity and coverage](https://www.cisa.gov/sites/default/files/2023-09/TLP%20CLEAR%20-DDOS%20Mitigations%20Guidance_508c.pdf) against your availability requirements; do not assume a fixed attack-size ceiling.
 - **Filter services** support different mechanics to filter out malicious or non compliant traffic
 - **Comply with relevant data protection/privacy laws** - a lot of providers route traffic through USA/UK
 
-## Related Articles
+## References
 
-- [CERT-EU Publication](http://cert.europa.eu/static/WhitePapers/CERT-EU-SWP_14_09_DDoS_final.pdf)
+- [CERT-EU: DDoS Overview and Incident Response Guide](https://cert.europa.eu/static/WhitePapers/CERT-EU-SWP_14_09_DDoS_final.pdf)
+- [Juniper: Network DoS Attacks](https://www.juniper.net/documentation/us/en/software/junos/denial-of-service/topics/topic-map/security-network-dos-attack.html)

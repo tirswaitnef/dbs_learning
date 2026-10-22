@@ -51,6 +51,8 @@ Implement authentication checks for each protected service method.
 
 #### Token-Based Authentication
 
+The following [unary server interceptor](https://pkg.go.dev/google.golang.org/grpc#UnaryServerInterceptor) illustrates authentication for unary RPCs only. Register it with the server; protected streaming RPCs need equivalent checks in a [stream server interceptor](https://pkg.go.dev/google.golang.org/grpc#StreamServerInterceptor) before invoking the stream handler. Registering a unary interceptor does not protect streaming methods.
+
 ```go
 // Go - JWT token validation interceptor
 func authInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -161,13 +163,13 @@ Always use prepared statements for database operations to prevent [SQL injection
 
 ### Implement Message Size Limits
 
-gRPC's streaming capabilities allow clients to send arbitrarily large messages, potentially exhausting server memory and triggering denial-of-service conditions. Set clear limits on message sizes.
+Set application-appropriate limits on individual messages in both directions. In grpc-go, the server's [`MaxRecvMsgSize`](https://pkg.go.dev/google.golang.org/grpc#MaxRecvMsgSize) already defaults to 4 MiB. A stream can still carry many individually valid messages, so a per-message limit does not bound the total data or processing work for the stream.
 
 ```go
 // Go - Set message size limits
 s := grpc.NewServer(
-    grpc.MaxRecvMsgSize(4*1024*1024), // 4MB max receive
-    grpc.MaxSendMsgSize(4*1024*1024), // 4MB max send
+    grpc.MaxRecvMsgSize(4*1024*1024), // 4 MiB max receive
+    grpc.MaxSendMsgSize(4*1024*1024), // 4 MiB max send
 )
 ```
 
@@ -177,10 +179,10 @@ Limit streaming sessions and message counts to prevent resource exhaustion. Moni
 
 ### Implement Request Rate Limiting
 
-Protect services from request flooding and resource exhaustion.
+Protect services from request flooding and resource exhaustion. The example below limits unary RPCs only. Apply stream admission limits through a stream interceptor and enforce per-message limits within the stream; limiting stream creation alone does not limit the messages sent over an existing stream.
 
 ```go
-// Go - Rate limiting with memory management
+// Go - Illustrative unary rate limiting with bounded entry count
 import (
     "golang.org/x/time/rate"
     "sync"
@@ -207,6 +209,10 @@ func rateLimitInterceptor(ctx context.Context, req interface{}, info *grpc.Unary
     store.mu.Lock()
     entry, exists := store.limiters[clientIP]
     if !exists {
+        if len(store.limiters) >= maxLimiterEntries {
+            store.mu.Unlock()
+            return nil, status.Error(codes.ResourceExhausted, "limiter capacity reached")
+        }
         entry = &rateLimiterEntry{
             limiter:  rate.NewLimiter(rate.Limit(10), 20), // 10 req/sec, burst 20
             lastSeen: time.Now(),
@@ -237,7 +243,9 @@ func cleanupOldLimiters() {
 }
 ```
 
-For production environments, use external rate limiting solutions like Redis or dedicated services.
+Configure `maxLimiterEntries` as a positive cap based on the process memory budget. Schedule `cleanupOldLimiters` as part of the service lifecycle; defining it does not run it. At capacity, this illustration rejects new client keys while retaining existing limits, so monitor saturation and its effect on legitimate clients. Derive client keys from a trusted connection or authenticated identity, not arbitrary forwarded headers.
+
+Each [`rate.Limiter`](https://pkg.go.dev/golang.org/x/time/rate#Limiter) limits events for one key; it does not bound the number of keys in the map. This store is local to one process. Use a maintained shared rate-limiting service when limits must apply across replicas.
 
 ### Set Appropriate Timeouts
 
@@ -441,3 +449,5 @@ grpcurl -plaintext -H "authorization: Bearer invalid_token" \
 ## References
 
 - [gRPC Authentication Documentation](https://grpc.io/docs/guides/auth/)
+- [gRPC: Deadlines](https://grpc.io/docs/guides/deadlines/)
+- [gRPC: Reflection](https://grpc.io/docs/guides/reflection/)

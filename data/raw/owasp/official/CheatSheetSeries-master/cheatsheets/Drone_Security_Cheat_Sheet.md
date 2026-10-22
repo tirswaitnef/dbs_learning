@@ -28,7 +28,7 @@ The communication between the drone and the GCS is vulnerable to interception an
 
 - **Insecure Communication Links** – Data transmitted between the drone and GCS can be intercepted if not properly encrypted. Use standard protocols for encryption of any data being sent over.
 
-- **Spoofing and Replay Attacks** – If the drone uses a GPS module then data spoofing and command replay attacks can also become a reality. Again encrypted data transfer is the best way to go forward. There are many more methods, which have been discussed [here](https://www.okta.com/identity-101/gps-spoofing/)
+- **Command Spoofing and Replay Attacks** – Authenticate command messages and reject replayed messages using the protocol's freshness checks. For MAVLink, use [message signing and timestamp validation](https://mavlink.io/en/guide/message_signing.html#accept_signed_packets); encryption alone does not provide these controls.
 
 - **Wi-Fi Weaknesses** – Weak authentication or unprotected channels can allow unauthorized access. This is even possible through simple [microcontrollers like ESP8266](https://github.com/SpacehuhnTech/esp8266_deauther)!
 
@@ -104,9 +104,9 @@ Below are some protocols used by drone systems to communicate. This can be eithe
 
 1. **MAVLink 2.0** – A widely used protocol for communication between drones and ground control stations (GCS).
 
-   - Implement **message signing** to prevent spoofing and replay attacks.
+   - Require valid [MAVLink 2 message signatures](https://mavlink.io/en/guide/message_signing.html#accepting_unsigned_packets) for commands received over untrusted links. Reject unsigned or incorrectly signed commands. Protect the shared signing key and [persist signing timestamps across restarts](https://mavlink.io/en/mavgen_c/message_signing_c.html#handling-timestamps) so replay checks remain effective.
 
-   - You must secure **heartbeat messages** to avoid [command injection vulnerabilities](https://owasp.org/www-community/attacks/Command_Injection). A heartbeat message is usually a single byte that is sent at a certain frequency to all other nodes, informing of the device's existence. The frequency is important here!
+   - [Heartbeat messages](https://mavlink.io/en/services/heartbeat.html) advertise a component's presence, type, and state. Treat heartbeat receipt as a liveness signal, not authorization to execute commands.
 
    - Tools like **ArduPilot** and **PX4** support MAVLink 2.0 security enhancements. They have been thoroughly tested and are therefore recommended.
 
@@ -114,17 +114,17 @@ Below are some protocols used by drone systems to communicate. This can be eithe
 
 Recent CVEs underscore the risk of unauthenticated MAVLink. The absence of default authentication is not theoretical — it has produced critical, remotely-reachable vulnerabilities across both dominant open-source autopilots:
 
-- CVE-2026-1579 (PX4, CVSS 9.8, CISA ICSA-26-090-02, CWE-306): with MAVLink 2 message signing disabled, an unauthenticated party can send SERIAL_CONTROL to obtain interactive shell access.
+- [CVE-2026-1579](https://www.cisa.gov/news-events/ics-advisories/icsa-26-090-02) (PX4, CVSS 9.8, CISA ICSA-26-090-02, CWE-306): with MAVLink 2 message signing disabled, an unauthenticated party can send SERIAL_CONTROL to obtain interactive shell access.
 
-- CVE-2026-38971 (ArduPilot ArduPlane ≤ 4.6.3, CVSS 9.1, CWE-125): an out-of-bounds read in the SERIAL_CONTROL handler (GCS_serial_control.cpp), reachable over MAVLink by an unauthenticated attacker — flight-controller memory disclosure and denial of service.
+- [CVE-2026-38971](https://www.cve.org/CVERecord?id=CVE-2026-38971) (ArduPilot ArduPlane ≤ 4.6.3, CVSS 9.1, CWE-125): an out-of-bounds read in the SERIAL_CONTROL handler (GCS_serial_control.cpp), reachable over MAVLink by an unauthenticated attacker — flight-controller memory disclosure and denial of service.
 
 - CVE-2026-32743 and related PX4 issues (CWE-121): MAVLink-reachable stack buffer overflows in the log handler cause denial of service.
 
-- CVE-2020-10283 (MAVLink): an earlier command-injection issue from missing ground-control-station identity verification — the weakness is long-standing, not new.
+- [CVE-2020-10283](https://www.cve.org/CVERecord?id=CVE-2020-10283) (MAVLink): an earlier authentication downgrade issue — the weakness is long-standing, not new.
 
 Defense-in-depth beyond message signing. Because signing is frequently disabled in the field and any software mitigation runs in the same trust domain an attacker may have compromised, consider enforcing protocol integrity out-of-band:
 
-- Header validation — system-ID allowlisting and sequence-continuity checks to reject spoofed or replayed frames.
+- Header validation — use system-ID allowlists and [packet sequence numbers](https://mavlink.io/en/guide/serialization.html#mavlink2_packet_format) to detect unexpected senders and packet loss. These fields do not authenticate unsigned messages; they cannot replace signature and timestamp validation.
 
 - Typed-payload validation — reject non-finite parameter values (PARAM_SET) and bound FTP path lengths to defeat malformed-value and buffer-overflow classes.
 
@@ -134,7 +134,7 @@ Defense-in-depth beyond message signing. Because signing is frequently disabled 
 
    - Most attacks require **physical access** to exploit CAN. It works on a differential signal and hardware hacking may be possible by tapping into them.
 
-   - There exist tools like **DroneCAN** which make using secure CAN communications easy.
+   - Do not rely on DroneCAN alone to authenticate CAN senders. Its [multi-frame cyclic redundancy check (CRC)](https://dronecan.github.io/Specification/4.1_CAN_bus_transport_layer/#transfer-crc) is an unkeyed checksum, not a message authentication code. Protect physical bus access and isolate the bus from untrusted components.
 
 3. **ZigBee** – A low-power wireless protocol often used for telemetry and sensor communication in backup systems.
 
@@ -156,72 +156,42 @@ Defense-in-depth beyond message signing. Because signing is frequently disabled 
 
    - Use **802.11w Management Frame Protection (MFP)** to mitigate deauthentication attacks (these are crafted packets that emulate a server and cause deauthentication).
 
-   - Disable **SSID broadcasting** and use **MAC filtering** where feasible. This is advisable because it essentially hides your drone's Wi-Fi adapters from simple scans.
+   - Do not rely on hiding the Wi-Fi network name or filtering media access control (MAC) addresses to prevent unauthorized access: [hidden networks remain discoverable and MAC addresses can be spoofed](https://support.apple.com/en-ca/102766#hiddennetwork). Use Wi-Fi authentication and encryption as described above.
 
 By implementing these security measures, drone operators can significantly reduce the risks of cyberattacks and unauthorized access to UAV communication systems.
 
 ## Summary
 
-The following table summaries the different attack vectors for a drone system.
+The table maps common attacks to relevant controls. Choose controls for the interfaces actually present on the drone and GCS; the impact depends on the implementation. Radio interference, forged messages, and software vulnerabilities require different defenses.
 
-| Attack |  | Targets | | | | | Security Measures | |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Type | Nature | Privacy| Data Confidentiality | Integrity | Accessibility | Authentication | Cryptographic | Non-Cryptographic |
-| Malware | Infection | x | x |x |x |x | Control access, system integrity solutions and multi-factor authentication | Hybrid lightweight Intrusion Detection System |
-| BackDoor Access | Infection |x|x|x| x|x | Multi-factor robust authentication scheme | Hybrid lightweight Intrusion Detection System, vulnerability assessment |
-| Social Engineering | Exploitation | x|x |- |- |x | N/A | Raising awareness, training operators |
-| Baiting | Exploitation |x| x| x|- |x | N/A | Raising awareness, training operators |
-| Injection/Modification | Exploitation |x |- |x |- |- | Message authentication or digital signature | Machine-Learning hybrid Intrusion Detection System, timestamps |
-| Fabrication | Exploitation |x |- |x |- |x | Multi-factor authentication, message authentication or digital signature | Assigning privilege |
-| Reconnaissance | Information gathering | x| x| -|- |- | Encrypted traffic/stream | Hybrid lightweight Intrusion Detection System |
-| Scanning | Information gathering | x|x |x |- |- | Encrypted traffic/stream | Hybrid lightweight Intrusion Detection System or Honeypot |
-| Three-Way Handshake | Interception | -|- |- |x |x | - | Traffic filtering, close unused TCP/FTP ports |
-| Eavesdropping | Interception | x| x| -| -| -| Securing communication/traffic, secure connection | N/A |
-| Traffic Analysis | Interception | x|- |- |- |- | Securing communication/traffic, secure connection | N/A |
-| Man-in-the-Middle | Authentication |x |x |x |- |- | Multi-factor authentication & lightweight strong cryptographic authentication protocol | Lightweight hybrid Intrusion Detection System |
-| Password Breaking | Cracking | x|x |x |x |- | Strong periodic passwords, strong encryption | Lightweight Intrusion Detection System |
-| Wi-Fi Aircrack | Cracking | x|x |x |x |- | Strong & periodic passwords, strong encryption algorithm | Lightweight Intrusion Detection System at the physical layer |
-| Wi-Fi Jamming | Jamming | x| x| x| x|- | N/A | Frequency hopping, frequency range variation |
-| De-Authentication | Jamming | x| x| x| x| -| N/A | Frequency hopping, frequency range variation |
-| Replay | Jamming | x| x| x| x| -| N/A | Frequency hopping, timestamps |
-| Buffer Overflow | Jamming |x |x | x| x|- | N/A | Frequency hopping, frequency range variation |
-| Denial of Service | Jamming |x |x |x |x |- | N/A | Frequency hopping, frequency range variation |
-| ARP Cache Poison | Jamming |x |x | x| x|- | N/A | Frequency hopping, frequency range variation |
-| Ping-of-Death | Jamming | x| x| x| x| -| N/A | Frequency range variation |
-| GPS Spoofing | Jamming | x| x| x| x| -| N/A | Return-to-base, frequency range variation |
+| Attack or exposure | Security measures and limitations |
+| --- | --- |
+| Malware | Install firmware and GCS software from trusted sources and keep them updated; restrict scripts and plugins. Follow the [GCS hardening guidance](https://ardupilot.org/dev/docs/security-landing-page.html#ground-control-stations). |
+| Backdoor access | Restrict administrative interfaces and use [verified firmware](https://ardupilot.org/dev/docs/secure-firmware.html). Login authentication alone cannot prevent access through a backdoor that bypasses it. |
+| Social engineering | Train operators to [verify suspicious requests through a trusted contact channel](https://www.ncsc.gov.uk/collection/phishing-scams/spot-scams), especially requests for credentials or software installation. |
+| Baiting | Restrict untrusted removable media and peripherals on the GCS and companion computer; combine operator training with [device access controls](https://www.ncsc.gov.uk/collection/device-security-guidance/policies-and-settings/using-peripherals-securely). |
+| Message injection or modification | Authenticate messages and validate their contents before acting on them; apply the [MAVLink controls above](#secure-communication-protocols). A valid signature does not make an unsafe command safe. |
+| Fabricated commands | Require authenticated commands from trusted controllers. For MAVLink, [reject unsigned commands on untrusted links and protect the shared signing key](https://mavlink.io/en/guide/message_signing.html#accepting_unsigned_packets); any holder of that key can sign messages. |
+| Reconnaissance | Reduce exposed interfaces and protect sensitive telemetry. [Encryption does not conceal all traffic metadata](https://datatracker.ietf.org/doc/html/rfc8446#appendix-E.3). |
+| Network scanning | [Disable unused interfaces and restrict network access](https://ardupilot.org/dev/docs/security-landing-page.html#security-attack-surface). Encrypting traffic does not close reachable ports. |
+| TCP SYN flooding | For exposed TCP services, use the platform's [SYN-flood protections](https://datatracker.ietf.org/doc/html/rfc4987#section-3), such as SYN cookies. A normal three-way handshake is not an attack. |
+| Eavesdropping | Encrypt sensitive telemetry and control traffic using the [secure communication protocols above](#secure-communication-protocols). Message signing alone does not provide confidentiality. |
+| Traffic analysis | Evaluate [protocol-supported padding](https://datatracker.ietf.org/doc/html/rfc8446#appendix-E.3) when packet lengths expose sensitive information. Ordinary encryption does not hide traffic timing or volume; padding has bandwidth and latency costs. |
+| Man-in-the-middle | Authenticate the communicating peers and encrypt the connection; validate certificates or provisioned keys. See the [TLS Cheat Sheet](Transport_Layer_Security_Cheat_Sheet.md). |
+| Password guessing or cracking | Use strong, unique passwords, login rate limits, and multifactor authentication where supported; see the [Authentication Cheat Sheet](Authentication_Cheat_Sheet.md). Do not rely on periodic password changes. |
+| Wi-Fi credential attacks | Use [WPA3 and a strong network password](https://support.apple.com/en-ca/102766#security) where supported. Avoid WEP and other deprecated security modes; an intrusion detection system does not repair weak authentication. |
+| Wi-Fi radio jamming | Configure and test [link-loss failsafes](https://docs.px4.io/main/en/config/safety#data-link-loss-failsafe) for the vehicle and mission. These reduce the consequences of a lost link; they do not prevent radio interference. |
+| Forged Wi-Fi deauthentication | Require [802.11w Management Frame Protection](https://www.cisco.com/c/en/us/support/docs/wireless-mobility/wireless-lan-wlan/212576-configure-802-11w-management-frame-prote.pdf) on compatible endpoints. It protects against forged management frames, not radio jamming. |
+| Replay | Authenticate messages and validate freshness; maintain replay state, including across restarts. See the [MAVLink signing guidance above](#secure-communication-protocols). |
+| Buffer overflow | Use memory-safe components or enforce [buffer bounds checks](https://cwe.mitre.org/data/definitions/120.html), and patch vulnerable parsers. Changing radio frequencies does not fix memory corruption. |
+| Denial of service through resource exhaustion | Bound message sizes and processing resources, apply rate limits, and isolate critical control functions. See the [Denial of Service Cheat Sheet](Denial_of_Service_Cheat_Sheet.md); radio changes do not resolve application resource exhaustion. |
+| Address Resolution Protocol (ARP) cache poisoning | On IP networks, isolate untrusted participants and use [dynamic ARP inspection with trusted address bindings](https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9500/software/release/16-8/configuration_guide/sec/b_168_sec_9500_cg/configuring_dynamic_arp_inspection.html) where supported. This is a local network attack, not radio jamming. |
+| Ping-of-Death / malformed IP packets | Keep the network stack patched and use supported [malformed-packet filtering](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbss/CBS220/CLI-Guide/b_220CLI/security_dos_commands.pdf). Changing radio frequencies does not correct packet-processing vulnerabilities. |
+| GPS spoofing | Use navigation consistency checks and evaluate [non-GPS navigation as a backup](https://ardupilot.org/dev/docs/security-landing-page.html#security-attack-surface). Do not assume return-to-home is safe when its position estimate is untrusted; test the vehicle's navigation failsafes. |
 
 There are multiple GitHub repos that help with drone attack [simulations](https://github.com/nicholasaleks/Damn-Vulnerable-Drone) and [actual exploits](https://github.com/dhondta/dronesploit). Be sure to check them out too for a deeper understanding of drone security.
 
 ## References
 
-- [ESP8266 Wi-Fi deauther](https://github.com/SpacehuhnTech/esp8266_deauther)
-
-- [Command Injection explanation](https://owasp.org/www-community/attacks/Command_Injection)
-
-- [key rotations at certain frequencies](https://cloud.google.com/kms/docs/key-rotation#:~:text=A%20rotation%20schedule%20defines%20the,require%20periodic%2C%20automatic%20key%20rotation.)
-
-- [Vulnerable Just works bluetooth protocol](https://devzone.nordicsemi.com/f/nordic-q-a/17165/ble-just-works-pairing)
-
-- [Drone Exploit Module](https://github.com/dhondta/dronesploit)
-
-- [Vulnerable Drone System Simulation](https://github.com/nicholasaleks/Damn-Vulnerable-Drone)
-
-- [Drones from a Cybersecurity Perspective](https://dronewolf.darkwolf.io/intro)
-
-- [Dynamic Watermarking in UAVs](https://ieeexplore.ieee.org/abstract/document/9994719)
-
-- [GPS spoofing and prevention](https://www.okta.com/identity-101/gps-spoofing/)
-
-- [NIST SP 800-193 Platform Firmware Resiliency Guidelines](https://csrc.nist.gov/pubs/sp/800/193/final)
-
-- [ETSI EN 303 645 (Consumer IoT Security)](https://www.etsi.org/technologies/consumer-iot-security)
-
-- [OWASP Internet of Things](https://owasp.org/www-project-internet-of-things/)
-
-- [Trusted Firmware](https://www.trustedfirmware.org/)
-  
-- [CVE-2026-1579 – PX4 MAVLink unauthenticated shell access (CISA ICSA-26-090-02)](https://www.cisa.gov/news-events/ics-advisories/icsa-26-090-02)
-  
-- [CVE-2026-38971 – ArduPilot MAVLink SERIAL_CONTROL out-of-bounds read](https://www.cve.org/CVERecord?id=CVE-2026-38971)
-
-- [CVE-2020-10283 – MAVLink missing GCS authentication](https://www.cve.org/CVERecord?id=CVE-2020-10283)
+- [NIST SP 800-193: Platform Firmware Resiliency Guidelines](https://csrc.nist.gov/pubs/sp/800/193/final)
+- [MAVLink: Message Signing (Authentication)](https://mavlink.io/en/guide/message_signing.html)

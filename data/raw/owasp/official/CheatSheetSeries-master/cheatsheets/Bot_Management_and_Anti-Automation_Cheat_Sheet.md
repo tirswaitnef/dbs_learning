@@ -95,42 +95,13 @@ Visible CAPTCHAs (image grids, distorted text) are accessibility-hostile, machin
 
 Prefer the following alternatives or layer them:
 
-- **Cryptographic attestation tokens** — Privacy Pass (RFC 9576), Apple Private Access Tokens, and emerging device-attestation APIs. The client proves "I am a real device on a known platform" without identifying the user.
-- **Invisible risk scoring** — Cloudflare Turnstile, reCAPTCHA v3, hCaptcha Enterprise. The provider returns a score; you decide the threshold.
-- **Proof of Work (PoW)** — the client must compute a hash that costs single-digit milliseconds for a human but accumulates significantly across thousands of bot requests. Useful for unauthenticated, expensive endpoints.
+- **Cryptographic attestation tokens** — [Privacy Pass](https://www.rfc-editor.org/rfc/rfc9576.html#section-3.5.1) lets an origin verify that a client satisfied an issuer's attestation policy, such as a CAPTCHA, a device check, or account validation. Select trusted issuers whose policies match your use case; a valid token is not a general proof that the requester is human. [Privacy guarantees](https://www.rfc-editor.org/rfc/rfc9576.html#section-3.3) depend on the deployment and its trust assumptions.
+- **Managed challenges** — Cloudflare Turnstile returns a validation result, not a risk score. [Validate each token server-side with Siteverify](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/), require `success: true`, and check the expected hostname and configured action. Tokens expire after five minutes and are single-use.
+- **Invisible risk scoring** — reCAPTCHA v3 and hCaptcha Enterprise return scores for application-defined thresholds.
+- **Proof of work (PoW)** — require computation before serving selected expensive requests. This can increase automation cost but does not establish that the client is human. Benchmark supported clients: [overly hard puzzles](https://www.rfc-editor.org/rfc/rfc8019.html#section-10) can themselves deny service to legitimate users.
 - **WebAuthn / Passkeys** — for high-value flows, possession of a registered authenticator is a far stronger bot signal than any CAPTCHA.
 
-Example Proof of Work challenge (server side):
-
-```javascript
-import { randomBytes, createHash } from 'crypto';
-
-// Issue: client receives `challenge` and must find a `nonce`
-// such that sha256(challenge || nonce) starts with N zero bits.
-function issuePoW(difficultyBits = 18) {
-  return {
-    challenge: randomBytes(16).toString('hex'),
-    difficulty: difficultyBits,
-    expiresAt: Date.now() + 60_000,
-  };
-}
-
-function verifyPoW(challenge, nonce, difficultyBits) {
-  const hash = createHash('sha256')
-    .update(challenge + nonce)
-    .digest();
-  // Count leading zero bits.
-  let bits = 0;
-  for (const byte of hash) {
-    if (byte === 0) { bits += 8; continue; }
-    bits += Math.clz32(byte) - 24;
-    break;
-  }
-  return bits >= difficultyBits;
-}
-```
-
-Tune `difficultyBits` so a real client spends a few hundred milliseconds; raise it under attack.
+Use a maintained challenge implementation rather than a standalone hash check. Keep the challenge, difficulty and expiry under server control; reject unknown, expired or spent challenges, and prevent concurrent reuse. Bind the accepted work to the intended policy. The [Anubis challenge lifecycle](https://github.com/TecharoHQ/anubis/blob/d60d8a833e4d7f8dd5b4468a7ed5940d202ca176/lib/anubis.go#L637-L719) illustrates validation and reuse checks beyond the hash itself. Retain rate limits after a challenge is passed.
 
 ## Honeypots and Tarpits
 
@@ -165,7 +136,7 @@ Server side: if `company_url` is non-empty, silently drop the request or route t
 
 - Apply per-username **and** per-IP limits with separate windows.
 - Check the submitted password against breach corpora (e.g., HaveIBeenPwned k-Anonymity API) — do not block, but require a step-up.
-- On suspicious patterns, require MFA even for low-risk users.
+- On suspicious patterns, require MFA even for low-risk users. See the [Authentication](Authentication_Cheat_Sheet.md) and [Multifactor Authentication](Multifactor_Authentication_Cheat_Sheet.md) cheat sheets for implementation guidance.
 - See the [Credential Stuffing Prevention Cheat Sheet](Credential_Stuffing_Prevention_Cheat_Sheet.md) for full guidance.
 
 ### Inventory / scalping (OAT-005, OAT-015)
@@ -239,7 +210,7 @@ def log_decision(req, score, decision, rule):
 
 Anti-bot defenses collect data. Treat them like any other data-processing activity.
 
-- Document the lawful basis (legitimate interest is typical) and the categories of data collected.
+- Document the applicable lawful basis and the categories of data collected. Assess any consent requirements or exemptions for device storage and access, including fingerprinting; [UK ICO guidance](https://ico.org.uk/about-the-ico/media-centre/news-and-blogs/2025/09/fact-vs-fiction-ico-debunks-myths-on-storage-and-access-technologies/) explains that legitimate interests cannot replace consent when consent is required.
 - Apply **data minimization**: collect what you need to score the request and discard the rest.
 - Set a short retention period for raw signals; aggregate for longer-term analytics.
 - If you use a third-party anti-bot vendor, list them as a sub-processor and review their DPIA.
@@ -273,9 +244,5 @@ Anti-bot defenses collect data. Treat them like any other data-processing activi
 
 ## References
 
-- [OWASP Automated Threats to Web Applications (OAT)](https://owasp.org/www-project-automated-threats-to-web-applications/)
-- [OWASP Credential Stuffing Prevention Cheat Sheet](Credential_Stuffing_Prevention_Cheat_Sheet.md)
-- [OWASP Logging Cheat Sheet](Logging_Cheat_Sheet.md)
-- [OWASP Authentication Cheat Sheet](Authentication_Cheat_Sheet.md)
-- [OWASP Multifactor Authentication Cheat Sheet](Multifactor_Authentication_Cheat_Sheet.md)
-- HaveIBeenPwned — [Pwned Passwords API](https://haveibeenpwned.com/API/v3#PwnedPasswords)
+- [Pwned Passwords API](https://haveibeenpwned.com/API/v3#PwnedPasswords)
+- [OWASP Automated Threat Handbook](https://wiki.owasp.org/images/3/33/Automated-threat-handbook.pdf)

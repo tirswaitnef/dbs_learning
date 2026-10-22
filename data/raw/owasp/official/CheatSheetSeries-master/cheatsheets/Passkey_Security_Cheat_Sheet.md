@@ -48,7 +48,7 @@ An RP ID determines where a credential can be used. Use the narrowest stable dom
 
 The server must use the same expected RP ID during registration and authentication. Maintain an explicit allowlist of permitted origins, including scheme, host, and port where applicable. Do not construct an expected origin from an untrusted request header.
 
-Native apps do not present an HTTPS origin. The origin an Android app reports is a string such as `android:apk-key-hash:<hash>`, derived from the app signing certificate, and both platforms decide whether an app may use your RP ID from an association file that you host: [`/.well-known/assetlinks.json`](https://developer.android.com/identity/credential-manager/prerequisites) on Android and the `webcredentials` entries in [`/.well-known/apple-app-site-association`](https://developer.apple.com/documentation/xcode/supporting-associated-domains) on Apple platforms (see the [RP ID and app origins overview](https://web.dev/articles/webauthn-rp-id)). The server must [match each app origin against its allowlist](https://developer.android.com/identity/passkeys/create-passkeys) as an explicit entry, never a pattern. Treat both association files as part of the RP attack surface with the same change control as the origin allowlist: an over-broad file, or a server that accepts an app origin it never listed, lets an unrelated app obtain assertions for your RP ID.
+Native app origins differ by platform. [Apple's native passkey API reports an HTTPS origin](https://developer.apple.com/forums/thread/719003) formed from `https://` and the RP ID, validated against the app's Associated Domains. The origin an Android app reports is a string such as `android:apk-key-hash:<hash>`, derived from the app signing certificate, and both platforms decide whether an app may use your RP ID from an association file that you host: [`/.well-known/assetlinks.json`](https://developer.android.com/identity/credential-manager/prerequisites) on Android and the `webcredentials` entries in [`/.well-known/apple-app-site-association`](https://developer.apple.com/documentation/xcode/supporting-associated-domains) on Apple platforms (see the [RP ID and app origins overview](https://web.dev/articles/webauthn-rp-id)). The server must [match each expected origin against its allowlist](https://developer.android.com/identity/passkeys/create-passkeys) as an explicit entry, never a pattern. Treat both association files as part of the RP attack surface with the same change control as the origin allowlist. An overly broad association can authorize unintended apps to use RP-scoped credentials. A permissive server origin allowlist weakens response verification; it does not by itself bypass the platform's app-association checks or give an app access to a user's passkey.
 
 [WebAuthn is restricted to secure contexts](https://www.w3.org/TR/webauthn-3/#sctn-api). Serve registration, authentication, and credential-management pages over HTTPS and protect them against script injection. Avoid cross-origin WebAuthn in embedded frames unless it is an intentional, reviewed design using the [required Permissions Policy and origin validation](https://www.w3.org/TR/webauthn-3/#sctn-iframe-guidance).
 
@@ -86,6 +86,10 @@ Generate a stable, opaque user handle that contains no username, email address, 
 Include the account's existing credential IDs in `excludeCredentials` when possible. This improves the user experience by discouraging duplicate registration, but the server must still enforce credential uniqueness.
 
 ### Verify the Registration Response
+
+The following diagram summarizes the key checks and which party performs them.
+
+![Registration ceremony sequence diagram](../assets/Passkey_Security_Cheat_Sheet_Registration_Ceremony.png)
 
 Follow the WebAuthn [registration verification procedure](https://www.w3.org/TR/webauthn-3/#sctn-registering-a-new-credential) through the selected library. At minimum, ensure that the server verifies:
 
@@ -127,6 +131,10 @@ For username-less authentication, omit `allowCredentials` and use discoverable c
 Conditional mediation can improve passkey discovery and coexist with password fields. Treat it as another way to start the same authentication ceremony, not as a different verification policy.
 
 ### Verify the Authentication Response
+
+The following diagram summarizes the key checks and which party performs them.
+
+![Authentication ceremony sequence diagram](../assets/Passkey_Security_Cheat_Sheet_Authentication_Ceremony.png)
 
 Follow the WebAuthn [assertion verification procedure](https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion) through the selected library. At minimum, ensure that the server verifies:
 
@@ -234,9 +242,6 @@ Use this checklist together with the W3C [registration](https://www.w3.org/TR/we
 
 ## References
 
-- [W3C Web Authentication Level 2](https://www.w3.org/TR/webauthn-2/)
 - [W3C Web Authentication Level 3](https://www.w3.org/TR/webauthn-3/)
 - [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html)
-- [NIST Supplemental Guidance for Syncable Authenticators](https://pages.nist.gov/800-63-4/sp800-63b/syncable/)
-- [Passkeys.dev Developer Resources](https://passkeys.dev/)
-- [MDN Web Authentication API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API)
+- [NIST SP 800-63B-4: Syncable Authenticators](https://pages.nist.gov/800-63-4/sp800-63b/syncable/)

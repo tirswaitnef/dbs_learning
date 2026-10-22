@@ -64,7 +64,7 @@ The following sequence diagram explains the steps above.
 - Match the expected amount, currency, and order ID.
 - Validate the authenticity of callbacks (e.g., HMAC signatures, secret tokens).
 - Implement idempotency: only process an order once regardless of how many times the callback is received.
-- Use a unique transaction ID with an expiry timestamp to mitigate callback replay attacks. Reject any callback with expired or reused transaction IDs.
+- Treat checkout expiry separately from webhook signature freshness. Gateways can [retry delivery](https://docs.stripe.com/webhooks#automatic-retries) or [send events out of order](https://docs.stripe.com/webhooks#event-ordering); verify late notifications and reconcile the current payment state instead of discarding them solely because the checkout expired. Use persistent duplicate-event records and idempotent fulfillment as described in the [Webhook Security Cheat Sheet](Webhook_Security_Cheat_Sheet.md#idempotency-and-duplicate-events).
 - Only server-to-server callbacks should be trusted for payment verification and order fulfillment.
 - Log all callback attempts for forensic analysis.
 
@@ -80,14 +80,14 @@ Even with proper validation and logic, monitoring is crucial for detecting abuse
     - Unexpected order statuses (e.g., "Paid" without any gateway confirmation).
     - Excessive callback attempts for the same order.
     - Payment failures followed by repeated attempts with identical data.
-- Store raw request data for callbacks to aid investigation.
+- Log callback identifiers, validation outcomes, and order correlation data instead of raw headers and bodies. Exclude credentials and unnecessary personal or payment data; apply the [Logging Cheat Sheet's data-exclusion guidance](Logging_Cheat_Sheet.md#data-to-exclude).
+- Do not retain sensitive authentication data, such as card verification codes or PIN data, after authorization, [even if encrypted](https://www.pcisecuritystandards.org/faqs/1154/). Restrict access to permitted investigation records and define their retention period.
 - Incorporate fraud and risk scoring mechanisms to detect carding attacks and other suspicious activities during payment execution.
 
 ---
 
 ## References
 
-- [OWASP Web Security Testing Guide – Business Logic Testing](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/10-Business_Logic_Testing/10-Test-Payment-Functionality)
-- [Idempotency in Payment APIs – Stripe Docs](https://stripe.com/docs/api/idempotent_requests)
-- [3rd Party Payment Gateway API integration](https://docs.konnect.network/docs/en/api-integration/intro)
-- [How to identify a carding attack](https://www.payway.com/blog/carding-explained-how-to-stop-a-silent-threat-to-your-business)
+- [OWASP WSTG: Payment Functionality](https://wstg.owasp.org/latest/4-Web_Application_Security_Testing/10-Business_Logic/10-Payment_Functionality/)
+- [Adyen: API idempotency](https://docs.adyen.com/development-resources/api-idempotency)
+- [Adyen: Verify HMAC signatures](https://docs.adyen.com/development-resources/webhooks/secure-webhooks/verify-hmac-signatures)

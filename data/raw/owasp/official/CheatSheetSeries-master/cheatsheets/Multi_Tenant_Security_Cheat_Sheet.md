@@ -10,6 +10,8 @@ This cheat sheet provides best practices to secure multi-tenant applications, en
 
 ## Key Risks
 
+Use the [Authorization Cheat Sheet](Authorization_Cheat_Sheet.md) for baseline access controls.
+
 - **Cross-Tenant Data Leakage**: Bugs or misconfigurations exposing one tenant's data to another.
 - **Tenant Impersonation**: Attackers gaining access to another tenant's context or resources.
 - **Broken Tenant Isolation**: Insufficient separation at database, cache, storage, or compute layers.
@@ -166,10 +168,10 @@ A normal `SET` persists until the session ends after its transaction commits, wh
 - Fail closed if the tenant context is missing or invalid; do not fall back to an unscoped query.
 - Commit or roll back before returning the connection to the pool.
 
+SQLAlchemy [deprecated `QueryEvents.before_compile`](https://docs.sqlalchemy.org/en/20/orm/events.html#sqlalchemy.orm.QueryEvents.before_compile) because it does not cover ORM-level attribute and relationship loads. The current [recommended pattern](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#sqlalchemy.orm.with_loader_criteria) combines `SessionEvents.do_orm_execute` with `with_loader_criteria` so criteria propagate to occurrences of the mapped entity, including eager and lazy relationship loads.
+
 <details>
 <summary>Application-Level Enforcement (Python/SQLAlchemy)</summary>
-
-SQLAlchemy [deprecated `QueryEvents.before_compile`](https://docs.sqlalchemy.org/en/20/orm/events.html#sqlalchemy.orm.QueryEvents.before_compile) because it does not cover ORM-level attribute and relationship loads. The current [recommended pattern](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#sqlalchemy.orm.with_loader_criteria) combines `SessionEvents.do_orm_execute` with `with_loader_criteria` so criteria propagate to occurrences of the mapped entity, including eager and lazy relationship loads.
 
 ```python
 from sqlalchemy import event, Column, String, text
@@ -685,6 +687,15 @@ class TenantFileStorage:
 - Maintain audit trail of provisioning/deprovisioning.
 - Provide tenant data export when contract, regulation, or product policy requires it.
 
+#### Tenant Backup Restore
+
+A shared backup can contain data from several tenants. For a single-tenant recovery from a shared database, restore into a separate resource and selectively recover the target tenant's data, as described in [Azure's multitenant storage guidance](https://learn.microsoft.com/en-us/azure/architecture/guide/multitenant/approaches/storage-data).
+
+- Authorize the operator for the target tenant and record the source backup, target, reason, and outcome.
+- Check tenant ownership before copying records or objects into the live tenant scope. Do not give a tenant operator access to a shared backup.
+- Reapply current access and retention rules; a backup can contain old memberships or data that should no longer be accessible.
+- Test a backup with two tenants: recover one tenant, verify the other tenant's records and objects are absent, and reject a restore request by an unauthorized actor.
+
 <details>
 <summary>Illustrative Tenant Lifecycle Management</summary>
 
@@ -1022,6 +1033,7 @@ class CrossTenantAccessMonitor:
 - Enforce tenant ownership at a boundary traversed by every tenant-owned access path.
 - Use separate encryption keys when the risk or compliance model requires cryptographic isolation.
 - Apply and verify the documented retention and deletion policy during offboarding.
+- Authorize and test tenant-scoped restores, especially when the source backup contains other tenants.
 - Monitor and alert on denied or unexpected cross-tenant access attempts.
 - For shared-table PostgreSQL RLS that uses a tenant setting, prefer transaction-local context and re-establish it for each transaction.
 - For shared-table PostgreSQL RLS, inventory classified tenant-owned tables and test cross-tenant denial for each one.
@@ -1039,17 +1051,13 @@ class CrossTenantAccessMonitor:
 - Treat a tenant identifier in a queued message as authorization proof without authenticating the producer path and authorizing the consumer operation.
 - Allow one tenant unbounded consumption of a shared queue, worker pool, connection pool, or other resource that can degrade other tenants.
 - Retain tenant data beyond the documented retention policy without a contractual or legal basis and appropriate access restrictions.
+- Restore a shared snapshot over live data to recover only one tenant.
 - Log sensitive tenant data in plain text.
 - Serve ordinary tenant-scoped PostgreSQL RLS request paths with a superuser or `BYPASSRLS` role.
 - Use a session-scoped database tenant setting across pooled requests without reliable reset-on-checkout or equivalent isolation and connection-reuse tests; prefer transaction-local settings.
 
 ## References
 
-- [OWASP Cloud Tenant Isolation](https://owasp.org/www-project-cloud-tenant-isolation/)
-- [OWASP Authorization Cheat Sheet](Authorization_Cheat_Sheet.md)
-- [AWS SaaS Tenant Isolation Strategies](https://docs.aws.amazon.com/wellarchitected/latest/saas-lens/tenant-isolation.html)
-- [AWS SaaS Performance Efficiency Guidance](https://docs.aws.amazon.com/wellarchitected/latest/saas-lens/pe-selection.html)
-- [Microsoft Multitenant Messaging Guidance](https://learn.microsoft.com/en-us/azure/architecture/guide/multitenant/approaches/messaging)
-- [PostgreSQL Row Security Policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
-- [PostgreSQL SET](https://www.postgresql.org/docs/current/sql-set.html)
-- [SQLAlchemy ORM Query Events](https://docs.sqlalchemy.org/en/20/orm/queryguide/api.html#sqlalchemy.orm.with_loader_criteria)
+- [AWS SaaS Lens: Tenant Isolation](https://docs.aws.amazon.com/wellarchitected/latest/saas-lens/tenant-isolation.html)
+- [PostgreSQL: Row Security Policies](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)
+- [Microsoft: Messaging in Multitenant Solutions](https://learn.microsoft.com/en-us/azure/architecture/guide/multitenant/approaches/messaging)

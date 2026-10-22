@@ -168,7 +168,7 @@ No IdP should use SHA-1 as the certificate signing hash. SHA-256 is the minimum 
 
 ##### Certificate Lifetime
 
-Certificates contain a NotBefore and NotOnorAfter attribute. Most IdPs ignore these in favor of guaranteeing uptime if certificate rotation does not happen on time. The SAML certificate lifetime should be handled well enough that ignoring these is not needed. Ignoring the certificate's validity period is fundamentally a bad idea. While [NIST SP 800-57 (Part 1, Rev. 5)](https://csrc.nist.gov/pubs/sp/800/57/pt1/r5/final) allows RSA 2048 bit keys to last for 3 years, the maximum lifetime of a SAML signing certificate should be two years. If the private key is not well protected, such as in a Hardware Security Module (HSM), that may be too long to be safe.
+X.509 certificates contain [`notBefore` and `notAfter` validity dates](https://www.rfc-editor.org/rfc/rfc5280.html#section-4.1.2.5). Plan certificate replacement before expiry rather than ignoring the validity period. Choose the signing key's usage period based on its protection, use, and threat model; see [Cryptoperiods and Rotation](Key_Management_Cheat_Sheet.md#cryptoperiods-and-rotation). [NIST SP 800-57 Part 1 Rev. 5, Section 5.3.4](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-57pt1r5.pdf#page=50) distinguishes certificate validity from key usage periods: renewing a certificate with the same public key does not rotate the private key or restart its usage period.
 
 ##### Extended Key Usage (EKU) and Key Usage (KU)
 
@@ -210,7 +210,7 @@ As most IdPs and SPs treat the X.509 certificates as an explicit trust, private 
 
 Trusting third-party CAs, if done improperly, could result in unintended over-trust, for things such as TLS and code signing. If you choose to trust third-party CAs, make sure they are only trusted for the process of IdP signature validation.
 
-If third-party CAs are used they still should not issue SAML signing certificates where the lifetime of the certificate exceeds that of the underlying key pair, based on guidance from a standards organization such as [NIST, NSA, etc.](https://www.keylength.com/en/). If using the strongest private key types, this puts the upper limit at two years.
+Private CA-issued signing certificates must not extend beyond the signing key's approved usage period. Apply the [same lifetime and rotation policy](#certificate-lifetime) to CA-issued and self-signed signing certificates.
 
 ##### Self-Signed
 
@@ -283,7 +283,7 @@ SAML Signing keys are a top security asset and [target of attackers](https://www
 - Validate NotBefore and NotOnorAfter
 - Validate Recipient attribute, `InResponseTo`, and `<saml:SubjectConfirmationData>` (`Recipient`, `NotOnOrAfter`, `InResponseTo`)
 - Explicitly verify the signature algorithm is at least RSA-SHA-256 (or stronger). Reject SHA-1-based algorithms (`http://www.w3.org/2000/09/xmldsig#rsa-sha1`, `...#hmac-sha1`) and `<ds:DigestMethod Algorithm="...sha1">`. NIST SP 800-131A Rev. 2 disallows SHA-1 in digital signatures.
-- Verify the `<ds:Reference URI>` in the XML signature covers the `<saml:Assertion>` element being trusted. This mitigates [XML Signature Wrapping](https://arxiv.org/pdf/1401.7483v1.pdf) attacks.
+- Verify that the XML signature's `<ds:Reference URI>` resolves to the signed Assertion or Response, and that the exact assertion used for authentication is protected by that validated signature. [SAML Core sections 5.3 and 5.4](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf) define signature inheritance and references; [approved errata E93](https://docs.oasis-open.org/security/saml/v2.0/errata05/os/saml-v2.0-errata05-os.html#__RefHeading__10669_188893729) permits Response signatures in the browser SSO profile. Reject assertions outside the validated signed content and follow the [signature-wrapping defenses](#validate-signatures).
 - Define criteria for SAML logout
 - Exchange assertions only over secure transports like TLS
 - Define criteria for session management
@@ -301,3 +301,9 @@ Solutions relying cryptographic algorithms need to follow the latest development
 
 - Ensure all SAML elements in the chain use [strong encryption](Cryptographic_Storage_Cheat_Sheet.md#algorithms)
 - Consider deprecating support for [insecure XMLEnc algorithms](https://www.w3.org/TR/xmlenc-core1/#sec-RSA-1_5)
+
+## References
+
+- [OASIS: Security and Privacy Considerations for SAML 2.0](https://docs.oasis-open.org/security/saml/v2.0/saml-sec-consider-2.0-os.pdf)
+- [OASIS: Assertions and Protocols for SAML 2.0](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)
+- [OASIS: Profiles for SAML 2.0](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)

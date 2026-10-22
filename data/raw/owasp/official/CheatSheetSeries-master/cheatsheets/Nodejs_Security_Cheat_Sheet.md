@@ -23,121 +23,6 @@ There are several recommendations to enhance security of your Node.js applicatio
 
 ### Application Security
 
-#### Use flat Promise chains
-
-Asynchronous callback functions are one of the strongest features of Node.js. However, increasing layers of nesting within callback functions can become a problem. Any multistage process can become nested 10 or more levels deep. This problem is referred to as a "Pyramid of Doom" or "Callback Hell". In such code, the errors and results get lost within the callback. Promises are a good way to write asynchronous code without getting into nested pyramids. Promises provide top-down execution while being asynchronous by delivering errors and results to next `.then` function.
-
-Another advantage of Promises is the way Promises handle errors. If an error occurs in a Promise class, it skips over the `.then` functions and invokes the first `.catch` function it finds. This way Promises provide a higher assurance of capturing and handling errors. As a principle, you can make all your asynchronous code (apart from emitters) return promises. It should be noted that Promise calls can also become a pyramid. In order to completely stay away from "Callback Hell", flat Promise chains should be used. If the module you are using does not support Promises, you can convert base object to a Promise by using `Promise.promisifyAll()` function.
-
-The following code snippet is an example of "Callback Hell":
-
-```JavaScript
-function func1(name, callback) {
-  // operations that takes a bit of time and then calls the callback
-}
-function func2(name, callback) {
-  // operations that takes a bit of time and then calls the callback
-}
-function func3(name, callback) {
-  // operations that takes a bit of time and then calls the callback
-}
-function func4(name, callback) {
-  // operations that takes a bit of time and then calls the callback
-}
-
-func1("input1", function(err, result1){
-   if(err){
-      // error operations
-   }
-   else {
-      //some operations
-      func2("input2", function(err, result2){
-         if(err){
-            //error operations
-         }
-         else{
-            //some operations
-            func3("input3", function(err, result3){
-               if(err){
-                  //error operations
-               }
-               else{
-                  // some operations
-                  func4("input 4", function(err, result4){
-                     if(err){
-                        // error operations
-                     }
-                     else {
-                        // some operations
-                     }
-                  });
-               }
-            });
-         }
-      });
-   }
-});
-```
-
-The above code can be securely written as follows using a flat Promise chain:
-
-```JavaScript
-function func1(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-function func2(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-function func3(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-function func4(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-
-func1("input1")
-   .then(function (result){
-      return func2("input2");
-   })
-   .then(function (result){
-      return func3("input3");
-   })
-   .then(function (result){
-      return func4("input4");
-   })
-   .catch(function (error) {
-      // error operations
-   });
-```
-
-And using async/await:
-
-```JavaScript
-async function func1(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-async function func2(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-async function func3(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-async function func4(name) {
-  // operations that takes a bit of time and then resolves the promise
-}
-
-(async() => {
-  try {
-    let res1 = await func1("input1");
-    let res2 = await func2("input2");
-    let res3 = await func3("input2");
-    let res4 = await func4("input2");
-  } catch(err) {
-    // error operations
-  }
-})();
-```
-
 #### Set request size limits
 
 Buffering and parsing of request bodies can be a resource intensive task. If there is no limit on the size of requests, attackers can send requests with large request bodies that can exhaust server memory and/or fill disk space. You can limit the request body size for all requests using [raw-body](https://www.npmjs.com/package/raw-body).
@@ -226,7 +111,7 @@ JavaScript is a dynamic language and depending on how the framework parses a URL
 
 #### Perform output escaping
 
-In addition to input validation, you should escape all HTML and JavaScript content shown to users via application in order to prevent cross-site scripting (XSS) attacks. For context-aware escaping, use [escape-html](https://github.com/component/escape-html). When you need to render user-supplied HTML (rather than escape it), use a maintained sanitizer such as [DOMPurify](https://github.com/cure53/DOMPurify) (with `jsdom` for server-side use) or [`sanitize-html`](https://www.npmjs.com/package/sanitize-html). Avoid `node-esapi`, which is no longer actively maintained.
+Use output encoding that matches the destination context to prevent cross-site scripting (XSS). [escape-html](https://github.com/component/escape-html#escapehtmlstring) supports ordinary HTML text and quoted ordinary-text attribute values; it does not safely encode JavaScript, CSS, or URL contexts. Follow the [XSS Prevention Cheat Sheet](Cross_Site_Scripting_Prevention_Cheat_Sheet.md#output-encoding) for context-specific controls. When you need to render user-supplied HTML (rather than escape it), use a maintained sanitizer such as [DOMPurify](https://github.com/cure53/DOMPurify) (with `jsdom` for server-side use) or [`sanitize-html`](https://www.npmjs.com/package/sanitize-html). Avoid `node-esapi`, which is no longer actively maintained.
 
 #### Perform application activity logging
 
@@ -598,7 +483,7 @@ There are several other tools you can use to check your dependencies. A more com
 
 There are some JavaScript functions that are dangerous and should only be used where necessary or unavoidable. The first example is the `eval()` function. This function takes a string argument and executes it as any other JavaScript source code. Combined with user input, this behavior inherently leads to remote code execution vulnerability. Similarly, calls to `child_process.exec` are also very dangerous. This function acts as a bash interpreter and sends its arguments to /bin/sh. By injecting input to this function, attackers can execute arbitrary commands on the server.
 
-In addition to these functions, some modules require special care when being used. As an example, `fs` module handles filesystem operations. However, if improperly sanitized user input is fed into this module, your application may become vulnerable to file inclusion and directory traversal vulnerabilities. Similarly, `vm` module provides APIs for compiling and running code within V8 Virtual Machine contexts. Since it can perform dangerous actions by nature, it should be used within a sandbox.
+In addition to these functions, some modules require special care when being used. As an example, `fs` module handles filesystem operations. However, if improperly sanitized user input is fed into this module, your application may become vulnerable to file inclusion and directory traversal vulnerabilities. The [`node:vm` module](https://nodejs.org/api/vm.html) compiles and runs code in V8 contexts, but it is not a security mechanism. Do not use it to execute untrusted code.
 
 It would not be fair to say that these functions and modules should not be used whatsoever, however, they should be used carefully especially when they use with user input. Also, there are [some other functions](https://github.com/wisec/domxsswiki/wiki/Direct-Execution-Sinks) that may render your application vulnerable.
 
@@ -640,6 +525,8 @@ function func() {
 
 This list mainly focuses on issues that are common in Node.js applications, with recommendations and examples. In addition to these, there are general [security by design principles](https://wiki.owasp.org/index.php/Security_by_Design_Principles) that apply to web applications regardless of technologies used in application server. You should also keep those principles in mind while developing your applications. You can always refer to [OWASP Cheat Sheet Series](https://cheatsheetseries.owasp.org/) to learn more about web application vulnerabilities and mitigation techniques used against them.
 
-## Additional resources about Node.js security
+## References
 
-[Awesome Node.js Security resources](https://github.com/lirantal/awesome-nodejs-security)
+- [Node.js Security Best Practices](https://nodejs.org/learn/getting-started/security-best-practices)
+- [Node.js Permissions](https://nodejs.org/api/permissions.html)
+- [Express: Production Security Best Practices](https://expressjs.com/en/advanced/best-practice-security/)

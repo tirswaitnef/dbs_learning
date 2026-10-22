@@ -53,7 +53,7 @@ protected $middlewareGroups = [
 'http_only' => true,
 ```
 
-- Unless you are using sub-domain route registrations in your Laravel application, it is recommended to set the cookie `domain` attribute to null so that only the same origin (excluding subdomains) can set the cookie. This can be configured in your `config/session.php` file:
+- Unless cookies must be shared with subdomains, set `domain` to `null` in `config/session.php` to omit the Domain attribute. This restricts [where the browser sends that cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#domaindomain-value) to the setting host; it does not prevent sibling subdomains from setting same-name parent-domain cookies. For stronger protection against these cookie collisions, use a [`__Host-` session cookie](Session_Management_Cheat_Sheet.md#cookie-name-prefixes) with `Secure`, `Path=/`, and no Domain attribute on supporting browsers:
 
 ```php
 'domain' => null,
@@ -253,7 +253,7 @@ Since the column name is dictated by user input, it is similar to column name SQ
 
 [XSS attacks](https://owasp.org/www-community/attacks/xss/) are injection attacks where malicious scripts (such as JavaScript code snippets) are injected into trusted websites.
 
-Laravel's [Blade templating engine](https://laravel.com/docs/blade) has echo statements `{{ }}` that automatically escape variables using the `htmlspecialchars` PHP function to protect against XSS attacks.
+Laravel's [Blade echo statements](https://laravel.com/framework/docs/blade#displaying-data) `{{ }}` HTML-escape ordinary string values using `htmlspecialchars`. This is appropriate for HTML text and quoted ordinary text attributes, but does not validate URL schemes or encode JavaScript or CSS contexts.
 
 Laravel also offers displaying unescaped data using the unescaped syntax `{!! !!}`. This must not be used on any untrusted data, otherwise your application will be subject to an XSS attack.
 
@@ -263,13 +263,13 @@ For instance, if you have something like this in any of your Blade templates, it
 {!! request()->input('somedata') !!}
 ```
 
-This, however, is safe to do:
+For example, render untrusted text inside an ordinary HTML element:
 
 ```blade
-{{ request()->input('somedata') }}
+<span>{{ request()->input('somedata') }}</span>
 ```
 
-For other information on XSS prevention that is not specific to Laravel, you may refer the [Cross Site Scripting Prevention Cheatsheet](Cross_Site_Scripting_Prevention_Cheat_Sheet.md).
+For data embedded in JavaScript, follow Laravel's [`Js::from` guidance](https://laravel.com/framework/docs/blade#rendering-json). For URLs, CSS, and other output contexts, follow the [Cross Site Scripting Prevention Cheat Sheet](Cross_Site_Scripting_Prevention_Cheat_Sheet.md).
 
 ## Unrestricted File Uploads
 
@@ -277,11 +277,11 @@ Unrestricted file upload attacks entail attackers uploading malicious files to c
 
 ### Always Validate File Type and Size
 
-Always validate the file type (extension or MIME type) and file size to avoid storage DOS attacks and remote code execution:
+Validate allowed file types and impose a maximum file size as one layer of protection. This illustrative rule uses [`max`](https://laravel.com/framework/docs/12.x/validation#rule-max) to cap the file size rather than requiring an exact size:
 
 ```php
 $request->validate([
-    'photo' => 'file|size:100|mimes:jpg,bmp,png'
+    'photo' => 'file|max:100|mimes:jpg,bmp,png'
 ]);
 ```
 
@@ -289,7 +289,7 @@ Storage DOS attacks exploit missing file size validations and upload massive fil
 
 Remote code execution attacks entail first, uploading malicious executable files (such as PHP files) and then, triggering their malicious code by visiting the file URL (if public).
 
-Both these attacks can be avoided by simple file validations as mentioned above.
+These validations alone do not prevent either attack. Laravel's [`mimes` rule](https://laravel.com/framework/docs/12.x/validation#rule-mimes) infers type from content; it does not validate the user-supplied extension or make the file safe to execute. Generate stored filenames, keep uploads outside the webroot or on a separate host, and ensure uploaded files cannot be executed by the server. Bound aggregate storage and upload frequency as well as individual file size. Follow the [File Upload Cheat Sheet](File_Upload_Cheat_Sheet.md#file-upload-protection) for the remaining controls.
 
 ### Do Not Rely On User Input To Dictate Filenames or Path
 
@@ -410,7 +410,9 @@ public function verifyDomain(Request $request)
 }
 ```
 
-The above code is vulnerable as the user data is not escaped properly. To do so, you may use the `escapeshellcmd` and/or `escapeshellarg` PHP functions.
+Avoid invoking operating-system commands when a PHP library can perform the operation. If a process is required, keep the executable fixed and pass arguments separately using [Symfony Process with an argument array](https://symfony.com/doc/current/components/process.html#using-features-from-the-os-shell). Validate the domain against the expected format before passing it to `whois`; argument separation does not stop a value from being interpreted as a command option. See [Argument Injection](OS_Command_Injection_Defense_Cheat_Sheet.md#argument-injection) for this remaining risk.
+
+Do not use [`escapeshellcmd()`](https://www.php.net/manual/en/function.escapeshellcmd.php) as a substitute for separating arguments: it still permits extra arguments. If shell invocation is unavoidable, [`escapeshellarg()`](https://www.php.net/manual/en/function.escapeshellarg.php) escapes a single argument, but you must still validate its meaning to the called program.
 
 ## Other Injections
 

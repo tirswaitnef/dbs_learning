@@ -2,30 +2,30 @@
 
 ## Introduction
 
-AI agents are initiating regulated financial transactions in production. Mastercard Agent Pay, Visa Intelligent Commerce, and Google A2A payments are live. Every agent-initiated payment carries the same Bank Secrecy Act (BSA), Anti-Money Laundering (AML), and sanctions screening obligations as human-initiated payments.
+AI agents are initiating regulated financial transactions in production. Mastercard Agent Pay, Visa Intelligent Commerce, and Google A2A payments are live. Using an AI agent does not remove applicable Anti-Money Laundering (AML) or sanctions obligations. Determine the requirements for the institution, transaction, customer relationship, and jurisdiction before implementing the controls below.
 
 This cheat sheet provides practical controls for fintechs, banks, and payment processors when autonomous AI agents -- rather than human users in browser sessions -- initiate or facilitate regulated payments. It covers agent identity verification, entity screening, audit trail requirements, and fail-closed enforcement.
 
-The controls described here are complementary to the [OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html) and build on the cryptographic identity and signing controls defined in Section 7 of that document.
+Use the [MCP authentication and authorization guidance](MCP_Security_Cheat_Sheet.md#6-authentication-authorization-transport-security) when exposing screening tools through MCP. Message-level signing is an [optional additional control](MCP_Security_Cheat_Sheet.md#7-optional-message-level-integrity), not a core MCP requirement. The signed-audit and receipt design in Sections 4 and 8-10 is one option for systems that need verification beyond a transport connection.
 
 ## Regulatory Context
 
-Agent-initiated payments are subject to the same regulatory framework as human-initiated payments. Key regulations include:
+The applicable obligations depend on the institution's regulated role, the transaction, and the jurisdictions involved. Have compliance owners identify the requirements the payment service must enforce:
 
-- **Bank Secrecy Act (BSA)**: Requires financial institutions to maintain effective AML programs, including customer identification, transaction monitoring, and suspicious activity reporting. The [Bank Secrecy Act](https://www.fincen.gov/index.php/resources/statutes-and-regulations/bank-secrecy-act) does not distinguish between human-initiated and agent-initiated transactions.
-- **OFAC Sanctions**: The Office of Foreign Assets Control requires all US persons and entities to screen transactions against the Specially Designated Nationals (SDN) list and other sanctions lists. Screening obligations apply regardless of whether the transaction was initiated by a human or an agent.
-- **FinCEN Requirements**: [FinCEN](https://www.fincen.gov/) rules require Customer Identification Programs (CIP), Customer Due Diligence (CDD), and Suspicious Activity Reports (SARs). When an agent acts on behalf of a customer, the institution must be able to identify both the customer and the agent.
-- **UK Financial Sanctions (OFSI)**: HM Treasury's Office of Financial Sanctions Implementation maintains the [UK Consolidated Sanctions List](https://www.gov.uk/government/publications/financial-sanctions-consolidated-list-of-targets). Screening is mandatory for all financial transactions regardless of initiation method.
-- **EU Sanctions**: The [EU Consolidated Sanctions List](https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions) applies to all transactions processed through EU-regulated entities. Agent-initiated transactions are not exempt.
-- **OCC BSA/AML Exam Procedures**: [OCC examiners](https://www.occ.treas.gov/topics/supervision-and-examination/bsa/index-bsa.html) assess whether institutions have controls to identify the originator of each transaction. When agents initiate transactions, the institution must demonstrate that agent identity was verified and the transaction was screened.
+- **Bank Secrecy Act (BSA)**: US [BSA regulations](https://www.fincen.gov/resources/statutes-and-regulations/bank-secrecy-act) establish recordkeeping, reporting, and other requirements for covered financial institutions and businesses. Determine which requirements apply to the service's activities.
+- **Office of Foreign Assets Control (OFAC) Sanctions**: Comply with applicable sanctions prohibitions and blocking requirements. Screening supports those controls, but [OFAC does not impose a general requirement to scan names or use screening software](https://ofac.treasury.gov/faqs/43). Complete the necessary analysis before concluding a transaction.
+- **Financial Crimes Enforcement Network (FinCEN)**: Apply Customer Identification Program (CIP) and Customer Due Diligence (CDD) requirements to the relevant customers and beneficial owners under the institution's applicable rules and exceptions. The [CDD rule covers specified types of financial institutions](https://www.fincen.gov/resources/statutes-and-regulations/cdd-final-rule); authenticating software does not identify the legal customer. [CIP guidance distinguishes an account owner from a person merely acting as that owner's agent](https://www.fincen.gov/resources/statutes-regulations/guidance/interagency-interpretive-guidance-customer-identification).
+- **UK Financial Sanctions**: The Office of Financial Sanctions Implementation (OFSI) provides guidance on applying the sanctions requirements relevant to the parties and activities. [OFSI assesses whether due diligence is appropriate to the sanctions risk and transaction](https://www.gov.uk/government/publications/financial-sanctions-enforcement-and-monetary-penalties-guidance/financial-sanctions-enforcement-and-monetary-penalties-guidance#due-diligence); it does not prescribe one level or type of due diligence for every case.
+- **EU Sanctions**: Identify the applicable sanctions regimes and legal acts. The [European Commission's sanctions resources](https://finance.ec.europa.eu/eu-and-world/sanctions-restrictive-measures/overview-sanctions-and-related-resources_en) distinguish the consolidated list of designated parties from the legal acts governing sanctions; a list check alone does not establish compliance with every restriction.
+- **Funds-Transfer Recordkeeping**: Follow the requirements applicable to the institution's role and payment type. The [FFIEC examination manual](https://bsaaml.ffiec.gov/manual/AssessingComplianceWithBSARegulatoryRequirements/09) describes thresholds, exceptions, and required originator and beneficiary information; it does not establish a universal requirement for a cryptographic software-agent identity.
 
 ### Key Principle
 
-Regulators do not care whether a transaction was initiated by a human clicking a button or an agent calling an API. The compliance obligations are identical. The burden is on the institution to prove that screening occurred, that the agent was authorized, and that the results are tamper-evident.
+Separate legal customer and counterparty identification from software authentication and authorization. Record which customer an agent acts for and what it may do as an application security control. Have compliance owners define the required screening, monitoring, reporting, and retention rules; do not treat an agent credential or a successful list match check as proof that all legal obligations are satisfied.
 
 ## Section 1: Agent Identity Before Screening
 
-Before an agent is permitted to access sanctions screening services or initiate a payment, its identity must be cryptographically verified. Self-declared identity headers (e.g. `X-Agent-ID`, `X-Agent-Role`) without cryptographic proof MUST be rejected. The message-level identity primitives in [Section 7 of the OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html#7-message-level-integrity-and-replay-defence) apply directly to the agent-payment context.
+Before an agent is permitted to access sanctions screening services or initiate a payment, its identity must be cryptographically verified. Self-declared identity headers (e.g. `X-Agent-ID`, `X-Agent-Role`) without cryptographic proof MUST be rejected. For protected MCP endpoints, follow the [MCP authorization profile](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization) and validate authorization on every request.
 
 ### Do
 
@@ -38,12 +38,12 @@ Before an agent is permitted to access sanctions screening services or initiate 
 
 - Accept self-declared identity claims without cryptographic verification.
 - Allow agents to access screening endpoints without authentication.
-- Trust transport-layer identity (TLS client certificates at a load balancer) as the sole proof of agent identity. Message-level identity binding is required.
+- Trust caller-supplied identity headers merely because TLS terminates at a proxy. If forwarding a validated client-certificate identity, [accept it only over a trusted proxy path and remove caller-supplied certificate headers](https://www.rfc-editor.org/rfc/rfc9440.html#section-4).
 - Allow agents to escalate their own trust level or modify their own permissions.
 
 ## Section 2: Entity Screening
 
-Entity screening against global sanctions lists (OFAC SDN, UK HMT, EU Consolidated, UN Consolidated) remains fundamentally unchanged when agents are the callers. The screening engine matches names, addresses, vessels, and identifiers against the lists. What changes is the context around the screening request. The authoritative source for the United States is the [OFAC Sanctions List Search](https://sanctionssearch.ofac.treas.gov/).
+Entity screening against global sanctions lists (OFAC SDN, UK Sanctions List, EU Consolidated, UN Consolidated) remains fundamentally unchanged when agents are the callers. The screening engine matches names, addresses, vessels, and identifiers against the lists. What changes is the context around the screening request. The authoritative source for the United States is the [OFAC Sanctions List Search](https://sanctionssearch.ofac.treas.gov/).
 
 ### Do
 
@@ -56,18 +56,18 @@ Entity screening against global sanctions lists (OFAC SDN, UK HMT, EU Consolidat
 ### Don't
 
 - Allow agents to bypass screening by calling payment endpoints directly without a prior screening step.
-- Return screening results without signing them. Unsigned results can be tampered with in transit, allowing a compromised intermediary to change a "match" to "no match."
+- Accept unsigned or invalidly signed results when the chosen message-signing profile requires signatures. TLS protects the connection, but does not prevent a compromised component from changing data after termination.
 - Allow agents to cache screening results beyond a configurable time window. Sanctions lists are updated frequently and stale results create compliance gaps.
 - Expose raw sanctions list data to agents. Agents should call a screening API, not download the full list.
 
 ## Section 3: Agent Operator Screening
 
-The agent itself is software. But the agent has an operator -- the developer, company, or deployer that built and runs it. The agent's operator must also be screened against sanctions lists. The framework for verifying the underlying entity follows the [FinCEN Customer Due Diligence Requirements](https://www.fincen.gov/resources/statutes-regulations/federal-register-notices/customer-due-diligence-requirements) applied to the operator as the regulated counterparty behind the agent.
+Identify the customer and organization responsible for operating the agent. Determine which parties require sanctions screening and due diligence under the institution's approved compliance program. Do not assume that every developer, deployer, or operator is the legal customer merely because it provides the software; [FinCEN's CIP guidance](https://www.fincen.gov/resources/statutes-regulations/guidance/interagency-interpretive-guidance-customer-identification) makes customer identification depend on the account relationship. Bind the authenticated agent to the verified account and its delegated permissions as an application security control.
 
 ### Do
 
-- Screen the agent's declared operator (organization name, jurisdiction, registration number) against sanctions lists during agent onboarding.
-- Re-screen agent operators periodically (at minimum when sanctions lists are updated) and revoke agent access if the operator becomes sanctioned.
+- Verify the organization responsible for the agent during onboarding and screen the parties identified by the institution's compliance program against applicable sanctions lists.
+- Define rescreening triggers and frequency in the compliance program, including relevant list and ownership changes; restrict agent access when the required assessment does not permit the relationship to continue.
 - Record the operator's screening status as part of the agent's trust profile.
 - Require agents to declare their operator identity as part of their cryptographic passport or identity credential.
 
@@ -79,7 +79,7 @@ The agent itself is software. But the agent has an operator -- the developer, co
 
 ## Section 4: Signed Audit Trail
 
-Every screening interaction must produce a tamper-evident audit record that a compliance officer or regulator can verify. When agents perform screening, the audit trail must cryptographically bind the agent's identity to the screening request and result. The hash-chained, ECDSA-signed audit-entry pattern used in this section is specified in detail in the [IETF Internet-Draft draft-sharif-mcps-secure-mcp](https://datatracker.ietf.org/doc/draft-sharif-mcps-secure-mcp/).
+Keep tamper-evident audit records that associate the authenticated agent with the screening request and result. The following bullets describe an optional signed, hash-chained audit design. The [MCPS Internet-Draft](https://datatracker.ietf.org/doc/draft-sharif-mcps-secure-mcp/) separately proposes a message-signing and replay-protection layer; it is an individual work in progress, not an adopted MCP standard. Select a reviewed, interoperable profile when this protection is needed, and apply the [log-protection controls](Logging_Cheat_Sheet.md#protection) regardless of the chosen design.
 
 ### Do
 
@@ -99,15 +99,16 @@ Every screening interaction must produce a tamper-evident audit record that a co
 
 ## Section 5: Fail-Closed Enforcement
 
-When screening fails -- due to a timeout, service outage, malformed response, or any other error -- the system MUST deny the transaction. Silent pass-through on screening failure is a compliance violation. The fail-closed posture is consistent with the AC-4 information-flow-enforcement and AU-12 audit-record-generation control families defined in [NIST SP 800-53 Revision 5](https://csrc.nist.gov/pubs/sp/800/53/r5/final).
+Treat an incomplete or unavailable screening result as unresolved, never as clearance. Withhold transaction execution while the required assessment is unresolved; use bounded retries, manual review, or rejection according to the institution's approved policy. [OFAC advises financial institutions not to conclude transactions before the necessary analysis is complete](https://ofac.treasury.gov/faqs/43). A service failure is not itself a confirmed sanctions match; compliance owners must define the appropriate response for each case.
 
 ### Do
 
-- Deny the payment or transaction if screening cannot be completed successfully.
+- Hold or reject the payment when required screening cannot be completed; do not release it unless the required assessment permits proceeding.
 - Return a clear, structured error to the agent indicating that screening failed and the transaction cannot proceed.
 - Log all screening failures with the same level of detail as successful screens, including the reason for failure.
 - Alert compliance teams when screening failure rates exceed a threshold, as this may indicate a denial-of-service attack designed to force fail-open behavior.
 - Implement circuit breakers that halt agent-initiated payments entirely if the screening service is unavailable for an extended period.
+- When an agent-initiated payment requires human approval, [have the approver identify and acknowledge significant transaction data](Transaction_Authorization_Cheat_Sheet.md#11-transaction-authorization-method-has-to-allow-a-user-to-identify-and-acknowledge-significant-transaction-data) before execution.
 
 ### Don't
 
@@ -154,42 +155,42 @@ Institutions must decide whether to run their own screening engine or use a host
 ### Do
 
 - Encrypt all screening requests in transit (TLS 1.2 minimum) regardless of architecture.
-- Sign screening requests at the message level (not just transport level) to ensure integrity through intermediaries, CDNs, or proxies.
-- Verify the screening provider's response signatures if using a hosted service.
+- If the threat model requires verification across untrusted intermediaries, use a reviewed message-signing profile supported by both endpoints; define trusted keys, signed fields, replay handling, and verification failures.
+- Verify the screening provider's response signatures when the agreed profile requires them.
 
 ### Don't
 
 - Send agent private keys or full identity credentials to a third-party screening provider. Send only the minimum identity attributes needed.
-- Assume that TLS alone provides sufficient integrity. After TLS termination at a load balancer or CDN, the plaintext request is visible to downstream components.
+- Assume TLS protects data after the connection terminates. Protect each subsequent connection and decide which intermediaries are trusted to read or modify requests.
 
 ## Section 8: Receipt Canonicalization (RFC 8785 / JCS)
 
-A compliance receipt is only verifiable across systems if every party serializes it to the **exact same bytes** before signing and verifying. JSON permits variable key order, whitespace, and number formatting, so two systems can produce different byte streams for the *same* logical receipt, and a signature over one will fail against the other.
+When systems independently serialize the same JSON object for hashing or signature verification, they need an agreed byte representation. JSON permits variable key order, whitespace, and number formatting, so two systems can produce different bytes for the same logical object.
 
-Use the **JSON Canonicalization Scheme (JCS), [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)**, to produce a deterministic byte representation before hashing and signing. The signer canonicalizes, hashes (for example with SHA-256), then signs; every verifier canonicalizes the received receipt identically and checks the signature. This makes receipts verifiable by **any** counterparty, regulator, or downstream agent, not just the issuing system.
+[JSON Canonicalization Scheme (JCS), RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) provides one deterministic JSON representation for that use case. It is not required for every signed-token format: a [JSON Web Signature (JWS)](https://www.rfc-editor.org/rfc/rfc7515.html#section-5.2) verifier checks the encoded signing input rather than reserializing the payload. Cross-system verification also needs an agreed signature profile and a trusted verification key. Canonicalization alone supplies neither.
 
 ### Do
 
-- Canonicalize every receipt with RFC 8785 (JCS) before signing, and again before verifying.
-- Sign over the hash of the canonical bytes, not raw or pretty-printed JSON.
-- Record the canonicalization, hash, and signature algorithm in the receipt (for example `canon: jcs`, `alg: ecdsa-p256-sha256`) so any verifier can reproduce it.
+- If the receipt profile calls for independently serializing JSON, canonicalize the agreed payload before signing and before verification.
+- Use the hashing and signing procedure required by the chosen signature profile and API; do not add a separate prehash unless that profile requires it.
+- Record the canonicalization and signature profile used so a verifier can reproduce the signing input.
 
 ### Don't
 
-- Don't sign framework-default or pretty-printed JSON, because key order or whitespace differences break cross-system verification.
+- For a profile that requires reconstructing signed JSON, don't rely on framework-default or pretty-printed serialization; key order and whitespace can differ across systems.
 - Don't assume two services emit identical JSON for the same object; they usually will not.
 
 ## Section 9: Cross-Agent Payment Accountability
 
-Agent payments often traverse multiple agents (orchestrator to sub-agent to service). If the compliance receipt stays only with the issuing system, accountability is lost at the first hop. The signed receipt MUST **travel with the transaction** so every downstream party can independently verify who was screened, against which lists, and what was decided, without trusting an upstream agent's word.
+Agent payments can traverse multiple agents. When downstream services rely on a signed screening receipt, they must verify it using a key bound to a trusted screening issuer. [Digital signatures provide data-origin and integrity assurance](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf#page=18); they do not prove that the issuer performed screening correctly. The receipt records the issuer's assertions about the entities, lists, and decision, so the verifier still needs a policy for which screening issuers it trusts.
 
-Bind each receipt to the specific transaction (include the transaction or intent hash in the signed payload) and propagate it end-to-end. Each hop verifies the inbound receipt and, if it takes its own action, appends its own signed receipt, producing a verifiable chain of accountability across agents. Message-level integrity and replay defense for such receipts is covered in [Section 7 of the OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html#7-message-level-integrity-and-replay-defence).
+Bind each receipt to the specific transaction (include the transaction or intent hash in the signed payload) and propagate it end-to-end. Each hop verifies the inbound receipt and, if it takes its own action, appends its own signed receipt, producing a verifiable chain of accountability across agents. See [Optional Message-Level Integrity](MCP_Security_Cheat_Sheet.md#7-optional-message-level-integrity) for the additional threat model and profile requirements.
 
 ### Do
 
 - Attach the signed compliance receipt to the transaction and propagate it across every agent hop.
 - Bind each receipt to the transaction by signing over the transaction or intent hash.
-- At each hop, verify the inbound receipt before acting, and append a new signed receipt for any action taken.
+- At each hop, verify the signature, trusted issuer, transaction binding, and acceptable screening freshness before relying on the receipt; append a new signed receipt for any action taken.
 
 ### Don't
 
@@ -203,8 +204,9 @@ A receipt stating "screened, no match" is meaningless without which version of t
 ### Do
 
 - Include the sanctions-list source(s), version or publication date, and screening timestamp **inside the signed receipt**.
-- Define a maximum acceptable list age, record it in the receipt, and fail-closed if it is exceeded.
-- Make list freshness auditable after the fact from the receipt alone.
+- Bind each screening result and list version to the specific transaction or payment intent in the signed data, so a later verifier can distinguish it from another transaction.
+- Enforce the verifier's maximum acceptable list age and screening age; do not let an issuer-supplied age limit override that policy.
+- Retain evidence of the list version used and the screening service's update history. A signed timestamp or version protects the recorded assertion from alteration; it does not independently establish that the list was current or actually used.
 
 ### Don't
 
@@ -217,11 +219,11 @@ The controls in this cheat sheet map to common AML and sanctions obligations. Th
 
 | Control (this cheat sheet) | Maps to |
 | --- | --- |
-| Agent identity before screening (Section 1) | KYC/KYB attribution; FATF Recommendation 10 (Customer Due Diligence) |
-| Entity and operator screening (Sections 2-3) | OFAC, EU, UK, and UN sanctions screening; FATF Recommendation 6 |
+| Agent identity before screening (Section 1) | Technical attribution and authorization; does not replace applicable customer or beneficial-owner identification |
+| Entity and operator screening (Sections 2-3) | Screening parties identified by the applicable sanctions compliance program; not a universal legal duty to screen every software operator |
 | Signed audit trail and receipt (Sections 4, 8-10) | Recordkeeping; FATF Recommendation 11; multi-year retention (BSA, EU AMLD) |
-| Sanctions-list freshness in receipt (Section 10) | Obligation to screen against current lists; sanctions-evasion controls |
-| Fail-closed enforcement (Section 5) | Blocking obligations for sanctioned parties |
+| Sanctions-list freshness in receipt (Section 10) | Evidence of which list data supported the assessment; list screening alone does not establish compliance |
+| Fail-closed enforcement (Section 5) | Preventing execution while required checks are unresolved; distinguish this technical gate from legal blocking obligations for confirmed sanctions matches |
 | Trust-tiered limits (Section 6) | Risk-based approach (FATF Recommendation 1); monitoring thresholds |
 
 ### Do
@@ -239,13 +241,13 @@ The consolidated controls below align with the AI-system-specific verification r
 ### Do
 
 - Verify agent identity cryptographically before every screening request.
-- Sign every screening request and response with unique nonces and timestamps.
-- Screen both the counterparty entity and the agent's operator against sanctions lists.
-- Maintain a hash-chained, tamper-evident audit trail of every screening interaction.
-- Fail closed on any screening error, timeout, or ambiguous result.
+- When using a message-signing profile, sign and verify screening requests and responses and enforce its replay controls.
+- Screen counterparties and relevant operator entities as defined by the institution's applicable compliance program.
+- Protect screening audit records against unauthorized changes and deletion; use hash chaining when the chosen audit design requires it.
+- Withhold transaction execution on a screening error, timeout, or ambiguous result until the required assessment permits proceeding.
 - Rate limit based on cryptographic agent identity, not IP address.
 - Apply graduated trust levels with different access rights and rate limits.
-- Re-screen agent operators periodically as sanctions lists are updated.
+- Re-screen relevant parties according to the compliance program's list-change and other review triggers.
 - Make audit records exportable for regulatory examination.
 
 ### Don't
@@ -255,22 +257,12 @@ The consolidated controls below align with the AI-system-specific verification r
 - Store audit records in agent-controlled infrastructure.
 - Cache screening results beyond a configurable time window.
 - Allow agents to lower match thresholds or override screening results.
-- Rely on transport-layer security (TLS) alone for message integrity.
+- Treat transport protection as protection from a compromised component after TLS termination.
 - Allow anonymous agents to access screening services.
 - Assume that a one-time identity check is sufficient for ongoing access.
 
 ## References
 
-- [OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html) -- Section 7: Message-Level Integrity
-- [OWASP Artificial Intelligence Security Verification Standard (AISVS)](https://github.com/OWASP/AISVS) -- Chapter 10: MCP Security Requirements
-- [OWASP MCP Top 10](https://owasp.org/www-project-mcp-top-10/) -- MCP01 (Token Mismanagement), MCP07 (Insufficient Auth), MCP08 (Lack of Audit)
-- [OWASP API Security Top 10 (2023)](https://owasp.org/API-Security/editions/2023/en/0x00-header/) -- API4 Unrestricted Resource Consumption
-- [IETF draft-sharif-mcps-secure-mcp](https://datatracker.ietf.org/doc/draft-sharif-mcps-secure-mcp/) -- Cryptographic Security Layer for MCP
-- [NIST SP 800-53 Revision 5](https://csrc.nist.gov/pubs/sp/800/53/r5/final) -- Security and Privacy Controls for Information Systems and Organizations
-- [NIST SP 800-209](https://csrc.nist.gov/pubs/sp/800/209/final) -- Security Guidelines for Storage Infrastructure
-- [OFAC Sanctions List Search](https://sanctionssearch.ofac.treas.gov/)
-- [UK HM Treasury Consolidated Sanctions List](https://www.gov.uk/government/publications/financial-sanctions-consolidated-list-of-targets)
-- [EU Consolidated Financial Sanctions List](https://data.europa.eu/data/datasets/consolidated-list-of-persons-groups-and-entities-subject-to-eu-financial-sanctions)
-- [FinCEN](https://www.fincen.gov/) -- BSA / AML regulations and SAR filings
-- [FinCEN Customer Due Diligence (CDD) Requirements](https://www.fincen.gov/resources/statutes-regulations/federal-register-notices/customer-due-diligence-requirements)
-- [OCC BSA/AML Examination Procedures](https://www.occ.treas.gov/topics/supervision-and-examination/bsa/index-bsa.html)
+- [FinCEN: Customer Due Diligence Requirements for Financial Institutions](https://www.gpo.gov/fdsys/pkg/FR-2016-05-11/pdf/2016-10567.pdf)
+- [NIST SP 800-53 Rev. 5: Security and Privacy Controls](https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final)
+- [OFAC: A Framework for Compliance Commitments](https://ofac.treasury.gov/system/files/126/framework_ofac_cc.pdf)

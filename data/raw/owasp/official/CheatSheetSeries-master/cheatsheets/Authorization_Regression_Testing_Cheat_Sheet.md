@@ -6,6 +6,8 @@ Authorization implementation is rarely static. As applications evolve, new API e
 
 [Broken Access Control (BAC)](https://owasp.org/Top10/A01_2021-Broken_Access_Control/) was ranked the number-one risk in the OWASP Top Ten 2021, and [Insecure Direct Object Reference (IDOR)](https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References) is one of its most frequently exploited sub-categories. This cheat sheet provides actionable, architectural guidance on implementing automated authorization regression testing within the Software Development Life Cycle (SDLC). By shifting from manual, point-in-time penetration testing to continuous, developer-centric regression suites, engineering teams can catch BAC, IDOR, and tenant isolation failures before they reach production.
 
+For baseline controls, see the [Authorization Cheat Sheet](Authorization_Cheat_Sheet.md).
+
 Key topics covered in this cheat sheet include:
 
 - Designing an automated authorization test matrix.
@@ -76,7 +78,7 @@ In multi-tenant SaaS applications, logic changes (like caching or query modifica
 
 When building APIs, the authorization schema should be explicitly defined in the API contract. The [OpenAPI Specification](https://spec.openapis.org/oas/v3.1.0#security-scheme-object) provides `securitySchemes` and `security` fields to formally declare authorization requirements at both the global and per-operation level.
 
-- **Schema-Aware Testing:** Use the OpenAPI definition as the source of truth for authorization requirements. If the specification states an endpoint requires an [OAuth2](https://www.rfc-editor.org/rfc/rfc6749) scope of `read:invoices`, the testing framework should automatically verify that tokens lacking this scope receive a [`401 Unauthorized`](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2) or `403 Forbidden` response. Tools such as [Schemathesis](https://schemathesis.readthedocs.io/en/stable/) can read the OpenAPI document and auto-generate these negative test cases.
+- **Schema-Aware Testing:** Use the OpenAPI definition to identify declared authentication schemes and required scopes, then test them against the application's access policy. [Schemathesis's `ignored_auth` check](https://schemathesis.readthedocs.io/en/stable/reference/checks/#ignored_auth) probes missing and invalid credentials. Add explicit tests using otherwise-valid tokens that lack required scopes; rejecting missing credentials does not establish that scope enforcement works.
 - **Middleware Enforcement:** Configure API gateways or web frameworks to automatically enforce the security definitions present in the OpenAPI contract. Regression tests should validate that this middleware has not been bypassed or disabled following a refactor.
 
 ## Automated Testing Framework Integration
@@ -84,7 +86,7 @@ When building APIs, the authorization schema should be explicitly defined in the
 Authorization tests must live alongside functional tests in the developer's standard toolkit, following the guidance in [OWASP SAMM: Security Testing](https://owaspsamm.org/model/verification/security-testing/).
 
 - **Test Frameworks:** Use standard test runners (e.g., [`pytest`](https://docs.pytest.org/) for Python, [`Jest`](https://jestjs.io/) for JavaScript, [`JUnit`](https://junit.org/junit5/) for Java) to build authorization suites. This keeps the barrier to entry low and ensures the tests run in the same CI pipeline as functional tests.
-- **Property-Based Testing:** Tools like [Schemathesis](https://schemathesis.readthedocs.io/en/stable/) or [Dredd](https://dredd.org/en/latest/) can read an OpenAPI specification and automatically generate negative test cases (e.g., sending requests without tokens, with expired tokens, or with tokens missing required scopes) to ensure the API fails securely.
+- **Generated and Custom Tests:** Use schema-driven testing to supplement the authorization matrix. Create explicit expired-token and missing-scope fixtures with expected denial responses instead of assuming the OpenAPI contract generates these credentials. If using Dredd, its [hooks](https://dredd.org/en/latest/hooks/) let you modify requests and set custom expectations for these cases.
 - **Session Switching:** Design the test suite to quickly and cheaply swap authentication context (e.g., swapping JWTs in the `Authorization` header as defined in [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750)) without requiring a full login flow for every test.
 
 ## CI/CD Gating and SDLC Integration
@@ -97,36 +99,6 @@ The value of an authorization regression suite is only realized if it prevents v
 
 ## References
 
-### OWASP Resources
-
-- [OWASP Top Ten 2021 — A01: Broken Access Control](https://owasp.org/Top10/A01_2021-Broken_Access_Control/)
-- [OWASP Web Security Testing Guide v4.2 — Authorization Testing](https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/05-Authorization_Testing/)
-- [OWASP WSTG — Testing for Insecure Direct Object References](https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References)
-- [OWASP Proactive Controls C7: Enforce Access Controls](https://owasp.org/www-project-proactive-controls/v3/en/c7-enforce-access-controls)
-- [OWASP Software Assurance Maturity Model (SAMM): Security Testing](https://owaspsamm.org/model/verification/security-testing/)
-- [OWASP Application Security Verification Standard (ASVS) 4.0 — V4: Access Control](https://raw.githubusercontent.com/OWASP/ASVS/v4.0.3/4.0/OWASP%20Application%20Security%20Verification%20Standard%204.0.3-en.pdf)
-
-### Related OWASP Cheat Sheets
-
-- [Authorization Cheat Sheet](Authorization_Cheat_Sheet.md)
-- [Authorization Testing Automation Cheat Sheet](Authorization_Testing_Automation_Cheat_Sheet.md)
-- [Insecure Direct Object Reference Prevention Cheat Sheet](Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.md)
-- [Multi-Tenant Security Cheat Sheet](Multi_Tenant_Security_Cheat_Sheet.md)
-- [CI/CD Security Cheat Sheet](CI_CD_Security_Cheat_Sheet.md)
-
-### Standards and Specifications
-
-- [OpenAPI Specification 3.1.0 — Security Scheme Object](https://spec.openapis.org/oas/v3.1.0#security-scheme-object)
-- [OAuth 2.0 Authorization Framework (RFC 6749)](https://www.rfc-editor.org/rfc/rfc6749)
-- [OAuth 2.0 Bearer Token Usage (RFC 6750)](https://www.rfc-editor.org/rfc/rfc6750)
-- [HTTP Semantics (RFC 9110) — 401 Unauthorized](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.2)
-- [HTTP Semantics (RFC 9110) — 403 Forbidden](https://www.rfc-editor.org/rfc/rfc9110#section-15.5.4)
-- [CWE-269: Improper Privilege Management](https://cwe.mitre.org/data/definitions/269.html)
-
-### Tools
-
-- [Schemathesis — Property-based API testing](https://schemathesis.readthedocs.io/en/stable/)
-- [Dredd — HTTP API Testing Framework](https://dredd.org/en/latest/)
-- [pytest — Python test framework](https://docs.pytest.org/)
-- [JUnit 5 — Java test framework](https://junit.org/junit5/)
-- [Jest — JavaScript test framework](https://jestjs.io/)
+- [OWASP WSTG: Testing for Insecure Direct Object References](https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/05-Authorization_Testing/04-Testing_for_Insecure_Direct_Object_References)
+- [OWASP SAMM: Security Testing](https://owaspsamm.org/model/verification/security-testing/)
+- [OpenAPI 3.1.0: Security Scheme Object](https://spec.openapis.org/oas/v3.1.0#security-scheme-object)

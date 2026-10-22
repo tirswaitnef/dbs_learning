@@ -4,6 +4,8 @@
 
 This cheat sheet provides Django REST Framework security advice for developers. It is a basic set of guidelines for Django REST developers who need to secure fundamental aspects of an application.
 
+For the original analysis of unsafe deserialization and serializer field selection, see sections 4.4.1.12 and 4.4.1.18 of [Django REST Framework (DRF) Secure Code Guidelines](https://openaccess.uoc.edu/handle/10609/147246).
+
 ## What is a view in Django?
 
 A view in Django is a Python class or a function that returns a web response after it receives a web request. That response can be in simple HTTP, an HTML template, or an HTTP redirect request that redirects a user to another page.
@@ -59,9 +61,9 @@ To prevent this problem, only display the minimum amount of required information
 
 ### API4:2019 Lack of Resources & Rate Limiting
 
-To prevent this problem, configure the setting DEFAULT_THROTTLE_CLASSES and DO NOT overwrite the throttle class on a class-based (variable `throttle_classes`) or function-based (decorator `throttle_classes`) view, unless you are confident about the change and understand the impact.
+Configure `DEFAULT_THROTTLE_CLASSES` and `DEFAULT_THROTTLE_RATES` for application usage policies, and review any per-view overrides. DRF explicitly warns that its [built-in throttling is not a security defense against brute force or denial-of-service attacks](https://www.django-rest-framework.org/api-guide/throttling/). Its cache operations are non-atomic, so concurrent requests can exceed the configured limit.
 
-EXTRA: If possible, do rate limiting with a WAF or similar. DRF should be the last layer of rate limiting.
+Enforce abuse controls at the reverse proxy or API gateway as well as in the application. Apply request-size and resource limits; see the [Denial of Service Cheat Sheet](Denial_of_Service_Cheat_Sheet.md) for layered defenses.
 
 ### API5:2019 Broken Function Level Authorization
 
@@ -71,7 +73,7 @@ DO NOT use `rest_framework.permissions.AllowAny` except for public API endpoints
 
 ### API6:2019 Mass Assignment
 
-To prevent this problem, use Meta.fields (allowlist approach) when using ModelForms. DO NOT use Meta.exclude (denylist approach) or `ModelForms.Meta.fields = "__all__"`
+For DRF APIs, explicitly allowlist the fields in `ModelSerializer.Meta.fields`; avoid `Meta.exclude` and `fields = "__all__"`, which can expose newly added model fields. Follow the [serializer field selection guidance](https://www.django-rest-framework.org/api-guide/serializers/#specifying-which-fields-to-include). Fields that clients may read but must not change should be [read-only](https://www.django-rest-framework.org/api-guide/serializers/#specifying-read-only-fields): use `Meta.read_only_fields` for generated fields, or `read_only=True` on explicitly declared fields. These serializer controls do not replace authorization checks for the requested operation.
 
 ### API7:2019 Security Misconfiguration
 
@@ -155,8 +157,8 @@ Semgrep – [Semgrep](https://semgrep.dev/) is a fast, open-source, static analy
 
 PyCharm Security – [Pycharm-security](https://pycharm-security.readthedocs.io/en/latest/index.html) is a plugin for PyCharm, or JetBrains IDEs with the Python plugin. The plugin looks at Python code for common security vulnerabilities and suggests fixes. It can also be executed from a Docker container. It has about 40 checks and some are Django specific.
 
-## Related Articles and References
+## References
 
-- [Django REST Framework (DRF) Secure Code Guidelines](https://openaccess.uoc.edu/handle/10609/147246)
-- [Django’s security policies](https://docs.djangoproject.com/en/stable/internals/security/)
 - [Security in Django](https://docs.djangoproject.com/en/stable/topics/security/)
+- [Django REST framework permissions](https://www.django-rest-framework.org/api-guide/permissions/)
+- [Django REST framework settings](https://www.django-rest-framework.org/api-guide/settings/)

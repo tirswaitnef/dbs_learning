@@ -14,32 +14,32 @@ This cheat sheet provides clear definitions and distinctions for security termin
 
 ## Data Handling: Encoding, Escaping, Sanitization, and Serialization
 
-These terms relate to how data is transformed for transport, storage, or display.
+These terms relate to how data is transformed for transport, storage, or display. See the [Input Validation Cheat Sheet](Input_Validation_Cheat_Sheet.md) for validation guidance.
 
 ### Encoding
 
 **Definition:** Transforming data into a different format using a publicly available scheme, so that it can be safely consumed by a different system.
 
-- **Purpose:** Not for security, but for data usability and compatibility.
+- **Purpose:** Represent data for a particular transport, storage, or output context.
 - **Reversibility:** Always reversible.
 - **Examples:** Base64, URL Encoding, HTML Entity Encoding.
-- **Security Context:** Using the wrong encoding can lead to vulnerabilities, but encoding itself is not a security control.
+- **Security Context:** Base64 does not provide confidentiality. Context-appropriate [output encoding is an XSS defense](https://developer.mozilla.org/en-US/docs/Web/Security/Attacks/XSS#output_encoding); using the wrong encoding for the destination context can leave an injection vulnerability.
 
 ### Escaping
 
-**Definition:** A sub-type of encoding where specific characters are prefixed with a "signal" character (like a backslash) to prevent them from being misinterpreted by a parser as control characters.
+**Definition:** Representing characters with parser-specific escape sequences so they are interpreted literally in a particular context.
 
 - **Purpose:** To ensure the interpreter treats the data as text rather than code/commands.
-- **Examples:** `\'` in SQL, `\n` in strings, `&lt;` in HTML.
-- **Security Context:** Essential for preventing Injection attacks (XSS, SQLi).
+- **Examples:** `\"` inside a JSON string, `&lt;` in HTML text.
+- **Security Context:** Escaping rules depend on the parser and context. For SQL values, use [parameterized queries](SQL_Injection_Prevention_Cheat_Sheet.md#primary-defenses) instead of constructing SQL with escaped strings.
 
 ### Sanitization
 
 **Definition:** The process of cleaning or filtering input by removing, replacing, or modifying potentially dangerous characters or content.
 
 - **Purpose:** To make "dirty" input "clean" according to a security policy.
-- **Examples:** Stripping `<script>` tags from HTML input, removing special characters from a filename.
-- **Security Context:** Use as a secondary defense; prefer parameterized queries or output escaping where possible.
+- **Examples:** Using a maintained HTML sanitizer to allow approved elements and attributes in user-authored HTML.
+- **Security Context:** Use [HTML sanitization](Cross_Site_Scripting_Prevention_Cheat_Sheet.md#html-sanitization) when untrusted input must be rendered as HTML. Removing `<script>` tags alone is insufficient; other elements and attributes can execute scripts. Use output encoding when the value should be displayed as text.
 
 ### Serialization
 
@@ -52,7 +52,7 @@ These terms relate to how data is transformed for transport, storage, or display
 
 ## Cryptography: Encryption, Hashing, and Signatures
 
-These terms relate to protecting the confidentiality, integrity, and authenticity of data.
+These terms relate to protecting the confidentiality, integrity, and authenticity of data. See the [Key Management Cheat Sheet](Key_Management_Cheat_Sheet.md) and [Password Storage Cheat Sheet](Password_Storage_Cheat_Sheet.md) for implementation guidance.
 
 ### Encryption
 
@@ -76,8 +76,8 @@ These terms relate to protecting the confidentiality, integrity, and authenticit
 **Definition:** Using asymmetric cryptography to provide proof of the origin and integrity of a message.
 
 - **Purpose:** **Authenticity** and **Non-repudiation**. Proves who sent the message and that it wasn't altered.
-- **Mechanism:** The sender signs a hash of the message with their *private key*; the receiver verifies it with the sender's *public key*.
-- **Example:** JWT signatures, GPG signatures.
+- **Mechanism:** The signing algorithm uses the signer's private key; verification uses a trusted public key bound to that signer. Follow the algorithm's [message-processing rules](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf#page=18); do not add a separate prehash unless the chosen algorithm and API require it.
+- **Examples:** Asymmetrically signed JWTs and GPG signatures. [JWTs can also use shared-key message authentication codes or encryption](https://www.rfc-editor.org/info/rfc7519/); the JWT format does not imply a digital signature.
 
 ---
 
@@ -115,7 +115,5 @@ When working with OAuth2, SAML, or OIDC, these terms are frequently used:
 
 ## References
 
-- [OWASP ASVS Standard](https://owasp.org/www-project-application-security-verification-standard/)
-- [OWASP Key Management Cheat Sheet](Key_Management_Cheat_Sheet.md)
-- [OWASP Password Storage Cheat Sheet](Password_Storage_Cheat_Sheet.md)
-- [OWASP Input Validation Cheat Sheet](Input_Validation_Cheat_Sheet.md)
+- [RFC 4949: Internet Security Glossary, Version 2](https://www.rfc-editor.org/info/rfc4949/)
+- [OpenID Connect Core 1.0: Terminology](https://openid.net/specs/openid-connect-core-1_0.html#Terminology)

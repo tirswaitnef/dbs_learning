@@ -41,7 +41,9 @@ When it comes to applying authorization controls to legacy systems, organization
 
 **Vulnerability Scanning:** Legacy applications should be subject to regular vulnerability scanning with an industry standard vulnerability assessment tool, where possible, such as Nessus and Qualys. This should occur on a regular basis, ideally with scans scheduled to occur automatically at some set time interval. Where appropriate, some vulnerabilities might also be identified using code scanning tools, such as a SAST (Static Application Security Testing) tool to check the codebase for obvious vulnerabilities or SCA (Software Composition Analysis) tool identify vulnerable dependencies used by the application. In some cases none of the above options will be viable for the application and, in this case, direct human assessment of host configuration and manual code reviews might be the only suitable option for assessing the security posture of the legacy application.
 
-**Patch Management:** Where possible, apply patches raised by the tools described above. Patching efforts should be prioritized on the basis of the severity of the vulnerability and whether the vulnerability has a published CVE (Common Vulnerabilities and Exposures) and/or a publicly listed exploit. In circumstances where patching is not practically possible for the legacy application, consider applying additional restrictions to the application/affected components as noted in the section on Authentication/Authorization.
+**Patch Management:** Where possible, apply patches for confirmed vulnerabilities. [Prioritize remediation](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-40r4.pdf#page=11) using the application's exposure and criticality, the vulnerability's impact and exploitability, and evidence of active exploitation. Use the [CISA Known Exploited Vulnerabilities catalog](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) as one input to prioritization.
+
+A Common Vulnerabilities and Exposures (CVE) identifier helps track a vulnerability; [assignment depends on vulnerability determination, disclosure, and the assigning authority's scope](https://github.com/CVEProject/cve-documents/blob/master/CNA_Rules.md#42-cve-id-assignment). Its presence or absence does not by itself establish remediation priority. In circumstances where patching is not practically possible for the legacy application, consider applying additional restrictions to the application/affected components as noted in the section on Authentication/Authorization.
 
 ## Data Storage
 
@@ -74,3 +76,8 @@ Legacy applications should be subject to an especially high degree of security m
 - Be vigilant to any anomalous network traffic into and out of the legacy application environment and to any surges in network activity.
 - If you have access to an internal or hired incident response team, ensure that they are aware that incident response and investigation of unusual events should be prioritized for critical legacy systems. Processes for handling application downtime and compromise ideally are to be documented in advance as a part of an incident response playbook. This needs to give staff a clear rundown of emergency procedures including escalation contacts and details of incident response leaders.
 - Incident response planning should occur within the broader context of a business continuity plan.
+
+## References
+
+- [NIST SP 800-40 Rev. 4: Guide to Enterprise Patch Management Planning](https://csrc.nist.gov/pubs/sp/800/40/r4/final)
+- [Red Hat: Backporting Security Fixes](https://access.redhat.com/security/updates/backporting)

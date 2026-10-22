@@ -16,7 +16,7 @@ Not all controls need to be implemented at once. The following priority guide he
 
 **Implement immediately (foundational):**
 
-- Document hashing and integrity verification at ingestion (Section 1)
+- Document provenance and integrity verification against a protected baseline (Section 1)
 - Context window protection with delimiters and chunk limits (Section 3)
 - Access control metadata on every vector chunk (Section 4)
 - Tenant and classification isolation in vector stores (Section 6)
@@ -54,8 +54,9 @@ This is the most common and immediately exploitable RAG attack vector. Any organ
 
 ### Do
 
-- Hash every document at ingestion time (SHA-256 minimum) and store the hash alongside the document metadata.
-- Verify document hashes before retrieval. If the hash does not match, reject the document and alert the security team.
+- Record a SHA-256 digest of each approved document in a separately controlled manifest. An attacker who can replace both a document and its stored digest can make a modified document pass the hash check.
+- Protect the manifest with a digital signature or a [message authentication code (MAC)](https://csrc.nist.gov/Projects/message-authentication-codes), keeping signing or MAC keys outside the document store's write permissions. Verify the manifest's authenticity and the document's digest before retrieval; reject failures and alert the security team.
+- A matching digest establishes consistency with the approved baseline, not that the content is safe or free of prompt injection. Review and authorize baseline updates separately from ordinary document writes.
 - Implement document provenance tracking -- record who uploaded the document, when, from what source, and with what approval.
 - Scan ingested documents for known adversarial patterns (prompt injection markers, hidden instructions, invisible Unicode characters, zero-width spaces).
 - Maintain an allowlist of trusted document sources and reject documents from unknown or unapproved sources.
@@ -239,7 +240,7 @@ Users or agents can craft queries designed to surface specific sensitive documen
 - Normalize and inspect queries for abuse patterns before retrieval. Do not rely on sanitization alone; enforce access control and retrieval boundaries independently.
 - Rate limit queries per user or agent identity to prevent systematic probing of the corpus.
 - Monitor query patterns for reconnaissance behavior (e.g. an agent systematically varying query terms to map the contents of the vector store).
-- Log all queries with the querying entity's identity for audit purposes.
+- Log query identifiers and the querying entity's identity for audit purposes. Exclude sensitive query content according to the [Logging Cheat Sheet](Logging_Cheat_Sheet.md#data-to-exclude).
 
 ### Don't
 
@@ -267,6 +268,8 @@ Even if everything upstream is secure, the model can still generate outputs that
 - Assume that because retrieved content was safe, the generated output is also safe. Models can combine benign inputs into harmful outputs.
 
 ## Section 10: Tool Invocation and Agent Safety
+
+For MCP message integrity and tool boundaries, see the [MCP Security Cheat Sheet](MCP_Security_Cheat_Sheet.md).
 
 Modern RAG is rarely standalone -- it is embedded in agent systems where retrieved content influences model decisions which trigger tool calls. This is where theoretical RAG risks become real-world damage: retrieved content influences the model, the model invokes a tool, and the tool takes an irreversible action.
 
@@ -309,8 +312,8 @@ RAG pipelines must not be treated as black boxes. Full observability across ever
 
 ### Do
 
-- Log the full pipeline for every request: query received, chunks retrieved (with document IDs and access control metadata), model input assembled, model output generated, and any tool calls triggered.
-- Store replayable traces that allow security teams to reconstruct exactly what happened during an incident -- which query retrieved which chunks, which chunks influenced which output.
+- Trace each request using correlation IDs, retrieved document IDs, authorization decisions, model versions, and tool invocation outcomes. Do not log raw queries, retrieved content, model inputs, outputs, or tool arguments by default; these may contain secrets or sensitive personal data. Apply the [Logging Cheat Sheet's data-exclusion guidance](Logging_Cheat_Sheet.md#data-to-exclude).
+- If incident investigation requires content capture, collect only the necessary redacted fields in a restricted evidence store. Apply [log access controls](Logging_Cheat_Sheet.md#protection) and [retention limits](Logging_Cheat_Sheet.md#disposal-of-logs), and ensure investigators are authorized to access the underlying documents.
 - Alert on anomalous patterns:
     - Unusual retrieval patterns (a user suddenly retrieving from document collections they have never accessed)
     - Repeated prompt injection attempts
@@ -376,9 +379,6 @@ When any component of the RAG pipeline fails, the system must deny the request r
 
 ## References
 
-- [OWASP AISVS C08](https://github.com/OWASP/AISVS) -- Memory, Embeddings and Vector Database Security
-- [OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html) -- Section 7: Message-Level Integrity
-- [OWASP Top 10 for LLM Applications](https://genai.owasp.org/) -- LLM06: Sensitive Information Disclosure, LLM01: Prompt Injection
-- [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/) -- ASI06: Memory and Context Poisoning (see the GenAI project site for the latest URL)
-- [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework) -- Governance, mapping, measuring, and managing AI risks
-- Song & Raghunathan (2020), "Information Leakage in Embedding Models" -- Background on embedding inversion attacks and differential privacy
+- [OWASP AISVS C08: Memory, Embeddings and Vector Database Security](https://github.com/OWASP/AISVS/blob/main/1.0/en/0x10-C08-Memory-Embeddings-and-Vector-Database.md)
+- [NIST AI 100-2e2025: Adversarial Machine Learning — A Taxonomy and Terminology of Attacks and Mitigations](https://nvlpubs.nist.gov/nistpubs/ai/NIST.AI.100-2e2025.pdf)
+- [Song and Raghunathan: Information Leakage in Embedding Models](https://arxiv.org/abs/2004.00053)

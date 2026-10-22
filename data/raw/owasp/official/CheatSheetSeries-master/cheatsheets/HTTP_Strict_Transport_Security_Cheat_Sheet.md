@@ -19,7 +19,7 @@ HSTS addresses the following threats:
 
 ## Examples
 
-Simple example, using a long (2 years = 63072000 seconds) max-age. This example is dangerous since it lacks `includeSubDomains`:
+This example sets a long (2 years = 63072000 seconds) max-age for the issuing host. Without `includeSubDomains`, [this policy does not extend to its subdomains](https://www.rfc-editor.org/rfc/rfc6797.html#section-6.1.2); see the [subdomain cookie risks](#problems) below:
 
 `Strict-Transport-Security: max-age=63072000`
 
@@ -50,10 +50,9 @@ Cookies can be manipulated from sub-domains, so omitting the `includeSubDomains`
 
 As of September 2019 HSTS is supported by [all modern browsers](https://caniuse.com/#feat=stricttransportsecurity), with the only notable exception being Opera Mini.
 
+For TLS configuration, see the [Transport Layer Security Cheat Sheet](Transport_Layer_Security_Cheat_Sheet.md).
+
 ## References
 
 - [Chromium Projects/HSTS](https://www.chromium.org/hsts/)
-- [OWASP TLS Protection Cheat Sheet](Transport_Layer_Security_Cheat_Sheet.md)
-- [sslstrip](https://github.com/moxie0/sslstrip)
-- [AppSecTutorial Series - Episode 4](https://www.youtube.com/watch?v=zEV3HOuM_Vw)
-- [Nmap NSE script to detect HSTS configuration](https://github.com/icarot/NSE_scripts/blob/master/http-hsts-verify.nse)
+- [RFC 6797: HTTP Strict Transport Security](https://www.rfc-editor.org/info/rfc6797/)
