@@ -334,7 +334,6 @@ class OllamaIntegrationTests(unittest.TestCase):
 
     def test_reviewer_issues_cvss_consistency_ollama_retries_and_static_eol_provenance(self):
         from dataclasses import asdict
-        from io import BytesIO
         from rag.analysis import input_sources
         from rag.db_scope import attach_db_scope
         from rag.parsers.native import parse_sqlmap_log
@@ -482,9 +481,17 @@ class OllamaIntegrationTests(unittest.TestCase):
         self.assertTrue(any("Banner đầu vào 'Apache 2.4.25'" in n and "không do AI suy đoán" in n for n in ctx["eol_notes"]))
 
         with tempfile.TemporaryDirectory() as pdf_dir:
-            pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
-            from pypdf import PdfReader
-            full_pdf_text = "\n".join(p.extract_text() or "" for p in PdfReader(BytesIO(pdf_file.read_bytes())).pages)
+            rendered_paragraphs = []
+            orig_para = __import__("reportlab.platypus", fromlist=["Paragraph"]).Paragraph
+
+            def spy_paragraph(text, *args, **kwargs):
+                rendered_paragraphs.append(str(text))
+                return orig_para(text, *args, **kwargs)
+
+            with patch("reportlab.platypus.Paragraph", side_effect=spy_paragraph):
+                pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
+            self.assertTrue(pdf_file.read_bytes().startswith(b"%PDF-"))
+            full_pdf_text = "\n".join(rendered_paragraphs)
             self.assertIn("giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào", full_pdf_text)
             self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
             self.assertIn("quy tắc đối chiếu tĩnh trong code dự án", full_pdf_text)
