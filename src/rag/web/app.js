@@ -614,7 +614,7 @@ form.addEventListener('submit', async e => {
   try {
     const metaJson = JSON.stringify(
       Object.fromEntries(
-        ['report_lang', 'cvss_mode', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias']
+        ['report_lang', 'application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias']
           .map(k => [k, ($('meta-' + k)?.value || '').trim()])
       )
     );

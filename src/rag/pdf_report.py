@@ -14,7 +14,7 @@ def render_pdf(report, path):
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.platypus import (
-        BaseDocTemplate, Frame, PageBreak, PageTemplate,
+        BaseDocTemplate, Flowable, Frame, PageBreak, PageTemplate,
         Paragraph, Spacer, Table, TableStyle,
     )
 
@@ -33,7 +33,6 @@ def render_pdf(report, path):
         if fname not in pdfmetrics.getRegisteredFontNames() and fpath.is_file():
             pdfmetrics.registerFont(TTFont(fname, str(fpath)))
     pdfmetrics.registerFontFamily('RagText', normal='RagText', bold='RagBold', italic='RagText', boldItalic='RagBold')
-    mono_font = 'RagText'
 
     # Exact palette extracted from `web-pentest-report-template.pdf`
     col_black = colors.HexColor('#000000')
@@ -49,13 +48,31 @@ def render_pdf(report, path):
     margin_y = 56.0
     width = A4[0] - (2.0 * margin_x)  # 475.28 pt (matches 475 pt in reference template)
 
+    class ObliqueSubtitle(Flowable):
+        def __init__(self, text: str, avail_w: float):
+            super().__init__()
+            self.text = text
+            self.width = avail_w
+            self.height = 18.0
+            self.spaceAfter = 34.0
+
+        def wrap(self, availWidth, availHeight):
+            self.width = availWidth
+            return (availWidth, self.height)
+
+        def draw(self):
+            c = self.canv
+            c.saveState()
+            c.setFillColor(col_subtitle)
+            c.setFont('RagText', 13.5)
+            tw = pdfmetrics.stringWidth(self.text, 'RagText', 13.5)
+            c.transform(1.0, 0.0, 0.20, 1.0, (self.width - tw) / 2.0, 4.0)
+            c.drawString(0, 0, self.text)
+            c.restoreState()
+
     cover_title_st = ParagraphStyle(
         'cover_title', fontName='RagBold', fontSize=21.5, leading=28, alignment=TA_CENTER,
         textColor=col_black, spaceAfter=20,
-    )
-    cover_sub_st = ParagraphStyle(
-        'cover_sub', fontName='RagText', fontSize=13.5, leading=18, alignment=TA_CENTER,
-        textColor=col_subtitle, spaceAfter=34,
     )
     cover_meta_st = ParagraphStyle(
         'cover_meta', fontName='RagText', fontSize=11.5, leading=14.5, alignment=TA_CENTER,
@@ -87,12 +104,16 @@ def render_pdf(report, path):
         'body', fontName='RagText', fontSize=9.8, leading=14.2, alignment=TA_LEFT,
         textColor=col_body, spaceAfter=5.5, splitLongWords=True,
     )
+    plain_line_st = ParagraphStyle(
+        'plain_line', fontName='RagText', fontSize=9.8, leading=14.0, alignment=TA_LEFT,
+        textColor=col_body, spaceAfter=4.5, splitLongWords=True,
+    )
     kv_line_st = ParagraphStyle(
         'kv_line', fontName='RagText', fontSize=9.8, leading=13.8, alignment=TA_LEFT,
         textColor=col_body, spaceAfter=4.5, splitLongWords=True,
     )
     code_st = ParagraphStyle(
-        'code_block', fontName=mono_font, fontSize=7.6, leading=10.6, alignment=TA_LEFT,
+        'code_block', fontName='RagText', fontSize=7.7, leading=10.8, alignment=TA_LEFT,
         textColor=col_body, backColor=col_code_bg, borderPadding=5, leftIndent=6, rightIndent=0,
         spaceAfter=5.5, splitLongWords=True,
     )
@@ -113,13 +134,16 @@ def render_pdf(report, path):
 
     story = []
 
-    def add_kv(label: str, val: str):
+    def add_plain_line(label: str, val: str):
+        story.append(Paragraph(f"{esc(label)}: {esc(val)}", plain_line_st))
+
+    def add_bold_kv(label: str, val: str):
         story.append(Paragraph(f"<b>{esc(label)}:</b> {esc(val)}", kv_line_st))
 
     def add_code_kv(label: str, raw_val: str):
         text = str(raw_val or '').strip()
         if '\n' not in text and len(text) <= 105:
-            add_kv(label, text)
+            add_bold_kv(label, text)
             return
         story.append(Paragraph(f"<b>{esc(label)}:</b>", ParagraphStyle('kv_lbl_only', parent=kv_line_st, spaceAfter=2, keepWithNext=True)))
         for start in range(0, len(text), 2400):
@@ -160,7 +184,7 @@ def render_pdf(report, path):
         else 'Đánh giá Bảo mật Ứng dụng Web dựa trên OWASP'
     )
     story.append(Paragraph(cover_title, cover_title_st))
-    story.append(Paragraph(esc(cover_sub), cover_sub_st))
+    story.append(ObliqueSubtitle(cover_sub, width))
     story.append(Paragraph(f"{'Prepared for' if en else 'Đơn vị tiếp nhận'}: {esc(tf['client_name'])}", cover_meta_st))
     story.append(Paragraph(f"{'Prepared by' if en else 'Thực hiện bởi'}: {esc(tf['prepared_by'])}", cover_meta_st))
     story.append(Paragraph(f"{'Date' if en else 'Ngày báo cáo'}: {esc(tf['report_date'])}", cover_meta_st))
@@ -187,11 +211,11 @@ def render_pdf(report, path):
 
     # 2. Scope and Methodology
     add_sec_heading(2)
-    add_kv('Target URL(s)' if en else 'URL mục tiêu', tf['target_urls'])
-    add_kv('Authenticated Roles Tested' if en else 'Vai trò xác thực đã kiểm thử', tf['auth_roles'])
-    add_kv('Excluded Areas' if en else 'Phạm vi loại trừ', tf['excluded_areas'])
-    add_kv('Testing Areas per OWASP Top 10' if en else 'Hạng mục kiểm thử theo OWASP Top 10', tf['testing_areas'])
-    add_kv('Tools' if en else 'Công cụ sử dụng', tf['tools_str'])
+    add_plain_line('Target URL(s)' if en else 'URL mục tiêu', tf['target_urls'])
+    add_plain_line('Authenticated Roles Tested' if en else 'Vai trò xác thực đã kiểm thử', tf['auth_roles'])
+    add_plain_line('Excluded Areas' if en else 'Phạm vi loại trừ', tf['excluded_areas'])
+    add_plain_line('Testing Areas per OWASP Top 10' if en else 'Hạng mục kiểm thử theo OWASP Top 10', tf['testing_areas'])
+    add_plain_line('Tools' if en else 'Công cụ sử dụng', tf['tools_str'])
 
     # 3. Findings Summary by OWASP Category
     add_sec_heading(3)
@@ -239,17 +263,17 @@ def render_pdf(report, path):
             if e['parameter'] not in {'N/A', 'Không áp dụng'}
             else e['url']
         )
-        add_kv('Severity' if en else 'Mức độ nghiêm trọng', e['severity_label'])
-        add_kv('CVSS 3.1 Score' if en else 'Điểm CVSS 3.1', cvss_line)
-        add_kv('OWASP Category' if en else 'Danh mục OWASP', e['owasp_label'])
-        add_kv('CWE', e['cwe_label'])
-        add_kv('Affected URL' if en else 'URL ảnh hưởng', affected_url)
-        add_kv('HTTP Method' if en else 'Phương thức HTTP', e['method'])
-        add_kv('Description' if en else 'Mô tả', e['description'])
+        add_bold_kv('Severity' if en else 'Mức độ nghiêm trọng', e['severity_label'])
+        add_bold_kv('CVSS 3.1 Score' if en else 'Điểm CVSS 3.1', cvss_line)
+        add_bold_kv('OWASP Category' if en else 'Danh mục OWASP', e['owasp_label'])
+        add_bold_kv('CWE', e['cwe_label'])
+        add_bold_kv('Affected URL' if en else 'URL ảnh hưởng', affected_url)
+        add_bold_kv('HTTP Method' if en else 'Phương thức HTTP', e['method'])
+        add_bold_kv('Description' if en else 'Mô tả', e['description'])
         add_code_kv('Request' if en else 'Yêu cầu (Request)', e['request_text'])
         add_code_kv('Response' if en else 'Phản hồi (Response)', e['response_text'])
-        add_kv('Impact' if en else 'Tác động', e['confirmed_impact'])
-        add_kv('Remediation' if en else 'Khuyến nghị khắc phục', e['remediation']['text'])
+        add_bold_kv('Impact' if en else 'Tác động', e['confirmed_impact'])
+        add_bold_kv('Remediation' if en else 'Khuyến nghị khắc phục', e['remediation']['text'])
 
     # 5. Risk Ratings
     add_sec_heading(5)
@@ -269,26 +293,23 @@ def render_pdf(report, path):
         ]
     )
     for r_lbl, r_desc in risk_defs:
-        add_kv(r_lbl, r_desc)
+        add_plain_line(r_lbl, r_desc)
 
     # 6. Remediation Recommendations
     add_sec_heading(6)
     if view['global_recommendations']:
         for idx_r, rec in enumerate(view['global_recommendations'], 1):
-            story.append(Paragraph(f"{idx_r}. {esc(rec['title'])}", kv_line_st))
+            story.append(Paragraph(f"{idx_r}. {esc(rec['title'])}", plain_line_st))
     else:
         story.append(Paragraph(
             esc('1. No confirmed remediation actions required based on supplied input.' if en else '1. Chưa ghi nhận hạng mục cần khắc phục từ dữ liệu đầu vào.'),
-            kv_line_st,
+            plain_line_st,
         ))
 
     # 7. Appendix
     add_sec_heading(7)
-    for letter, heading_txt, blocks_list in tf['appendix_items']:
-        story.append(Paragraph(f"{letter}. {esc(heading_txt)}", kv_line_st))
-        for blk in blocks_list:
-            for start in range(0, len(blk), 2400):
-                story.append(Paragraph(esc(blk[start:start + 2400]), code_st))
+    for letter, heading_txt in tf['appendix_lines']:
+        story.append(Paragraph(f"{letter}. {esc(heading_txt)}", plain_line_st))
 
     story.append(Paragraph('— End of Report —' if en else '— Kết thúc Báo cáo —', end_st))
 

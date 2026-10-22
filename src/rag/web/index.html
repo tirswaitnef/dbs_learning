@@ -139,18 +139,12 @@
         </div>
 
         <details class="report-options" open>
-          <summary>Tùy chọn mẫu Báo cáo Pentest (Ngôn ngữ, Trang bìa, CVSS 3.1, XSS &amp; Ẩn IP)</summary>
+          <summary>Tùy chọn mẫu Báo cáo Pentest (Ngôn ngữ, Trang bìa, XSS &amp; Ẩn IP)</summary>
           <div class="report-fields">
             <label>Ngôn ngữ báo cáo xuất ra
               <select id="meta-report_lang">
                 <option value="vi" selected>Tiếng Việt (Bố cục y hệt file mẫu)</option>
                 <option value="en">English (Giống 100% nhãn &amp; bố cục file mẫu)</option>
-              </select>
-            </label>
-            <label>Chế độ điền Severity &amp; CVSS 3.1 (Mục 4)
-              <select id="meta-cvss_mode">
-                <option value="contextual" selected>Đề xuất: Tính CVSS 3.1 từ bằng chứng log (PR:L / DBA)</option>
-                <option value="strict">Chỉ ghi khi công cụ có sẵn (Ghi rõ không có nếu thiếu)</option>
               </select>
             </label>
             <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Để trống sẽ tự lấy theo tên/host trong log"></label>
