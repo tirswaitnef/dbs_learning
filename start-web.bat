@@ -9,6 +9,23 @@ if not exist ".env" copy /y ".env.example" ".env" >nul
 echo %* | findstr /i /c:"--demo" >nul
 if not errorlevel 1 goto run_server
 
+".venv\Scripts\python.exe" -c "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:11434/api/tags', timeout=1.5).read()" >nul 2>&1
+if not errorlevel 1 goto check_deps
+
+if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" goto boot_local_ollama
+where ollama >nul 2>&1
+if errorlevel 1 goto check_deps
+echo Dang bat Ollama chay nen...
+start "" /b ollama serve >nul 2>&1
+timeout /t 3 /nobreak >nul
+goto check_deps
+
+:boot_local_ollama
+echo Dang bat Ollama chay nen...
+start "" /b "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" serve >nul 2>&1
+timeout /t 3 /nobreak >nul
+
+:check_deps
 ".venv\Scripts\python.exe" -c "import sentence_transformers, dotenv, reportlab" >nul 2>&1
 if errorlevel 1 goto install_deps
 
