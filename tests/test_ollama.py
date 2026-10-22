@@ -973,13 +973,134 @@ class OllamaIntegrationTests(unittest.TestCase):
         nuc_f = parse_nuclei(nuc_line, "nuclei.jsonl")[0]
         nuc_row = {**asdict(nuc_f), "evidence": list(nuc_f.evidence), "guidance": []}
         nuc_row["owasp_top10"] = classify(nuc_row)
-        nuc_view = prepare_pentest_view({"schema_version": 1, "generated_at": "2026-10-22T09:00:00+00:00", "findings": [nuc_row], "report_metadata": {"report_lang": "en"}})
+        nuc_rep_en = {"schema_version": 1, "generated_at": "2026-10-22T09:00:00+00:00", "findings": [nuc_row], "report_metadata": {"report_lang": "en"}}
+        nuc_view = prepare_pentest_view(nuc_rep_en)
         ne0 = nuc_view["entries"][0]
         self.assertEqual(ne0["cvss_score"], "9.1")
         self.assertIn("curl -X GET", ne0["request_text"])
         self.assertIn("ami-id", ne0["response_text"])
         self.assertIn("Validate outbound destination hosts", ne0["remediation"]["text"])
+        # Section 6 in English must include native Nuclei SSRF remediation (regression for former early return in lang='en')
+        self.assertEqual(len(nuc_view["global_recommendations"]), 1)
+        self.assertIn("[W-001 | 198.51.100.99/fetch]", nuc_view["global_recommendations"][0]["title"])
+        self.assertIn("Validate outbound destination hosts", nuc_view["global_recommendations"][0]["title"])
+
+    def test_remediation_unified_in_section6_dynamic_rag_and_promoted_observation(self):
+        import numpy as np
+        from rag.pentest_polish import render_pentest_markdown
+        from rag.pdf_report import render_pdf
+
+        class _MiniEmbedder:
+            model_name = "intfloat/multilingual-e5-small"
+            revision = None
+
+            def embed_documents(self, texts):
+                arr = np.zeros((len(texts), 8), dtype=np.float32)
+                arr[:, 0] = 1.0
+                return arr
+
+            def embed_query(self, text):
+                arr = np.zeros((8,), dtype=np.float32)
+                arr[0] = 1.0
+                return arr
+
+        class _ConfirmLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                data = json.loads(prompt)
+                if "candidates" in data:
+                    return json.dumps({"source_ids": [c["source_id"] for c in data["candidates"][:2]]})
+                if "analysis" in data:
+                    return json.dumps({
+                        "supported": True, "no_remediation": True,
+                        "appropriately_uncertain": True, "database_specific": True,
+                    })
+                srcs = data["sources"]
+                first_sid = next((k for k in srcs if k.startswith(("E", "F"))), next(iter(srcs)))
+                quote = srcs[first_sid].splitlines()[0][:60]
+                return json.dumps({
+                    "observations": [{"text_vi": "Công cụ ghi nhận dấu hiệu lỗ hổng trên tham số đầu vào.", "citations": [{"source_id": first_sid, "quote": quote}]}],
+                    "potential_impacts": [{"text_vi": "Nếu khai thác thành công, dữ liệu ứng dụng có thể bị ảnh hưởng.", "citations": [{"source_id": first_sid, "quote": quote}]}],
+                    "limitations": [],
+                }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            raw_dir = tmp_p / "raw"
+            raw_dir.mkdir()
+            (raw_dir / "SQL_Injection_Prevention_Cheat_Sheet.md").write_text(
+                "# SQL Injection Prevention Cheat Sheet\n\n## Primary Defenses\n\n### Defense Option 1: Prepared Statements (with Parameterized Queries)\nPrepared statements ensure an attacker cannot alter SQL query intent when binding user parameters.\n",
+                encoding="utf-8",
+            )
+            (raw_dir / "Cross_Site_Scripting_Prevention_Cheat_Sheet.md").write_text(
+                "# Cross Site Scripting Prevention Cheat Sheet\n\n## Output Encoding\nWhen displaying untrusted user input in HTML responses, apply context-aware output encoding so variables are never interpreted as executable code.\n",
+                encoding="utf-8",
+            )
+            store_dir = tmp_p / "store"
+            settings = Settings(llm_provider="ollama", ollama_model="qwen2.5:7b")
+            ingest_documents(raw_dir, store_dir, settings, embedder=_MiniEmbedder())
+
+            scan_file = tmp_p / "confirm_scan.log"
+            scan_file.write_text(
+                "Target URL: http://198.51.100.77/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+                "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=secret123; security=low)\n"
+                "[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks\n"
+                "[11:21:57] [WARNING] reflective value(s) found and filtering out\n"
+                "---\n"
+                "Parameter: id (GET)\n"
+                "    Type: error-based\n"
+                "    Title: MySQL >= 5.1 AND error-based\n"
+                "    Payload: id=1' AND EXTRACTVALUE(1,1)-- a\n"
+                "---\n"
+                "web application technology: Apache 2.4.25\n"
+                "back-end DBMS: MySQL >= 5.1\n",
+                encoding="utf-8",
+            )
+            with patch("rag.embeddings.E5Embedding", return_value=_MiniEmbedder()), \
+                 patch("rag.official_report.OllamaLLM", return_value=_ConfirmLLM()):
+                out_dir = tmp_p / "out_confirm"
+                run_corpus_report(
+                    scan_file, out_dir, settings,
+                    raw_directory=raw_dir, store_directory=store_dir,
+                    format_="sqlmap-log", offline=True,
+                    report_metadata={"report_lang": "en", "xss_decision": "confirm"},
+                )
+
+            saved = json.loads((out_dir / "report.json").read_text(encoding="utf-8"))
+            # Both W-001 (CWE-89) AND promoted W-002 (CWE-79) received real OWASP Cheat Sheet RAG guidance
+            self.assertEqual(len(saved["findings"]), 2)
+            self.assertTrue(all(len(f["guidance"]) >= 1 for f in saved["findings"]))
+
+            md_en = render_pentest_markdown(saved)
+            sec4 = md_en.split("## 4. Detailed Findings", 1)[1].split("## 5. Risk Ratings", 1)[0]
+            sec6 = md_en.split("## 6. Remediation Recommendations", 1)[1].split("## 7. Appendix", 1)[0]
+            # Remediation is NOT duplicated in Section 4; lives exclusively & dynamically in Section 6
+            self.assertNotIn("**Remediation:**", sec4)
+            self.assertIn("[W-001 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", sec6)
+            self.assertIn("Prepared statements ensure an attacker cannot alter SQL query intent", sec6)
+            self.assertIn("[W-002 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", sec6)
+            self.assertIn("apply context-aware output encoding", sec6)
+            # Zero hardcoded default cookie/server-banner lines when not confirmed findings
+            self.assertNotIn("Set Secure, HttpOnly, and SameSite attributes on session cookies", sec6)
+            self.assertNotIn("Upgrade outdated server software versions", sec6)
+
+            rendered_paragraphs = []
+            orig_para = __import__("reportlab.platypus", fromlist=["Paragraph"]).Paragraph
+
+            def spy_para(txt, *a, **kw):
+                rendered_paragraphs.append(str(txt))
+                return orig_para(txt, *a, **kw)
+
+            with patch("reportlab.platypus.Paragraph", side_effect=spy_para):
+                render_pdf(saved, tmp_p / "verified.pdf")
+            joined_pdf = __import__("html").unescape("\n".join(rendered_paragraphs))
+            pdf_sec4 = joined_pdf.split('<a name="sec4"/>4. Detailed Findings', 1)[1].split('<a name="sec5"/>5. Risk Ratings', 1)[0]
+            pdf_sec6 = joined_pdf.split('<a name="sec6"/>6. Remediation Recommendations', 1)[1].split('<a name="sec7"/>7. Appendix', 1)[0]
+            self.assertNotIn("Remediation:", pdf_sec4)
+            self.assertIn("[W-001 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", pdf_sec6)
+            self.assertIn("[W-002 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", pdf_sec6)
+            self.assertNotIn("Set Secure, HttpOnly, and SameSite attributes on session cookies", pdf_sec6)
 
 
 if __name__ == "__main__":
     unittest.main()
+

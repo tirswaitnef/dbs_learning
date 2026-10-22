@@ -177,6 +177,14 @@ def _priority_patterns(finding):
             r'error handling cheat sheet / objective$',
             r'defense option 2:\s*stored procedures$',
         ]
+    if 'CWE-79' in cwes:
+        return [
+            r'output encoding$',
+            r'html entity encoding|html context',
+            r'content security policy',
+            r'framework security$',
+            r'safe sinks|dom based xss',
+        ]
     if 'Database_Security_Cheat_Sheet.md' in preferred_sources(finding):
         db_hardening=(r'hardening a microsoft sql server' if re.search(r'mssql|sql server',blob,re.I)
                       else r'hardening a mysql or a mariadb server' if re.search(r'mysql|mariadb',blob,re.I)
@@ -191,7 +199,14 @@ def _priority_patterns(finding):
         if re.search(r'tls|ssl|cleartext|unencrypted|transport',blob,re.I):
             patterns.insert(2,r'implementing transport layer protection$')
         return patterns
-    return [r'defense option [123]\b']
+    return [
+        r'defense option [123]\b',
+        r'mitigation$|prevention$|recommendation$|allowlist|verifying access controls|only support strong protocols',
+    ]
+
+
+def _is_intro_section(section_path: str) -> bool:
+    return bool(re.search(r'(?:^|/)\s*(?:\d+(?:\.\d+)*\s+)?introduction\s*$', str(section_path or ''), re.I))
 
 
 def source_candidates(results, documents, preferred, *, finding=None, max_chars=14000):
@@ -224,16 +239,18 @@ def source_candidates(results, documents, preferred, *, finding=None, max_chars=
                     break
             if matched_section:
                 break
-    for pass_preferred in (True,False):
-        for hit in ranked:
-            name=hit['source']
-            if (name in preferred)!=pass_preferred:continue
-            if not re.fullmatch(r'[A-Za-z0-9_-]+\.md',name) or name not in by_source:continue
-            doc=by_source[name]
-            for block in blocks(doc):
-                # Expand a retrieved chunk to the whole overlapping paragraph, with its headings.
-                if block['end']<=hit['start'] or block['start']>=hit['end']:continue
-                add_block(name,doc,block,hit['score'])
+    for intro_pass in (False,True):
+        for pass_preferred in (True,False):
+            for hit in ranked:
+                name=hit['source']
+                if (name in preferred)!=pass_preferred:continue
+                if not re.fullmatch(r'[A-Za-z0-9_-]+\.md',name) or name not in by_source:continue
+                doc=by_source[name]
+                for block in blocks(doc):
+                    if _is_intro_section(block['section'])!=intro_pass:continue
+                    # Expand a retrieved chunk to the whole overlapping paragraph, with its headings.
+                    if block['end']<=hit['start'] or block['start']>=hit['end']:continue
+                    add_block(name,doc,block,hit['score'])
     return candidates
 
 
@@ -403,9 +420,27 @@ def load_corpus_runtime(raw_directory, store_directory, settings, offline=False)
 
 def run_corpus_report(scan_path, output, settings, *, raw_directory, store_directory,
                       format_='normalized', offline=False, progress=None, report_metadata=None,display_filename=None):
+    from dataclasses import replace as dc_replace
     from .parsers import load_findings
     findings=load_findings(scan_path,format_)
     if len(findings)>100:raise ValueError('Corpus report supports at most 100 records; split input')
+    xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
+    extra_poc=str((report_metadata or {}).get('xss_poc') or '').strip()
+    drop_obs=(xss_dec=='drop')
+    if xss_dec in {'confirm','include','keep'}:
+        promoted_findings=[]
+        for f in findings:
+            if getattr(f,'kind','')=='observation':
+                new_sev='medium' if f.cwe=='CWE-79' and f.severity in {'info','low','unknown'} else f.severity
+                new_ev=([extra_poc,*f.evidence] if extra_poc else list(f.evidence))
+                new_det=dict(f.details or {})
+                if f.cwe=='CWE-79':
+                    new_det.setdefault('cvss_score','6.1')
+                    new_det.setdefault('cvss_vector','CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N')
+                promoted_findings.append(dc_replace(f,kind='scanner_alert',severity=new_sev,evidence=new_ev,details=new_det))
+            else:
+                promoted_findings.append(f)
+        findings=promoted_findings
     if progress:
         progress(f"[step=1|pct=8] Đã đọc & chuẩn hóa {len(findings)} bản ghi từ file kiểm thử")
     eligible=any(classify(f)['status']=='in_scope' and f.evidence for f in findings)
@@ -428,6 +463,10 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                     'SQL injection additional defenses least privilege allow-list input validation',
                     'error handling generic error response log server side SQL exception',
                 ])
+            elif query.startswith('CWE-79 '):
+                sub_queries.extend([
+                    'Cross Site Scripting Prevention output encoding HTML entity context Content Security Policy',
+                ])
             elif any(query.startswith(prefix) for prefix in ('CWE-1393 ','CWE-306 ','CWE-521 ','CWE-287 ')):
                 sub_queries.append('Database Security authentication localhost bind permissions mysql_secure_installation')
             merged={}
@@ -438,8 +477,6 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                         merged[key]=hit
             return sorted(merged.values(),key=lambda h:-h['score'])
     scan_sha=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest()
-    xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
-    drop_obs=(xss_dec=='drop')
     force_fresh=str((report_metadata or {}).get('force_fresh_ai') or '').strip().lower() in {'1','true','yes','on'}
     out_dir=Path(output)
     out_dir.mkdir(parents=True,exist_ok=True)
@@ -453,8 +490,8 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
 
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
-        'v':2,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':corpus_sha,
-        'model':settings.model_label,'xss_decision':xss_dec,
+        'v':3,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':corpus_sha,
+        'model':settings.model_label,'xss_decision':xss_dec,'xss_poc':extra_poc,
     },sort_keys=True).encode('utf-8')).hexdigest()
     cache_file=cache_dir/f'{cache_key}.json'
     if not force_fresh and cache_file.is_file():

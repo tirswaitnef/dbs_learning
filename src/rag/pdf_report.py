@@ -45,7 +45,7 @@ def render_pdf(report, path):
     col_code_bg = colors.HexColor('#F5F6F8')
 
     margin_x = 60.0
-    margin_y = 56.0
+    margin_y = 48.0
     width = A4[0] - (2.0 * margin_x)  # 475.28 pt (matches 475 pt in reference template)
 
     class ObliqueSubtitle(Flowable):
@@ -93,29 +93,29 @@ def render_pdf(report, path):
     )
 
     sec_heading_st = ParagraphStyle(
-        'sec_heading', fontName='RagBold', fontSize=15.5, leading=21, alignment=TA_LEFT,
-        textColor=col_heading, spaceBefore=18, spaceAfter=8, keepWithNext=True,
+        'sec_heading', fontName='RagBold', fontSize=15.0, leading=20, alignment=TA_LEFT,
+        textColor=col_heading, spaceBefore=13, spaceAfter=6, keepWithNext=True,
     )
     finding_heading_st = ParagraphStyle(
-        'finding_heading', fontName='RagBold', fontSize=11.5, leading=16, alignment=TA_LEFT,
-        textColor=col_heading, spaceBefore=10, spaceAfter=5, keepWithNext=True,
+        'finding_heading', fontName='RagBold', fontSize=11.5, leading=15.5, alignment=TA_LEFT,
+        textColor=col_heading, spaceBefore=8, spaceAfter=4, keepWithNext=True,
     )
     body_st = ParagraphStyle(
-        'body', fontName='RagText', fontSize=9.8, leading=14.2, alignment=TA_LEFT,
-        textColor=col_body, spaceAfter=5.5, splitLongWords=True,
+        'body', fontName='RagText', fontSize=9.8, leading=13.8, alignment=TA_LEFT,
+        textColor=col_body, spaceAfter=5.0, splitLongWords=True,
     )
     plain_line_st = ParagraphStyle(
-        'plain_line', fontName='RagText', fontSize=9.8, leading=14.0, alignment=TA_LEFT,
-        textColor=col_body, spaceAfter=4.5, splitLongWords=True,
+        'plain_line', fontName='RagText', fontSize=9.8, leading=13.6, alignment=TA_LEFT,
+        textColor=col_body, spaceAfter=4.0, splitLongWords=True,
     )
     kv_line_st = ParagraphStyle(
-        'kv_line', fontName='RagText', fontSize=9.8, leading=13.8, alignment=TA_LEFT,
-        textColor=col_body, spaceAfter=4.5, splitLongWords=True,
+        'kv_line', fontName='RagText', fontSize=9.8, leading=13.6, alignment=TA_LEFT,
+        textColor=col_body, spaceAfter=4.0, splitLongWords=True,
     )
     code_st = ParagraphStyle(
-        'code_block', fontName='RagText', fontSize=7.7, leading=10.8, alignment=TA_LEFT,
-        textColor=col_body, backColor=col_code_bg, borderPadding=5, leftIndent=6, rightIndent=0,
-        spaceAfter=5.5, splitLongWords=True,
+        'code_block', fontName='RagText', fontSize=7.7, leading=10.5, alignment=TA_LEFT,
+        textColor=col_body, backColor=col_code_bg, borderPadding=4.5, leftIndent=6, rightIndent=0,
+        spaceAfter=4.5, splitLongWords=True,
     )
     tbl_hdr_st = ParagraphStyle(
         'tbl_hdr', fontName='RagBold', fontSize=8.3, leading=11, textColor=colors.white,
@@ -125,7 +125,7 @@ def render_pdf(report, path):
     )
     end_st = ParagraphStyle(
         'end_mark', fontName='RagBold', fontSize=10, leading=14, alignment=TA_CENTER,
-        textColor=col_body, spaceBefore=28, spaceAfter=4,
+        textColor=col_body, spaceBefore=18, spaceAfter=4,
     )
 
     def esc(val) -> str:
@@ -142,7 +142,13 @@ def render_pdf(report, path):
 
     def add_code_kv(label: str, raw_val: str):
         text = str(raw_val or '').strip()
-        if '\n' not in text and len(text) <= 105:
+        if text in {
+            'Not captured in input',
+            'Not captured in scanner input',
+            'Không ghi nhận trong đầu vào',
+            'Không có bản ghi gói phản hồi riêng trong đầu vào',
+            'Không có bản ghi gói yêu cầu riêng trong đầu vào',
+        }:
             add_bold_kv(label, text)
             return
         story.append(Paragraph(f"<b>{esc(label)}:</b>", ParagraphStyle('kv_lbl_only', parent=kv_line_st, spaceAfter=2, keepWithNext=True)))
@@ -201,7 +207,7 @@ def render_pdf(report, path):
     story.append(PageBreak())
 
     def add_sec_heading(idx_s: int):
-        style = ParagraphStyle(f'sec_{idx_s}', parent=sec_heading_st, spaceBefore=(4 if idx_s == 1 else 18))
+        style = ParagraphStyle(f'sec_{idx_s}', parent=sec_heading_st, spaceBefore=(4 if idx_s == 1 else 13))
         story.append(Paragraph(f'<a name="sec{idx_s}"/>{esc(s_titles[idx_s - 1])}', style))
 
     # 1. Executive Summary
@@ -273,7 +279,6 @@ def render_pdf(report, path):
         add_code_kv('Request' if en else 'Yêu cầu (Request)', e['request_text'])
         add_code_kv('Response' if en else 'Phản hồi (Response)', e['response_text'])
         add_bold_kv('Impact' if en else 'Tác động', e['impact_text'])
-        add_bold_kv('Remediation' if en else 'Khuyến nghị khắc phục', e['remediation']['text'])
 
     # 5. Risk Ratings
     add_sec_heading(5)
@@ -299,7 +304,12 @@ def render_pdf(report, path):
     add_sec_heading(6)
     if view['global_recommendations']:
         for idx_r, rec in enumerate(view['global_recommendations'], 1):
-            story.append(Paragraph(f"{idx_r}. {esc(rec['title'])}", plain_line_st))
+            raw_t = str(rec['title'] or '')
+            if raw_t.startswith('[') and '] ' in raw_t:
+                tag_part, rest_part = raw_t.split('] ', 1)
+                story.append(Paragraph(f"<b>{idx_r}. {esc(tag_part + ']')}</b> {esc(rest_part)}", plain_line_st))
+            else:
+                story.append(Paragraph(f"{idx_r}. {esc(raw_t)}", plain_line_st))
     else:
         story.append(Paragraph(
             esc('1. No confirmed remediation actions required based on supplied input.' if en else '1. Chưa ghi nhận hạng mục cần khắc phục từ dữ liệu đầu vào.'),
