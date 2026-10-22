@@ -191,8 +191,19 @@ def nse_finding(rule, script, finding_id, location, source_ref, extra):
                             "raw_xml": ET.tostring(script, encoding="unicode")})
 
 
+def _sanitize_cli(text_value):
+    return re.sub(r'[A-Za-z]:\\Users\\[^\\\s"\']+', r'C:\\Users\\[REDACTED]', text_value)
+
+
 def parse_nmap(content, source):
     root = safe_xml(content, "nmaprun")
+    nmap_meta = {}
+    if root.get("version"):
+        nmap_meta["tool_version"] = root.get("version").strip()
+    if root.get("startstr"):
+        nmap_meta["scan_start"] = root.get("startstr").strip()
+    if root.get("args"):
+        nmap_meta["cli_hint"] = _sanitize_cli(root.get("args").strip())[:300]
     findings = []
     for hi, host in enumerate(root.findall("host")):
         address = next((a.get("addr") for a in host.findall("address") if a.get("addrtype") in {"ipv4", "ipv6"}), "unknown")
@@ -206,35 +217,85 @@ def parse_nmap(content, source):
             scripts = [{"id": s.get("id"), "output": s.get("output", ""),
                         "raw_xml": ET.tostring(s, encoding="unicode")} for s in port.findall("script")]
             location = f"{address}:{port.get('portid')}/{port.get('protocol')}"
+            obs_details = {"state": state, "service": service_details, "scripts": scripts,
+                           **({"scan_telemetry": nmap_meta} if nmap_meta else {}),
+                           "raw_xml": ET.tostring(port, encoding="unicode")}
             findings.append(Finding(f"NMAP-{hi}-{pi}", f"Service observation: {service_details.get('name', 'unknown')}",
                                     "unknown", "informational", location,
                                     (observation,) + tuple("NSE: " + s["output"] for s in scripts if s["output"]),
                                     "Nmap", f"{source}#/host[{hi}]/ports/port[{pi}]", kind="observation",
-                                    details={"state": state, "service": service_details, "scripts": scripts,
-                                             "raw_xml": ET.tostring(port, encoding="unicode")}))
+                                    details=obs_details))
             # The port record stays an observation; a script result that matches a rule is a finding of its own.
             for si, script in enumerate(port.findall("script")):
                 rule = nmap_rule(script.get("id"), script.get("output", ""))
                 if rule:
+                    extra = {"state": state, "service": service_details,
+                             **({"scan_telemetry": nmap_meta} if nmap_meta else {})}
                     findings.append(nse_finding(rule, script, f"NMAP-{hi}-{pi}-S{si}", location,
                                                 f"{source}#/host[{hi}]/ports/port[{pi}]/script[{si}]",
-                                                {"state": state, "service": service_details}))
+                                                extra))
         for si, script in enumerate(host.findall("hostscript/script")):
             output = script.get("output", "")
             ref = f"{source}#/host[{hi}]/hostscript/script[{si}]"
+            extra_meta = {"scan_telemetry": nmap_meta} if nmap_meta else {}
             rule = nmap_rule(script.get("id"), output)
             if rule:
-                findings.append(nse_finding(rule, script, f"NMAP-H{hi}-S{si}", address, ref, {}))
+                findings.append(nse_finding(rule, script, f"NMAP-H{hi}-S{si}", address, ref, extra_meta))
                 continue
             findings.append(Finding(f"NMAP-H{hi}-S{si}", f"NSE observation: {script.get('id', 'unknown')}",
                                     "unknown", "unknown", address, (output,) if output else (), "Nmap",
                                     ref, kind="observation",
-                                    details={"raw_xml": ET.tostring(script, encoding="unicode")}))
+                                    details={**extra_meta, "raw_xml": ET.tostring(script, encoding="unicode")}))
     return findings
 
 
+def _sqlmap_telemetry(clean):
+    telemetry = {}
+    ver = re.search(r"\{(\d+\.\d+[A-Za-z0-9.#_-]*)\}", clean)
+    if ver:
+        telemetry["tool_version"] = ver.group(1)
+    start_m = re.search(r"\[\*\]\s*starting\s*@\s*([0-9:]+)\s*/(\d{4}-\d{2}-\d{2})/", clean)
+    end_m = re.search(r"\[\*\]\s*ending\s*@\s*([0-9:]+)\s*/(\d{4}-\d{2}-\d{2})/", clean)
+    if start_m:
+        telemetry["scan_start"] = f"{start_m.group(2)} {start_m.group(1)}"
+    if end_m:
+        telemetry["scan_end"] = f"{end_m.group(2)} {end_m.group(1)}"
+    req_m = re.search(r"with a total of (\d+) HTTP\(s\) requests", clean, re.I)
+    if req_m:
+        telemetry["request_count"] = int(req_m.group(1))
+    lvl_m = re.search(r"level \((\d+)\) and risk \((\d+)\) values\?\s*\[Y/n\]\s*([YyNn])", clean)
+    if lvl_m:
+        telemetry["level"] = int(lvl_m.group(1))
+        telemetry["risk"] = int(lvl_m.group(2))
+        telemetry["extended_dbms_tests"] = lvl_m.group(3).upper() == "Y"
+    if re.search(r"checking if the target is protected by some kind of WAF/IPS", clean, re.I):
+        waf_warn = re.search(r"(?im)^.*\[(?:WARNING|CRITICAL)\].*\b(?:WAF|IPS)\b.*$", clean)
+        telemetry["waf_status"] = waf_warn.group(0).strip() if waf_warn else "checked; no WAF/IPS warning reported"
+    non_dyn = [f"{m.group(1)} '{m.group(2)}'" for m in re.finditer(
+        r"(?im)\[WARNING\]\s+(\S+)\s+parameter\s+'([^']+)'\s+does not appear to be dynamic", clean)]
+    if non_dyn:
+        telemetry["non_dynamic_parameters"] = non_dyn
+    if re.search(r"reflective value\(s\) found and filtering out", clean, re.I):
+        telemetry["reflection_filtered"] = True
+    not_str = re.search(r'\(with --not-string="([^"]+)"\)', clean)
+    if not_str:
+        telemetry["not_string"] = not_str.group(1)
+    if re.search(r"is vulnerable\. Do you want to keep testing the others \(if any\)\?\s*\[y/N\]\s*N", clean):
+        telemetry["stopped_after_first_vulnerable_param"] = True
+    os_m = re.search(r"(?im)^\s*web server operating system:\s*(.+?)\s*$", clean)
+    if os_m:
+        telemetry["os_banner"] = os_m.group(1).strip()
+    tech_m = re.search(r"(?im)^\s*web application technology:\s*(.+?)\s*$", clean)
+    if tech_m:
+        telemetry["web_tech"] = tech_m.group(1).strip()
+    dbs_m = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
+    if dbs_m:
+        telemetry["databases"] = [m.group(1).strip() for m in re.finditer(r"^\[\*\]\s+(.+?)\s*$", dbs_m.group(0), re.M)]
+    return telemetry
+
+
 def parse_sqlmap_log(content, source):
-    """Classic sqlmap confirmed injection-point blocks only; no heuristic parsing."""
+    """Confirmed sqlmap injection-point blocks, plus explicit heuristic XSS observations when present."""
     clean = re.sub(r"\x1b\[[0-9;]*m", "", content).replace("\r\n", "\n").replace("\r", "\n")
     blocks = list(re.finditer(r"^Parameter:\s*(.+?)\s*\(([^\n]+)\)\s*$", clean, re.M))
     # The documented "back-end DBMS:" line states the engine sqlmap fingerprinted.
@@ -242,6 +303,7 @@ def parse_sqlmap_log(content, source):
     dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean)
     target_url = re.search(r"(?im)^\s*(?:Target\s+)?URL:\s*(https?://\S+)\s*$", clean)
     output_host = re.search(r"sqlmap[/\\]output[/\\]([A-Za-z0-9._-]+)", clean, re.I)
+    telemetry = _sqlmap_telemetry(clean)
     meta_lines = []
     for label_re in (
         r"(?im)^\s*web server operating system:\s*.+$",
@@ -255,6 +317,14 @@ def parse_sqlmap_log(content, source):
     if dbs_match:
         meta_lines.append(dbs_match.group(0).strip())
     post_text = "\n\n" + "\n".join(meta_lines) if dbs_match else ""
+
+    def _location_for(param_name, place_name):
+        if target_url:
+            return f"{target_url.group(1)} (parameter={param_name}, {place_name})"
+        if output_host:
+            return f"host={output_host.group(1)} (sqlmap output log); parameter={param_name} ({place_name})"
+        return f"parameter={param_name} ({place_name}); target URL not established by parser"
+
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -271,12 +341,7 @@ def parse_sqlmap_log(content, source):
             raise ValueError("sqlmap-log adapter supports classic SQL injection only")
         line_number = clean[:match.start()].count("\n") + 1
         place = match.group(2).strip()
-        if target_url:
-            location = f"{target_url.group(1)} (parameter={match.group(1)}, {place})"
-        elif output_host:
-            location = f"host={output_host.group(1)} (sqlmap output log); parameter={match.group(1)} ({place})"
-        else:
-            location = f"parameter={match.group(1)} ({place}); target URL not established by parser"
+        location = _location_for(match.group(1), place)
         http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
         findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", "unknown",
                                 location,
@@ -285,10 +350,44 @@ def parse_sqlmap_log(content, source):
                                          **({"method": http_method} if http_method else {}),
                                          "techniques": techniques,
                                          **({"dbms": dbms.group(1)} if dbms else {}),
+                                         **({"scan_telemetry": telemetry} if telemetry else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
                                          "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
-    if not findings:
-        if re.search(r"all tested parameters do not appear to be injectable", clean, re.I):
-            return []
+    negative_end = bool(re.search(r"all tested parameters do not appear to be injectable", clean, re.I))
+    if not findings and not negative_end:
         raise ValueError("No recognized final sqlmap finding/negative result; heuristic messages are insufficient")
+
+    reflect_line = re.search(r"(?im)^.*reflective value\(s\) found and filtering out.*$", clean)
+    for j, xss_m in enumerate(re.finditer(
+        r"(?im)^.*heuristic \(XSS\) test shows that (\S+) parameter '([^']+)' might be vulnerable to cross-site scripting \(XSS\) attacks.*$",
+        clean,
+    )):
+        xss_place, xss_param = xss_m.group(1).strip(), xss_m.group(2).strip()
+        xss_line_no = clean[:xss_m.start()].count("\n") + 1
+        xss_method = xss_place.upper() if xss_place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
+        ev_parts = [xss_m.group(0).strip()]
+        if reflect_line:
+            ev_parts.append(reflect_line.group(0).strip())
+        xss_tel = {k: telemetry[k] for k in ("tool_version", "scan_start", "scan_end", "reflection_filtered", "non_dynamic_parameters")
+                   if k in telemetry}
+        findings.append(Finding(
+            f"SQLMAP-OBS-{j}",
+            "Heuristic XSS indicator (sqlmap-reported, unconfirmed)",
+            "CWE-79",
+            "informational",
+            _location_for(xss_param, xss_place),
+            ("\n".join(ev_parts),),
+            "sqlmap",
+            f"{source}#line={xss_line_no}",
+            kind="observation",
+            details={
+                "parameter": xss_param,
+                "place": xss_place,
+                **({"method": xss_method} if xss_method else {}),
+                "confidence": "Heuristic (unconfirmed)",
+                **({"scan_telemetry": xss_tel} if xss_tel else {}),
+                "cwe_mapping": "adapter rule: sqlmap heuristic XSS notice -> CWE-79 observation",
+                "evidence_type": "heuristic reflection check only; requires manual XSS context verification",
+            },
+        ))
     return findings

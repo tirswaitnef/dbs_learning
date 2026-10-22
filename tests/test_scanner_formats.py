@@ -131,6 +131,74 @@ class ScannerFormatTests(unittest.TestCase):
                     f = load_findings(p, "sqlmap-log")[0]
                     self.assertEqual((f.cwe, f.details["parameter"]), ("CWE-89", "q"))
 
+    def test_sqlmap_full_telemetry_heuristic_xss_lab_context_and_multilayer_owasp(self):
+        from rag.loader import load_documents
+        from rag.official_report import blocks, preferred_sources, source_candidates
+        from rag.report_view import evidence_profile, extract_scan_context
+
+        synthetic_full = (
+            " ___ ___[']_____ ___ ___  {1.10.6#pip}\n"
+            "[*] starting @ 11:07:25 /2026-10-20/\n"
+            "[11:07:26] [INFO] checking if the target is protected by some kind of WAF/IPS\n"
+            "[11:07:26] [WARNING] GET parameter 'id' does not appear to be dynamic\n"
+            "[11:07:27] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks\n"
+            "for the remaining tests, do you want to include all tests for 'MySQL' extending provided level (1) and risk (1) values? [Y/n] Y\n"
+            "[11:07:27] [WARNING] reflective value(s) found and filtering out\n"
+            "[11:08:02] [INFO] GET parameter 'id' appears to be 'OR boolean-based blind' injectable (with --not-string=\"Me\")\n"
+            "GET parameter 'id' is vulnerable. Do you want to keep testing the others (if any)? [y/N] N\n"
+            "sqlmap identified the following injection point(s) with a total of 146 HTTP(s) requests:\n"
+            "---\n"
+            "Parameter: id (GET)\n"
+            "    Type: boolean-based blind\n"
+            "    Title: OR boolean-based blind - WHERE or HAVING clause\n"
+            "    Payload: id=1' OR NOT 1=1#&Submit=Submit\n\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(1,CONCAT(0x5c,1))-- a&Submit=Submit\n"
+            "---\n"
+            "web server operating system: Linux Debian 9 (stretch)\n"
+            "web application technology: Apache 2.4.25\n"
+            "back-end DBMS: MySQL >= 5.1 (MariaDB fork)\n"
+            "available databases [2]:\n"
+            "[*] dvwa\n"
+            "[*] information_schema\n"
+            "[11:08:19] [INFO] fetched data logged to text files under 'C:\\Users\\DemoLabUser\\AppData\\Local\\sqlmap\\output\\198.51.100.42'\n"
+            "[*] ending @ 11:08:19 /2026-10-20/\n"
+        )
+        parsed = parse_sqlmap_log(synthetic_full, "lab.log")
+        self.assertEqual([f.id for f in parsed], ["SQLMAP-0", "SQLMAP-OBS-0"])
+        sqli, xss_obs = parsed
+        self.assertEqual((sqli.kind, sqli.cwe, xss_obs.kind, xss_obs.cwe),
+                         ("scanner_alert", "CWE-89", "observation", "CWE-79"))
+        self.assertNotIn("DemoLabUser", json.dumps([asdict(f) for f in parsed]))
+
+        rep_stub = {"findings": [asdict(f) for f in parsed], "input_format": "sqlmap-log"}
+        ctx = extract_scan_context(rep_stub)
+        self.assertIn("DVWA", ctx["application_hint"])
+        self.assertEqual(ctx["schemas"], {"application": ["dvwa"], "system": ["information_schema"]})
+        self.assertEqual(len(ctx["telemetry_lines"]), 1)
+        self.assertTrue(any("Debian 9" in n for n in ctx["eol_notes"]))
+        self.assertEqual(evidence_profile(asdict(sqli))["tier"], "exploited_in_log")
+        self.assertEqual(evidence_profile(asdict(xss_obs))["tier"], "heuristic")
+
+        docs = load_documents(ROOT / "data/raw/owasp/official/CheatSheetSeries-master/cheatsheets").documents
+        by_name = {d.source: d for d in docs}
+        for name in ("SQL_Injection_Prevention_Cheat_Sheet.md", "Query_Parameterization_Cheat_Sheet.md", "Error_Handling_Cheat_Sheet.md"):
+            doc = by_name[name]
+            for b in blocks(doc):
+                self.assertEqual(doc.text[b["start"]:b["end"]], b["text"])
+        hits = [{"source": n, "start": 0, "end": len(by_name[n].text), "score": sc}
+                for n, sc in [("SQL_Injection_Prevention_Cheat_Sheet.md", 0.91),
+                              ("Query_Parameterization_Cheat_Sheet.md", 0.89),
+                              ("Error_Handling_Cheat_Sheet.md", 0.86)]]
+        cands = source_candidates(hits, docs, preferred_sources(sqli), finding=sqli)
+        top5_sections = [c["section"] for c in cands[:5]]
+        self.assertTrue(any("Defense Option 1" in s for s in top5_sections))
+        self.assertTrue(any("Using PHP with PHP Data Objects" in s for s in top5_sections))
+        self.assertTrue(any("Least Privilege" in s for s in top5_sections))
+        self.assertTrue(any("Allow-list Input Validation" in s for s in top5_sections))
+        self.assertTrue(any("Error Handling Cheat Sheet / Objective" in s for s in top5_sections))
+
 
 if __name__ == "__main__":
     unittest.main()

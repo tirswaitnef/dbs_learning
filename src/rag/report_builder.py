@@ -78,20 +78,33 @@ def md_text(value):
 
 
 def render_markdown(report):
-    from .report_view import overview,category_rows,severity_counts,SEVERITIES,technical_fields,fallback_description,MISSING,cwe_text
+    from .report_view import (
+        MISSING, SEVERITIES, category_rows, cwe_text, defense_layer_label,
+        evidence_profile, extract_scan_context, fallback_description,
+        overview, severity_counts, technical_fields,
+    )
     from .analysis import narrative_lines
     enforce(report)
+    scan_ctx=report.get('scan_context') or extract_scan_context(report)
     lines=['# Báo cáo phân tích kiểm thử bảo mật','',md_text(sample_notice(report)),
            'Chế độ: '+md_text(report['mode']), 'Thời điểm UTC: '+md_text(report['generated_at'])]
     def add(text):lines.extend(['',md_text(text)])
     for key,value in report.get('report_metadata',{}).items():add(key+': '+value)
+    if scan_ctx.get('application_hint') and not (report.get('report_metadata') or {}).get('application'):
+        add('Ứng dụng / môi trường nhận diện: '+scan_ctx['application_hint'])
+    if scan_ctx.get('scan_window') and not (report.get('report_metadata') or {}).get('assessment_period'):
+        add('Thời gian kiểm thử (từ log): '+scan_ctx['scan_window'])
     lines+=['','## 1. Tổng quan điều hành']
     for line in overview(report):add(line)
+    if scan_ctx.get('lab'):add('Ngữ cảnh mục tiêu: '+scan_ctx['lab']['note_vi'])
     if report.get('ai_summary'):
         lines+=['','### Tổng quan AI']
         for line in narrative_lines(report['ai_summary']):add(line)
     lines+=['','## 2. Phạm vi và phương pháp']
     add('Phân tích kiểm thử được cung cấp; không quét lại hoặc xác minh độc lập. Ánh xạ CWE với OWASP Top 10:2025.')
+    for t_line in scan_ctx.get('telemetry_lines',[]):add('Thông số phiên quét: '+t_line)
+    for eol in scan_ctx.get('eol_notes',[]):add('Cảnh báo vòng đời nền tảng: '+eol)
+    for gap in scan_ctx.get('repro_gaps',[]):add('Giới hạn tái hiện: '+gap)
     from .db_scope import scope_lines
     db_scope=report.get('db_scope') or {}
     for line in (db_scope.get('lines') or scope_lines(report['findings'])):add(line)
@@ -106,6 +119,8 @@ def render_markdown(report):
     for f in report['findings']:
         lines+=['','### '+md_text(f['id']+' — '+f['title'])]
         for key in ['severity','cwe','location','tool','kind','source_ref']:add(key+': '+(cwe_text(f) if key=='cwe' else str(f.get(key,MISSING))))
+        prof=evidence_profile(f)
+        add('Đánh giá chứng cứ: '+prof['label_vi']+' — '+prof['note_vi'])
         if f.get('db_frame'):
             from .db_scope import frame_line
             add('Phạm vi CSDL: '+frame_line(f['db_frame']))
@@ -128,13 +143,15 @@ def render_markdown(report):
         if not f['guidance']:continue
         lines+=['','### '+md_text(f['id']+' — '+f['title'])]
         for card in f['guidance']:
-            add('Trích nguyên văn OWASP' if card.get('origin')=='official-corpus-extractive' else 'Thẻ cũ / demo; không coi là trích nguyên văn OWASP')
+            add(defense_layer_label(card) if card.get('origin')=='official-corpus-extractive' else 'Thẻ cũ / demo; không coi là trích nguyên văn OWASP')
             for key in ['guidance_vi','applicability_vi','title','section','source_excerpt']:add(str(card.get(key,MISSING)))
             from urllib.parse import urlsplit
             url=card.get('url','')
             if urlsplit(url).scheme=='https' and urlsplit(url).hostname=='cheatsheetseries.owasp.org' and not any(c in url for c in '<>\n\r'):
                 lines+=['','<'+url+'>']
             else:add(url)
+    for eol in scan_ctx.get('eol_notes',[]):
+        add('Lưu ý hạ tầng EOL: '+eol)
     lines+=['','## 7. Phụ lục và dấu vết xử lý']
     for line in report.get('limitations',[]):add(line)
     for key in ['input_filename','scan_sha256','knowledge_sha256','model']:add(key+': '+str(report.get(key) or MISSING))

@@ -1,5 +1,6 @@
 """Shared data-driven presentation. No findings, severities or target facts invented."""
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -19,13 +20,254 @@ def clean_metadata(value):
     return result
 
 
+SYSTEM_SCHEMAS={'information_schema','mysql','performance_schema','sys','pg_catalog','pg_toast','master','tempdb','model','msdb'}
+LAB_SIGNATURES=[
+    ('dvwa','DVWA (Damn Vulnerable Web Application)','Ứng dụng web thực hành bảo mật có lỗ hổng chủ đích (PHP/MySQL)'),
+    ('mutillidae','OWASP Mutillidae II','Ứng dụng web thực hành bảo mật có lỗ hổng chủ đích'),
+    ('juice-shop','OWASP Juice Shop','Ứng dụng web thực hành bảo mật có lỗ hổng chủ đích (Node.js/SQLite)'),
+    ('juiceshop','OWASP Juice Shop','Ứng dụng web thực hành bảo mật có lỗ hổng chủ đích (Node.js/SQLite)'),
+    ('webgoat','OWASP WebGoat','Ứng dụng thực hành bảo mật có lỗ hổng chủ đích (Java)'),
+    ('bwapp','bWAPP (Buggy Web Application)','Ứng dụng web thực hành bảo mật có lỗ hổng chủ đích (PHP/MySQL)'),
+    ('crapi','OWASP crAPI','API thực hành bảo mật có lỗ hổng chủ đích'),
+    ('vampi','VAmPI','API thực hành bảo mật có lỗ hổng chủ đích'),
+]
+EOL_SIGNATURES=[
+    (re.compile(r'Debian\s+9\b',re.I),'Linux Debian 9 (stretch) đã kết thúc hỗ trợ LTS từ 06/2022 (EOL)'),
+    (re.compile(r'Debian\s+8\b',re.I),'Linux Debian 8 (jessie) đã kết thúc hỗ trợ (EOL)'),
+    (re.compile(r'Ubuntu\s+1[468]\.04\b',re.I),'Phiên bản Ubuntu LTS cũ đã hết hỗ trợ tiêu chuẩn (EOL)'),
+    (re.compile(r'CentOS(?:\s+Linux)?\s+[67]\b',re.I),'CentOS 6/7 đã kết thúc vòng đời hỗ trợ (EOL)'),
+    (re.compile(r'Apache[/\s]+2\.4\.(?:[0-9]|1[0-9]|2[0-9])\b',re.I),'Apache HTTP Server nhánh 2.4 cũ (phát hành giai đoạn 2012–2017, thiếu nhiều bản vá mới)'),
+    (re.compile(r'Apache[/\s]+2\.2\b',re.I),'Apache HTTP Server 2.2 đã kết thúc hỗ trợ từ 07/2017 (EOL)'),
+    (re.compile(r'\bPHP[/\s]+[57]\.\d+',re.I),'Nhánh PHP 5.x/7.x đã kết thúc hỗ trợ bảo mật (EOL)'),
+    (re.compile(r'\bMySQL\s+5\.[01567]\b',re.I),'Nhánh MySQL 5.x đã kết thúc vòng đời hỗ trợ chính thức (EOL)'),
+]
+
+
+def split_schemas(names):
+    app,sys_names=[],[]
+    for name in names or []:
+        clean=str(name).strip()
+        if not clean:continue
+        (sys_names if clean.lower() in SYSTEM_SCHEMAS else app).append(clean)
+    return app,sys_names
+
+
+def _row_corpus_text(row):
+    d=row.get('details') if isinstance(row.get('details'),dict) else {}
+    parts=[str(row.get('title','')),str(row.get('location','')),*map(str,row.get('evidence') or [])]
+    tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
+    for k in ('os_banner','web_tech','dbms'):
+        if d.get(k):parts.append(str(d[k]))
+        if tel.get(k):parts.append(str(tel[k]))
+    if isinstance(d.get('service'),dict):
+        parts.extend(str(v) for v in d['service'].values() if v)
+    return '\n'.join(parts)
+
+
+def detect_lab_indicator(rows):
+    for row in rows:
+        d=row.get('details') if isinstance(row.get('details'),dict) else {}
+        tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
+        schemas=[str(x) for x in (tel.get('databases') or [])]
+        blob=_row_corpus_text(row)
+        for token,label,desc in LAB_SIGNATURES:
+            basis=[]
+            if any(s.lower()==token for s in schemas):basis.append(f"schema CSDL '{token}'")
+            if re.search(rf'(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])',str(row.get('location','')),re.I):
+                basis.append(f"đường dẫn '{token}'")
+            if token=='dvwa' and 'Submit=Submit' in blob:
+                basis.append("tham số 'Submit=Submit'")
+            if basis:
+                return {'name':label,'description':desc,'basis':', '.join(basis),
+                        'note_vi':f"Dấu hiệu đầu vào ({', '.join(basis)}) trùng khớp {label} — {desc.lower()}."}
+    return None
+
+
+def detect_eol_banners(rows):
+    found=[]
+    for row in rows:
+        blob=_row_corpus_text(row)
+        for pattern,note in EOL_SIGNATURES:
+            if pattern.search(blob) and note not in found:
+                found.append(note)
+    return found
+
+
+def evidence_profile(row):
+    d=row.get('details') if isinstance(row.get('details'),dict) else {}
+    tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
+    kind=row.get('kind','scanner_alert')
+    techs=d.get('techniques') or []
+    dbs=tel.get('databases') or []
+    app_dbs,sys_dbs=split_schemas(dbs)
+    if kind=='observation':
+        conf=str(d.get('confidence') or '')
+        if 'heuristic' in conf.lower():
+            return {'tier':'heuristic','label_vi':'Cảnh báo heuristic chưa xác nhận (cần kiểm chứng thủ công)',
+                    'note_vi':'Công cụ mới ghi nhận dấu hiệu phản xạ đầu vào sơ bộ, chưa gửi payload khai thác XSS thực tế.'}
+        return {'tier':'observation','label_vi':'Quan sát dịch vụ / bề mặt mạng (chưa phải lỗ hổng độc lập)',
+                'note_vi':'Ghi nhận trạng thái cổng hoặc banner dịch vụ để hỗ trợ phân tích phạm vi.'}
+    if techs and dbs:
+        schema_parts=[]
+        if app_dbs:schema_parts.append("schema ứng dụng '"+', '.join(app_dbs)+"'")
+        if sys_dbs:schema_parts.append("schema hệ thống '"+', '.join(sys_dbs)+"'")
+        return {'tier':'exploited_in_log',
+                'label_vi':f"Đã khai thác trích xuất dữ liệu trong log (1 điểm tiêm / {len(techs)} kỹ thuật; đọc {len(dbs)} schema)",
+                'note_vi':(f"Log chứng minh khai thác thành công bằng {len(techs)} kỹ thuật ({', '.join(techs)}) và đã liệt kê {', '.join(schema_parts)}. "
+                           "Nhóm lỗi SQL Injection trích xuất được dữ liệu thường thuộc mức Cao/Nghiêm trọng trong thực tế; giữ 'unknown' ở trường gốc vì công cụ không xuất CVSS và thiếu ngữ cảnh xác thực (PR:N/PR:L).")}
+    if techs:
+        return {'tier':'confirmed_payload',
+                'label_vi':f"Công cụ xác nhận payload phản hồi (1 điểm tiêm / {len(techs)} kỹ thuật)",
+                'note_vi':f"Công cụ ghi nhận {len(techs)} kỹ thuật phản hồi ({', '.join(techs)}); chưa kèm kết quả trích xuất dữ liệu trong log."}
+    if d.get('scanner_rule') and row.get('evidence'):
+        return {'tier':'active_script',
+                'label_vi':'Xác nhận kiểm tra chủ động từ script/plugin công cụ',
+                'note_vi':'Script/plugin chuyên biệt trả về kết quả dương tính trực tiếp trên dịch vụ mục tiêu; giữ nguyên mức độ gốc do công cụ cung cấp.'}
+    if row.get('evidence'):
+        return {'tier':'tool_evidence',
+                'label_vi':'Có bằng chứng phản hồi từ công cụ kiểm thử (chưa kiểm chứng thủ công)',
+                'note_vi':'Đã đính kèm trích đoạn phản hồi của công cụ; cần đối chiếu ngữ cảnh xác thực và nghiệp vụ thực tế.'}
+    return {'tier':'unverified','label_vi':'Thiếu bằng chứng phản hồi trực tiếp',
+            'note_vi':'Chỉ có tên cảnh báo từ đầu vào, chưa có trích đoạn phản hồi đi kèm.'}
+
+
+def extract_scan_context(report, scan_path=None, format_=None):
+    rows=report.get('findings') or []
+    ctx={'lab':detect_lab_indicator(rows),'eol_notes':detect_eol_banners(rows),'telemetry_lines':[],'repro_gaps':[]}
+    seen_tel=set()
+    for r in rows:
+        d=r.get('details') if isinstance(r.get('details'),dict) else {}
+        tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
+        if not tel:continue
+        if tel.get('scan_start') and not ctx.get('scan_window'):
+            ctx['scan_window']=(f"{tel['scan_start']} – {tel['scan_end']} (ghi trong log {r.get('tool','')})"
+                                if tel.get('scan_end') else f"{tel['scan_start']} (ghi trong log {r.get('tool','')})")
+        parts=[]
+        if tel.get('tool_version'):parts.append(f"{r.get('tool','tool')} {tel['tool_version']}")
+        if tel.get('request_count'):parts.append(f"{tel['request_count']} HTTP requests")
+        if tel.get('level') is not None and tel.get('risk') is not None:
+            ext=' (mở rộng bài kiểm tra theo DBMS)' if tel.get('extended_dbms_tests') else ''
+            parts.append(f"level={tel['level']}, risk={tel['risk']}{ext}")
+        if tel.get('waf_status'):parts.append(f"WAF/IPS: {tel['waf_status']}")
+        if tel.get('non_dynamic_parameters'):
+            parts.append("tham số cảnh báo không dynamic: "+', '.join(tel['non_dynamic_parameters']))
+        if tel.get('reflection_filtered'):parts.append('đã lọc giá trị phản xạ (reflective values filtered)')
+        if tel.get('not_string'):parts.append(f'chuỗi đối chiếu boolean: --not-string="{tel["not_string"]}"')
+        if tel.get('stopped_after_first_vulnerable_param'):
+            parts.append('dừng kiểm thử các tham số còn lại sau phát hiện đầu tiên ([y/N] N)')
+        if tel.get('cli_hint'):parts.append(f"lệnh ghi nhận: {tel['cli_hint']}")
+        if parts:
+            line='; '.join(parts)
+            if line not in seen_tel:
+                seen_tel.add(line);ctx['telemetry_lines'].append(line)
+        dbs=tel.get('databases') or []
+        if dbs and not ctx.get('schemas'):
+            app_s,sys_s=split_schemas(dbs)
+            ctx['schemas']={'application':app_s,'system':sys_s}
+    # Deduplicate any shorter telemetry summary whose clauses are already covered by a fuller record in the same file.
+    kept_tel=[]
+    for line in sorted(ctx['telemetry_lines'],key=len,reverse=True):
+        clauses={c.strip() for c in line.split(';')}
+        if not any(clauses.issubset({c.strip() for c in big.split(';')}) for big in kept_tel):
+            kept_tel.append(line)
+    ctx['telemetry_lines']=kept_tel
+    if scan_path and not ctx.get('scan_window') and Path(scan_path).is_file():
+        if format_=='zap':
+            try:
+                raw_json=json.loads(Path(scan_path).read_text(encoding='utf-8-sig',errors='replace'))
+                if raw_json.get('@generated'):ctx['scan_window']=f"{raw_json['@generated']} (ghi trong file ZAP)"
+            except Exception:pass
+    fmt=format_ or report.get('input_format','')
+    if fmt=='sqlmap-log' or any(str(r.get('tool','')).lower()=='sqlmap' for r in rows):
+        if any('sqlmap output log' in str(r.get('location','')) or 'not established' in str(r.get('location','')) for r in rows):
+            ctx['repro_gaps'].append('Stdout mặc định của sqlmap không lưu câu lệnh CLI đã chạy nên thiếu URL/endpoint đầy đủ, cookie/phiên đăng nhập (PR:N hay PR:L) và quyền tài khoản CSDL hiện tại (--current-user / --privileges).')
+    if ctx['lab']:
+        ctx['application_hint']=f"{ctx['lab']['name']} (nhận diện từ {ctx['lab']['basis']})"
+    return ctx
+
+
+def context_source_text(row):
+    """Deterministic single-record context note (C1) grounded strictly in parsed fields."""
+    d=row.get('details') if isinstance(row.get('details'),dict) else {}
+    tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
+    prof=evidence_profile(row)
+    if row.get('kind')=='observation':
+        if str(row.get('cwe',''))=='CWE-79':
+            refl=' và đã ghi nhận giá trị đầu vào phản xạ lại trong HTTP response (reflective values found)' if tel.get('reflection_filtered') else ''
+            return (f"Đánh giá chứng cứ theo code: {prof['label_vi']}. "
+                    f"Phép kiểm tra heuristic sơ bộ của {row.get('tool','công cụ')} ghi nhận tham số {d.get('place','')} '{d.get('parameter','')}' "
+                    f"có dấu hiệu phản xạ ký tự đặc biệt phía trình duyệt (XSS - CWE-79){refl}. "
+                    "Bản ghi thuộc tầng giao diện web (ngoài phạm vi CSDL); log chưa kiểm tra ngữ cảnh mã hóa HTML/JS hay Content-Security-Policy.")
+        svc=d.get('service') if isinstance(d.get('service'),dict) else {}
+        svc_desc=' '.join(str(svc.get(k,'')) for k in ('name','product','version','extrainfo') if svc.get(k)).strip()
+        return (f"Đánh giá chứng cứ theo code: {prof['label_vi']}. "
+                f"Ghi nhận trạng thái cổng {d.get('state','open')} tại {row.get('location','')} "
+                f"{('với banner dịch vụ '+svc_desc) if svc_desc else ''}; chưa tự suy ra lỗ hổng chỉ từ việc mở cổng.").replace('  ',' ')
+    parts=[f"Đánh giá chứng cứ theo code: {prof['label_vi']}."]
+    techs=d.get('techniques') or []
+    if techs:
+        parts.append(f"Đây là 1 điểm lỗ hổng SQL Injection duy nhất trên tham số {d.get('place','')} '{d.get('parameter','')}', được xác nhận qua {len(techs)} kỹ thuật kiểm thử ({', '.join(techs)}) — không phải {len(techs)} lỗ hổng riêng lẻ.")
+    dbs=tel.get('databases') or []
+    if dbs:
+        app_s,sys_s=split_schemas(dbs)
+        seg=[]
+        if app_s:seg.append("schema ứng dụng: "+", ".join(app_s))
+        if sys_s:seg.append("schema hệ thống mặc định của DBMS (không phải CSDL ứng dụng): "+", ".join(sys_s))
+        parts.append("Dữ liệu đã trích xuất thực tế trong log — "+"; ".join(seg)+".")
+    lab=detect_lab_indicator([row])
+    if lab:parts.append(lab['note_vi'])
+    eol=detect_eol_banners([row])
+    if eol:parts.append("Cảnh báo vòng đời nền tảng từ banner: "+"; ".join(eol)+".")
+    t_bits=[]
+    if tel.get('tool_version'):t_bits.append(f"phiên bản công cụ {tel['tool_version']}")
+    if tel.get('scan_start'):t_bits.append(f"thời gian {tel['scan_start']}"+(f" đến {tel['scan_end']}" if tel.get('scan_end') else ""))
+    if tel.get('request_count'):t_bits.append(f"{tel['request_count']} HTTP requests")
+    if tel.get('level') is not None:t_bits.append(f"level={tel['level']}/risk={tel['risk']}")
+    if tel.get('waf_status'):t_bits.append(f"WAF/IPS: {tel['waf_status']}")
+    if tel.get('non_dynamic_parameters'):t_bits.append("cảnh báo không dynamic trên "+", ".join(tel['non_dynamic_parameters']))
+    if tel.get('reflection_filtered'):t_bits.append("lọc giá trị phản xạ")
+    if tel.get('not_string'):t_bits.append(f'--not-string="{tel["not_string"]}"')
+    if tel.get('stopped_after_first_vulnerable_param'):t_bits.append("bỏ qua kiểm thử các tham số khác ([y/N] N)")
+    if t_bits:parts.append("Thông số phiên quét: "+"; ".join(t_bits)+".")
+    if 'sqlmap output log' in str(row.get('location','')) or 'not established' in str(row.get('location','')):
+        parts.append("Giới hạn tái hiện: log stdout không lưu URL đầy đủ, cookie xác thực phiên hay quyền tài khoản CSDL hiện tại.")
+    return ' '.join(parts)
+
+
+def defense_layer_label(card):
+    sec=str(card.get('section','')).lower()
+    src=str(card.get('source','')).lower()
+    if 'query_parameterization' in src or 'using php' in sec or 'prepared statement example' in sec:
+        return 'Lớp 2 — Mẫu mã nguồn an toàn OWASP (Prepared Statement / PDO)'
+    if 'defense option 1' in sec:
+        return 'Lớp 1 — Phòng vệ gốc: Truy vấn tham số hóa (Prepared Statements)'
+    if 'defense option 2' in sec:
+        return 'Phòng vệ thay thế: Thủ tục lưu trữ tham số hóa (Stored Procedures)'
+    if 'least privilege' in sec:
+        return 'Lớp 3 — Phòng vệ chiều sâu CSDL: Nguyên tắc đặc quyền tối thiểu (Least Privilege)'
+    if 'input validation' in sec:
+        return 'Lớp 4 — Phòng vệ chiều sâu ứng dụng: Kiểm tra/ép kiểu đầu vào theo Allow-list'
+    if 'error_handling' in src or 'error handling' in sec:
+        return 'Lớp 5 — Kiểm soát phản hồi lỗi: Ẩn chi tiết lỗi CSDL phía client (chặn Error-based SQLi)'
+    if 'configuring secure authentication' in sec:
+        return 'Lớp 1 — Xác thực CSDL: Bắt buộc mật khẩu mạnh & tài khoản riêng biệt'
+    if 'protecting the backend database' in sec:
+        return 'Lớp 2 — Cô lập mạng CSDL: Chỉ bind localhost / giới hạn cổng TCP qua tường lửa'
+    if 'creating secure permissions' in sec:
+        return 'Lớp 3 — Phân quyền CSDL: Loại bỏ sử dụng tài khoản quản trị mặc định (root/sa)'
+    if 'hardening' in sec or 'configuration and hardening' in sec:
+        return 'Lớp 4 — Cứng hóa máy chủ CSDL (Database Server Hardening)'
+    return 'Trích nguyên văn hướng dẫn phòng vệ OWASP'
+
+
 def attach_context(report,scan_path,format_,metadata=None,display_filename=None):
     base={}
     if format_=='normalized':base=clean_metadata(json.loads(Path(scan_path).read_text(encoding='utf-8-sig')).get('report_metadata'))
     report['report_metadata']={**base,**clean_metadata(metadata)}
     report['input_filename']=display_filename or Path(scan_path).name
     report['input_format']=format_
-    report['report_layout_version']='0.10'
+    report['scan_context']=extract_scan_context(report,scan_path,format_)
+    report['report_layout_version']='0.11'
     return report
 
 
