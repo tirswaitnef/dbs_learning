@@ -2,12 +2,36 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-if not exist ".venv\Scripts\python.exe" goto no_venv
+if exist ".venv\Scripts\python.exe" goto have_venv
 
+echo Dang tao moi truong Python .venv lan dau...
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+if not errorlevel 1 goto make_venv_python
+py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+if not errorlevel 1 goto make_venv_py
+for %%V in (Python314 Python313 Python312 Python311) do (
+  if exist "%LOCALAPPDATA%\Programs\Python\%%V\python.exe" (
+    "%LOCALAPPDATA%\Programs\Python\%%V\python.exe" -m venv .venv
+    if exist ".venv\Scripts\python.exe" goto have_venv
+  )
+)
+goto no_python
+
+:make_venv_python
+python -m venv .venv
+if exist ".venv\Scripts\python.exe" goto have_venv
+goto no_python
+
+:make_venv_py
+py -3 -m venv .venv
+if exist ".venv\Scripts\python.exe" goto have_venv
+goto no_python
+
+:have_venv
 if not exist ".env" copy /y ".env.example" ".env" >nul
 
 echo %* | findstr /i /c:"--demo" >nul
-if not errorlevel 1 goto run_server
+if not errorlevel 1 goto check_demo_deps
 
 ".venv\Scripts\python.exe" -c "import urllib.request; urllib.request.build_opener(urllib.request.ProxyHandler({})).open('http://127.0.0.1:11434/api/tags', timeout=1.5).read()" >nul 2>&1
 if not errorlevel 1 goto check_deps
@@ -35,6 +59,14 @@ if not exist "data\raw\owasp\official\CheatSheetSeries-master\cheatsheets" goto 
 echo [1/2] Dang tao kho vector OWASP Cheat Sheet Series lan dau - vui long cho 1-3 phut...
 ".venv\Scripts\python.exe" scripts\ingest_documents.py --raw data\raw\owasp\official\CheatSheetSeries-master\cheatsheets --output data\processed\owasp-official
 if errorlevel 1 goto ingest_failed
+goto run_server
+
+:check_demo_deps
+".venv\Scripts\python.exe" -c "import reportlab" >nul 2>&1
+if not errorlevel 1 goto run_server
+echo Dang cai dat thu vien xuat PDF cho che do demo...
+".venv\Scripts\python.exe" -m pip install -e .
+if errorlevel 1 goto deps_failed
 
 :run_server
 echo Dang khoi dong Web UI tai http://127.0.0.1:8765 ...
@@ -43,13 +75,13 @@ pause
 exit /b 0
 
 :install_deps
-echo Dang cai dat thu vien embedding va PDF cho .venv...
+echo Dang cai dat thu vien embedding E5 va PDF cho .venv lan dau - vui long cho vai phut...
 ".venv\Scripts\python.exe" -m pip install -e ".[retrieval,pdf]"
 if errorlevel 1 goto deps_failed
 goto check_store
 
-:no_venv
-echo Chua co moi truong .venv. Chay: python -m venv .venv
+:no_python
+echo Khong tim thay Python 3.11 tro len. Hay cai Python 3.12 tu python.org.
 pause
 exit /b 1
 

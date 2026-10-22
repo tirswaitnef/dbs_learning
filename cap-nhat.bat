@@ -14,6 +14,11 @@ echo   CAP NHAT CODE DU AN
 echo ============================================
 echo.
 
+where git >nul 2>&1
+if errorlevel 1 if exist "%ProgramFiles%\Git\cmd\git.exe" set "PATH=%PATH%;%ProgramFiles%\Git\cmd"
+where git >nul 2>&1
+if errorlevel 1 if exist "%LOCALAPPDATA%\Programs\Git\cmd\git.exe" set "PATH=%PATH%;%LOCALAPPDATA%\Programs\Git\cmd"
+
 git rev-parse --git-dir >nul 2>&1
 if errorlevel 1 (
   echo [LOI] Thu muc nay khong phai repo git, hoac chua cai Git.
