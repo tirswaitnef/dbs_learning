@@ -422,14 +422,13 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                       format_='normalized', offline=False, progress=None, report_metadata=None,display_filename=None):
     from dataclasses import replace as dc_replace
     from .ai_ingest import (
-        extract_findings_from_report_with_ai,
-        extract_pentest_text,
-        resolve_unmapped_findings_with_ai,
+        read_bundle_with_ai,
+        read_input_with_ai,
     )
-    from .parsers import load_findings
 
     xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
     extra_poc=str((report_metadata or {}).get('xss_poc') or '').strip()
+    raw_bundle_files=(report_metadata or {}).get('_raw_bundle_files') if isinstance((report_metadata or {}).get('_raw_bundle_files'),list) else None
     drop_obs=(xss_dec=='drop')
     scan_sha=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest()
     force_fresh=str((report_metadata or {}).get('force_fresh_ai') or '').strip().lower() in {'1','true','yes','on'}
@@ -452,7 +451,7 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
             store_probe_sha=''
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
-        'v':4,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':store_probe_sha,
+        'v':5,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':store_probe_sha,
         'model':settings.model_label,'xss_decision':xss_dec,'xss_poc':extra_poc,
     },sort_keys=True).encode('utf-8')).hexdigest()
     cache_file=cache_dir/f'{cache_key}.json'
@@ -464,8 +463,9 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
             prev_trace['from_cache']=True
             cached_report['ai_trace']=prev_trace
             _write_trace_files(prev_trace)
+            clean_meta_cached={k:v for k,v in dict(report_metadata or {}).items() if not str(k).startswith('_')}
             from .report_view import attach_context
-            attach_context(cached_report,scan_path,format_,report_metadata,display_filename)
+            attach_context(cached_report,scan_path,format_,clean_meta_cached,display_filename)
             if progress:
                 progress('[step=5|pct=92] Đã tái sử dụng kết quả phân tích AI đã kiểm chứng cho cùng tệp đầu vào (Cache SHA-256)')
                 progress('[step=6|pct=97] Đang kết xuất lại khung mẫu PDF & Markdown với cấu hình mới...')
@@ -473,22 +473,27 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
         except Exception:
             pass
 
-    effective_meta=dict(report_metadata or {})
+    user_meta={k:v for k,v in dict(report_metadata or {}).items() if not str(k).startswith('_')}
+    bundle_sources_out=None
     with trace_llm_session(mode=settings.resolved_provider,model=settings.model_label,on_update=_write_trace_files) as trace_sess:
         shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings))
-        if format_=='pentest-report':
-            raw_doc_text=extract_pentest_text(scan_path)
-            findings,extracted_meta=extract_findings_from_report_with_ai(
-                raw_doc_text,
-                display_filename or Path(scan_path).name,
+        if raw_bundle_files:
+            findings,extracted_meta,bundle_sources_out=read_bundle_with_ai(
+                raw_bundle_files,
                 settings,
                 llm=shared_llm,
                 progress=progress,
             )
-            effective_meta={**extracted_meta,**effective_meta}
         else:
-            findings=load_findings(scan_path,format_)
-            findings=resolve_unmapped_findings_with_ai(findings,settings,llm=shared_llm,progress=progress)
+            findings,extracted_meta=read_input_with_ai(
+                scan_path,
+                display_filename or Path(scan_path).name,
+                format_,
+                settings,
+                llm=shared_llm,
+                progress=progress,
+            )
+        effective_meta={**extracted_meta,**user_meta}
 
         if len(findings)>100:raise ValueError('Corpus report supports at most 100 records; split input')
         if xss_dec in {'confirm','include','keep'}:
@@ -548,6 +553,8 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                                   drop_unverified_observations=drop_obs)
         from .report_view import attach_context
         attach_context(report,scan_path,format_,effective_meta,display_filename)
+        if bundle_sources_out:
+            report['input_sources']=bundle_sources_out
         from .analysis import enrich_report
         enrich_report(report,settings,llm=llm_for_rows,progress=progress,drop_unverified_observations=drop_obs)
         report['ai_trace']=trace_sess.snapshot()

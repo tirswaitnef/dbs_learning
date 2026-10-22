@@ -64,6 +64,19 @@ def mock_ollama_server(*, installed_models=("qwen2.5:7b",), reject_think_once=Fa
             if "source_ids" in props:
                 cands = user_prompt.get("candidates") or []
                 reply = {"source_ids": [cands[0]["source_id"]] if cands else []}
+            elif "findings" in props and "metadata" in props:
+                reply = {
+                    "metadata": {
+                        "project_name": "",
+                        "target_object": "",
+                        "dbms_override": "",
+                        "assessment_period": "",
+                        "allowed_scope": "",
+                    },
+                    "findings": [],
+                }
+            elif "classifications" in props:
+                reply = {"classifications": []}
             elif "supported" in props:
                 reply = {"supported": True, "no_remediation": True,
                          "appropriately_uncertain": True, "database_specific": True}
@@ -797,6 +810,17 @@ class OllamaIntegrationTests(unittest.TestCase):
             def generate(self, prompt, *, system="", schema=None):
                 llm_calls.append(prompt)
                 data = json.loads(prompt)
+                if "input_text" in data:
+                    return json.dumps({
+                        "metadata": {
+                            "project_name": "",
+                            "target_object": "",
+                            "dbms_override": "",
+                            "assessment_period": "",
+                            "allowed_scope": "",
+                        },
+                        "findings": [],
+                    })
                 if "candidates" in data:
                     return json.dumps({"source_ids": [data["candidates"][0]["source_id"]]})
                 if "analysis" in data:
@@ -856,8 +880,8 @@ class OllamaIntegrationTests(unittest.TestCase):
                     report_metadata={"xss_decision": "drop", "prepared_by": "Sinh viên A"},
                 )
                 first_call_count = len(llm_calls)
-                # Only 1 source selection + 2 finding calls + 2 summary calls = 5 calls (0 wasted on dropped observation!)
-                self.assertEqual(first_call_count, 5)
+                # 1 AI direct input read + 1 source selection + 2 finding calls + 2 summary calls = 6 calls (0 wasted on dropped observation!)
+                self.assertEqual(first_call_count, 6)
 
                 # Re-exporting the exact same log with new cover metadata & unmasked IP uses SHA-256 AI cache -> ZERO extra LLM calls!
                 out2 = tmp_p / "out2"
@@ -873,8 +897,8 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertIn("8.8.4.4", md2)
                 cached_trace = json.loads((out2 / "ai_trace.json").read_text(encoding="utf-8"))
                 self.assertTrue(cached_trace["from_cache"])
-                self.assertEqual(cached_trace["call_count"], 5)
-                self.assertEqual(len(cached_trace["entries"]), 5)
+                self.assertEqual(cached_trace["call_count"], 6)
+                self.assertEqual(len(cached_trace["entries"]), 6)
                 self.assertIn("SYSTEM PROMPT", (out2 / "ai_trace.txt").read_text(encoding="utf-8"))
 
                 # Forcing fresh AI execution (`force_fresh_ai="true"`) runs live LLM calls again!
@@ -885,10 +909,10 @@ class OllamaIntegrationTests(unittest.TestCase):
                     format_="sqlmap-log", offline=True,
                     report_metadata={"xss_decision": "drop", "force_fresh_ai": "true"},
                 )
-                self.assertEqual(len(llm_calls), first_call_count + 5)
+                self.assertEqual(len(llm_calls), first_call_count * 2)
                 live_trace = json.loads((out3 / "ai_trace.json").read_text(encoding="utf-8"))
                 self.assertFalse(live_trace["from_cache"])
-                self.assertEqual(live_trace["call_count"], 5)
+                self.assertEqual(live_trace["call_count"], 6)
 
     def test_web_trace_endpoint_and_multi_tool_flexibility(self):
         from dataclasses import asdict

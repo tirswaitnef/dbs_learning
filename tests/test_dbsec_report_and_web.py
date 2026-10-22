@@ -605,6 +605,221 @@ class CourseworkReportAndWebTests(unittest.TestCase):
             pdf_txt = extract_pentest_text(pdf_path)
             self.assertTrue(len(pdf_txt) > 30)
 
+    def test_universal_ai_first_reads_modified_sqlmap_nmap_on_text_and_arbitrary_web_scans(self):
+        """Prove Ollama directly reads ANY tool output format (modified sqlmap, nmap -oN text, custom JSON) without rigid regex dependence."""
+        import base64
+        from rag.config import Settings
+        from rag.official_report import run_corpus_report
+        from rag.web_server import JobManager
+
+        # 1) Non-standard sqlmap console snippet starting with `[10:15:02] [INFO]` (NO `Parameter: ... (GET)` block!)
+        #    on an unfamiliar REST API target `POST https://shop-erp.example.test/api/v2/orders/search` (`Oracle 19c`)
+        modified_sqlmap_console = (
+            "[10:15:02] [INFO] testing connection to target URL 'https://shop-erp.example.test/api/v2/orders/search'\n"
+            "[10:15:09] [INFO] JSON parameter 'sortBy' appears to be 'Oracle AND error-based' injectable\n"
+            "POST /api/v2/orders/search HTTP/1.1\n"
+            "Host: shop-erp.example.test\n"
+            "Content-Type: application/json\n\n"
+            "{\"sortBy\": \"created_at' AND 1=CTXSYS.DRITHSX.SN(1,(SELECT banner FROM v$version WHERE rownum=1))--\"}\n"
+            "HTTP/1.1 500 Internal Server Error\n"
+            "ORA-20000: Oracle Text error: DRG-11701: thesaurus Oracle Database 19c Enterprise Edition does not exist\n"
+            "[10:15:14] [INFO] back-end DBMS operating version: Oracle Database 19c\n"
+            "[10:15:16] [INFO] current user: 'ERP_APP'\n"
+            "[10:15:18] [INFO] schemas discovered: ERP_CORE, HR_RECORDS\n"
+        ).encode("utf-8")
+
+        # 2) Plain-text `nmap -oN` output (NOT XML!) + custom internal Python scanner JSON
+        nmap_normal_text = (
+            "# Nmap 7.95 scan initiated Thu Oct 22 10:30:00 2026\n"
+            "Nmap scan report for 203.0.113.77\n"
+            "PORT     STATE SERVICE    VERSION\n"
+            "5432/tcp open  postgresql PostgreSQL DB 16.2\n"
+            "| pgsql-brute:\n"
+            "|   postgres:postgres => Valid credentials\n"
+        ).encode("utf-8")
+
+        custom_web_json = json.dumps({
+            "scanner_engine": "internal-graphql-sec-check-v3",
+            "endpoint": "https://api-portal.example.test/graphql",
+            "issue_found": "GraphQL argument `customerCode` leaked SQLite syntax error: near \"'\": syntax error",
+        }, ensure_ascii=False).encode("utf-8")
+
+        class _UniversalAIReaderMock:
+            def generate(self, prompt, *, system="", schema=None):
+                props = (schema or {}).get("properties") or {}
+                data = json.loads(prompt)
+                if "findings" in props and "metadata" in props:
+                    txt = data["input_text"]
+                    if "Oracle Database 19c" in txt:
+                        return json.dumps({
+                            "metadata": {
+                                "tool_name": "sqlmap (custom JSON session)",
+                                "project_name": "",
+                                "target_object": "https://shop-erp.example.test/api/v2/orders/search",
+                                "dbms_override": "Oracle Database 19c",
+                                "assessment_period": "10:15:02 - 10:15:18",
+                                "allowed_scope": "",
+                                "databases": ["ERP_CORE", "HR_RECORDS"],
+                                "db_user": "ERP_APP",
+                            },
+                            "findings": [{
+                                "title": "SQL Injection error-based trên tham số JSON sortBy (POST /api/v2/orders/search)",
+                                "cwe": "CWE-89",
+                                "severity": "unknown",
+                                "state": "confirmed",
+                                "location": "https://shop-erp.example.test/api/v2/orders/search",
+                                "parameter": "sortBy",
+                                "method": "POST",
+                                "tool": "sqlmap",
+                                "request_snippet": "POST /api/v2/orders/search HTTP/1.1\nHost: shop-erp.example.test",
+                                "response_snippet": "ORA-20000: Oracle Text error: DRG-11701: thesaurus Oracle Database 19c Enterprise Edition does not exist",
+                                "evidence_quotes": [
+                                    "JSON parameter 'sortBy' appears to be 'Oracle AND error-based' injectable",
+                                    "ORA-20000: Oracle Text error: DRG-11701: thesaurus Oracle Database 19c Enterprise Edition does not exist",
+                                ],
+                            }],
+                        }, ensure_ascii=False)
+                    if "PostgreSQL DB 16.2" in txt:
+                        return json.dumps({
+                            "metadata": {
+                                "tool_name": "Nmap -oN",
+                                "project_name": "",
+                                "target_object": "203.0.113.77:5432",
+                                "dbms_override": "PostgreSQL 16.2",
+                                "assessment_period": "Thu Oct 22 10:30:00 2026",
+                                "allowed_scope": "",
+                            },
+                            "findings": [{
+                                "title": "Mật khẩu mặc định postgres:postgres trên dịch vụ PostgreSQL 5432/tcp",
+                                "cwe": "CWE-521",
+                                "severity": "unknown",
+                                "state": "confirmed",
+                                "location": "203.0.113.77:5432/tcp",
+                                "tool": "Nmap",
+                                "evidence_quotes": ["postgres:postgres => Valid credentials"],
+                            }],
+                        }, ensure_ascii=False)
+                    return json.dumps({
+                        "metadata": {
+                            "tool_name": "internal-graphql-sec-check-v3",
+                            "project_name": "",
+                            "target_object": "https://api-portal.example.test/graphql",
+                            "dbms_override": "SQLite",
+                            "assessment_period": "",
+                            "allowed_scope": "",
+                        },
+                        "findings": [{
+                            "title": "Rò rỉ lỗi cú pháp SQLite qua tham số GraphQL customerCode",
+                            "cwe": "CWE-89",
+                            "severity": "unknown",
+                            "state": "confirmed",
+                            "location": "https://api-portal.example.test/graphql",
+                            "parameter": "customerCode",
+                            "tool": "internal-graphql-sec-check-v3",
+                            "evidence_quotes": ["GraphQL argument `customerCode` leaked SQLite syntax error"],
+                        }],
+                    }, ensure_ascii=False)
+                if "source_ids" in props:
+                    cands = data.get("candidates") or []
+                    return json.dumps({"source_ids": [cands[0]["source_id"]] if cands else []})
+                if "supported" in props:
+                    return json.dumps({
+                        "supported": True,
+                        "no_remediation": True,
+                        "appropriately_uncertain": True,
+                        "database_specific": True,
+                    })
+                if "observations" in props:
+                    sources = data["sources"]
+                    sid = next(iter(sources))
+                    quote = sources[sid].strip().splitlines()[0][:80]
+                    c = {"text_vi": "AI đã phân tích trực tiếp dữ liệu đầu vào từ mục tiêu mới.", "citations": [{"source_id": sid, "quote": quote}]}
+                    return json.dumps({"observations": [c], "potential_impacts": [c], "limitations": [c]}, ensure_ascii=False)
+                return json.dumps({"items": [{"finding_id": it["finding_id"], "guidance_ids": [it["candidates"][0]["id"]] if it["candidates"] else []} for it in data]})
+
+        class _FakeEncoder:
+            model_name = "intfloat/multilingual-e5-small"
+            revision = None
+
+            def embed_documents(self, texts):
+                return [[1.0, 0.2, 0.1] for _ in texts]
+
+            def embed_query(self, text):
+                return [1.0, 0.2, 0.1]
+
+        from rag.document_store import ingest_documents
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            raw_cs = tmp_dir / "cs"
+            raw_cs.mkdir()
+            (raw_cs / "SQL_Injection_Prevention_Cheat_Sheet.md").write_text(
+                "# SQL Injection Prevention Cheat Sheet\n\nUse prepared statements with bind variables on Oracle, PostgreSQL, and SQLite.\n",
+                encoding="utf-8",
+            )
+            (raw_cs / "Database_Security_Cheat_Sheet.md").write_text(
+                "# Database Security Cheat Sheet\n\nChange default postgres administrative credentials immediately and restrict network access.\n",
+                encoding="utf-8",
+            )
+            store_dir = tmp_dir / "store"
+            settings = Settings(llm_provider="ollama", ollama_model="qwen2.5:7b")
+            ingest_documents(raw_cs, store_dir, settings, embedder=_FakeEncoder())
+
+            def runner(scan_path, out_dir, job, progress):
+                with unittest.mock.patch("rag.official_report.OllamaLLM", return_value=_UniversalAIReaderMock()), \
+                     unittest.mock.patch("rag.embeddings.E5Embedding", return_value=_FakeEncoder()):
+                    return run_corpus_report(
+                        scan_path,
+                        out_dir,
+                        settings,
+                        raw_directory=raw_cs,
+                        store_directory=store_dir,
+                        format_=job["format"],
+                        offline=True,
+                        progress=progress,
+                        report_metadata=job.get("report_metadata"),
+                        display_filename=job["filename"],
+                    )
+
+            mgr = JobManager(tmp_dir / "jobs", settings_loader=lambda: settings, runner=runner)
+            try:
+                # Single modified sqlmap file starting with `[10:15:02] [INFO]` -> 100% read by AI!
+                j1 = mgr.submit(modified_sqlmap_console, "sqlmap_oracle_rest.log", "auto")
+                for _ in range(60):
+                    cur1 = mgr.get(j1["id"])
+                    if cur1["status"] in {"completed", "partial", "failed"}:
+                        break
+                    import time
+                    time.sleep(0.03)
+                self.assertEqual(cur1["status"], "completed", msg=cur1.get("error"))
+                md1 = (tmp_dir / "jobs" / j1["id"] / "output" / "dbsec_report.md").read_text(encoding="utf-8")
+                self.assertIn("Oracle Database 19c", md1)
+                self.assertIn("https://shop-erp.example.test/api/v2/orders/search", md1)
+                self.assertIn("ORA-20000", md1)
+                self.assertIn("Chưa xác định", md1)
+
+                # Multi-file bundle of `nmap -oN` text + custom GraphQL JSON -> both read directly by AI!
+                j2 = mgr.submit_bundle({
+                    "bundle_version": 1,
+                    "files": [
+                        {"filename": "nmap_text_scan.txt", "format": "auto", "content_b64": base64.b64encode(nmap_normal_text).decode("ascii")},
+                        {"filename": "custom_graphql_scan.json", "format": "auto", "content_b64": base64.b64encode(custom_web_json).decode("ascii")},
+                    ],
+                })
+                for _ in range(60):
+                    cur2 = mgr.get(j2["id"])
+                    if cur2["status"] in {"completed", "partial", "failed"}:
+                        break
+                    import time
+                    time.sleep(0.03)
+                self.assertEqual(cur2["status"], "completed", msg=cur2.get("error"))
+                md2 = (tmp_dir / "jobs" / j2["id"] / "output" / "dbsec_report.md").read_text(encoding="utf-8")
+                trace2 = json.loads((tmp_dir / "jobs" / j2["id"] / "output" / "ai_trace.json").read_text(encoding="utf-8"))
+                self.assertIn("203.0.113.77:5432", md2)
+                self.assertIn("https://api-portal.example.test/graphql", md2)
+                self.assertTrue(any("Đọc & phân tích trực tiếp tệp đầu vào bằng AI" in e["step"] for e in trace2["entries"]))
+            finally:
+                mgr.executor.shutdown(wait=True)
+
 
 if __name__ == "__main__":
     unittest.main()

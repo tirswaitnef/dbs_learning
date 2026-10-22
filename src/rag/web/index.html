@@ -70,9 +70,9 @@
             </span>
           </div>
           <h1>Báo cáo kiểm thử bảo mật CSDL &amp; <em>đề xuất remediation theo OWASP</em></h1>
-          <p class="intro">Tải lên <strong>Báo cáo Pentest có sẵn (PDF, Markdown, TXT)</strong> hoặc tệp xuất trực tiếp từ <strong>sqlmap</strong>, <strong>Nmap</strong>, <strong>OWASP ZAP</strong>, <strong>Burp Suite</strong>, <strong>Nuclei</strong>, <strong>Nessus</strong>. AI cục bộ (<strong>Ollama</strong>) tự động đọc bóc tách phát hiện &amp; bằng chứng nguyên văn, nhận diện CWE cho bản ghi chưa gán mã, đánh mã <code>I-01+</code> / <code>E-01+</code> / <code>F-01+</code> trung thực (không tự tạo số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Báo cáo 10 mục chuẩn</strong>.</p>
+          <p class="intro">Tải lên <strong>bất kỳ tệp kết quả công cụ nào</strong> (<strong>sqlmap</strong> mọi phiên bản/copy-paste, <strong>Nmap</strong> text/XML, <strong>OWASP ZAP</strong> HTML/JSON/XML, <strong>Burp</strong>, <strong>Nuclei</strong>, <strong>curl</strong>, log CSDL...) hoặc <strong>Báo cáo Pentest (PDF, Markdown, TXT)</strong>. <strong>AI cục bộ (Ollama) trực tiếp đọc hiểu toàn bộ tệp đầu vào</strong> không phụ thuộc khuôn mẫu cứng, kiểm chứng trích dẫn nguyên văn <code>E-01+</code> (không tự bịa số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Báo cáo 10 mục chuẩn</strong>.</p>
           <div class="steps" aria-label="Quy trình xử lý">
-            <div><span>1</span>AI &amp; Parser đọc Báo cáo Pentest / Log (<code>I-01+</code>, <code>E-01+</code>)</div>
+            <div><span>1</span>AI đọc trực tiếp mọi log công cụ &amp; Pentest (<code>I-01+</code>, <code>E-01+</code>)</div>
             <i>→</i>
             <div><span>2</span>Nhận diện CWE &amp; Truy xuất RAG OWASP CSDL</div>
             <i>→</i>

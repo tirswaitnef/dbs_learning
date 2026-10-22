@@ -41,10 +41,14 @@ def now():
 
 
 def detect_format(path):
+    from .ai_ingest import is_binary_non_document
+
     p = Path(path)
     raw = p.read_bytes()
     if raw.startswith(b'%PDF'):
         return 'pentest-report'
+    if is_binary_non_document(raw):
+        raise ValueError('Tệp nhị phân không phải văn bản kết quả kiểm thử hoặc PDF hợp lệ.')
     text = decode_text(raw, errors='replace').lstrip()
     try:
         data = json.loads(text)
@@ -73,12 +77,9 @@ def detect_format(path):
         pass
     if re.search(r'(?m)^Parameter:\s*.+\(.+\)\s*$', text) or 'all tested parameters do not appear to be injectable' in text.lower():
         return 'sqlmap-log'
-    suffix = p.suffix.lower()
-    if suffix in {'.md', '.markdown', '.html', '.htm'} and len(text.strip()) >= 20:
+    if len(text.strip()) >= 10:
         return 'pentest-report'
-    if not text.startswith(('<', '{', '[')) and len(text.strip()) >= 40 and '\x00' not in text[:1024]:
-        return 'pentest-report'
-    raise ValueError('Chưa nhận diện được định dạng. Chọn đúng định dạng đầu vào hoặc tải lên Báo cáo Pentest (.pdf/.md/.txt) / tệp quét hợp lệ.')
+    raise ValueError('Nội dung tệp đầu vào quá ngắn hoặc rỗng. Hãy tải lên kết quả kiểm thử hoặc Báo cáo Pentest hợp lệ.')
 
 
 def safe_error(exc):
@@ -196,16 +197,23 @@ class JobManager:
             path = folder / 'input.scan'
             path.write_bytes(body)
             try:
+                from .ai_ingest import extract_pentest_text
                 fmt = detect_format(path) if format_ == 'auto' else format_
-                findings = load_findings(path, fmt)
+                extract_pentest_text(path)
+                try:
+                    findings = load_findings(path, fmt)
+                except Exception:
+                    if self.demo and format_ != 'auto':
+                        raise
+                    findings = load_findings(path, 'pentest-report')
                 if len(findings) > 100:
                     raise ValueError('Mỗi báo cáo hỗ trợ tối đa 100 phát hiện. Hãy chia nhỏ file.')
             except Exception as exc:
                 path.unlink(missing_ok=True)
                 folder.rmdir()
-                if isinstance(exc, ValueError) and str(exc).startswith(('PDF đầu', 'Chưa nhận', 'Mỗi báo cáo')):
+                if isinstance(exc, ValueError) and str(exc).startswith(('PDF ', 'Tệp ', 'Nội dung', 'Chưa nhận', 'Mỗi báo cáo')):
                     raise
-                raise ValueError('File không đúng cấu trúc ' + FORMATS.get(format_, 'công cụ') + '. Hãy chọn đúng định dạng hoặc kiểm tra file export; chưa gọi AI.') from None
+                raise ValueError('Tệp tải lên bị hỏng hoặc rỗng (' + FORMATS.get(format_, 'đầu vào') + '). Hãy kiểm tra lại tệp.') from None
             name = filename.replace('\\', '/').split('/')[-1]
             name = re.sub(r'[\x00-\x1f\x7f]', '', name)[:160] or 'kiem-thu'
             sha = hashlib.sha256(body).hexdigest()
@@ -273,8 +281,10 @@ class JobManager:
             detected_formats = []
             tools = []
             input_sources = []
+            raw_bundle_files = []
             hasher = hashlib.sha256()
             try:
+                from .ai_ingest import extract_pentest_text
                 for idx, item in enumerate(items):
                     if not isinstance(item, dict):
                         raise ValueError('Mục file trong gói không hợp lệ.')
@@ -297,7 +307,21 @@ class JobManager:
                     raw_path.write_bytes(data_bytes)
                     hasher.update(safe_name.encode('utf-8') + b'\0' + data_bytes + b'\0')
                     fmt = detect_format(raw_path) if item_fmt == 'auto' else item_fmt
-                    parsed = load_findings(raw_path, fmt)
+                    extract_pentest_text(raw_path)
+                    try:
+                        parsed = load_findings(raw_path, fmt)
+                    except Exception:
+                        if self.demo and item_fmt != 'auto':
+                            raise
+                        parsed = load_findings(raw_path, 'pentest-report')
+                    f_sha = hashlib.sha256(data_bytes).hexdigest()
+                    raw_bundle_files.append({
+                        'name': safe_name,
+                        'path': str(raw_path),
+                        'format': fmt,
+                        'sha256': f_sha,
+                        'size_bytes': len(data_bytes),
+                    })
                     safe_names.append(safe_name)
                     detected_formats.append(fmt)
                     src_fids = []
@@ -319,7 +343,7 @@ class JobManager:
                     input_sources.append({
                         'name': safe_name,
                         'format': fmt,
-                        'sha256': hashlib.sha256(data_bytes).hexdigest(),
+                        'sha256': f_sha,
                         'size_bytes': len(data_bytes),
                         'finding_count': len(parsed),
                         'finding_ids': src_fids,
@@ -331,14 +355,15 @@ class JobManager:
                 (folder / 'input.scan').write_bytes(scan_bytes)
             except Exception as exc:
                 shutil.rmtree(folder, ignore_errors=True)
-                if isinstance(exc, ValueError) and str(exc).startswith(('PDF đầu', 'Chưa nhận', 'Mỗi báo cáo', 'Mỗi lần', 'Tổng dung lượng', 'Gói nhiều', 'Định dạng', 'Không giải mã', 'File ')):
+                if isinstance(exc, ValueError) and str(exc).startswith(('PDF ', 'Tệp ', 'Nội dung', 'Chưa nhận', 'Mỗi báo cáo', 'Mỗi lần', 'Tổng dung lượng', 'Gói nhiều', 'Định dạng', 'Không giải mã', 'File ')):
                     raise
-                raise ValueError('Một trong các file gửi lên không đúng cấu trúc công cụ kiểm thử. Hãy kiểm tra lại từng file; chưa gọi AI.') from None
+                raise ValueError('Một trong các tệp tải lên bị hỏng hoặc rỗng. Hãy kiểm tra lại từng tệp.') from None
             display_name = (' + '.join(safe_names))[:160]
             job = {
                 'id': id_,
                 'filename': display_name,
                 'report_metadata': metadata,
+                'raw_bundle_files': raw_bundle_files,
                 'input_sources': input_sources,
                 'format': 'normalized',
                 'input_formats': list(dict.fromkeys(detected_formats)),
@@ -375,8 +400,14 @@ class JobManager:
                 cur = self.jobs[id_]
                 ev = (cur.get('events', []) + [{'at': now(), 'text': init_stage, 'step': 2 if not self.demo else 1, 'percent': 10}])[-80:]
                 self.update(id_, status='running', started_at=now(), stage_started_at=now(), step=2 if not self.demo else 1, percent=10, stage=init_stage, events=ev)
+            run_meta = dict(job.get('report_metadata') or {})
+            if job.get('raw_bundle_files'):
+                run_meta['_raw_bundle_files'] = job['raw_bundle_files']
+                job_for_runner = dict(job, report_metadata=run_meta)
+            else:
+                job_for_runner = job
             if self.runner:
-                paths = self.runner(folder / 'input.scan', folder / 'output', job, lambda m: self.progress(id_, m))
+                paths = self.runner(folder / 'input.scan', folder / 'output', job_for_runner, lambda m: self.progress(id_, m))
             elif self.demo:
                 from .pipeline import run_report
                 from .config import Settings
@@ -395,12 +426,22 @@ class JobManager:
                     raw_directory=ROOT / 'data/raw/owasp/official/CheatSheetSeries-master/cheatsheets',
                     store_directory=ROOT / 'data/processed/owasp-official', offline=True,
                     progress=lambda m: self.progress(id_, m),
-                    report_metadata=job.get('report_metadata'), display_filename=job['filename'],
+                    report_metadata=run_meta, display_filename=job['filename'],
                 )
 
             report = json.loads(Path(paths[1]).read_text(encoding='utf-8'))
-            if job.get('input_sources'):
-                report['input_sources'] = job['input_sources']
+            if report.get('input_sources'):
+                final_sources = report['input_sources']
+            elif job.get('input_sources'):
+                final_sources = copy.deepcopy(job['input_sources'])
+                if len(final_sources) == 1:
+                    final_sources[0]['finding_count'] = len(report.get('findings') or [])
+                    final_sources[0]['finding_ids'] = [str(r.get('id') or '') for r in (report.get('findings') or [])]
+                report['input_sources'] = final_sources
+            else:
+                final_sources = None
+            if final_sources:
+                self.update(id_, input_sources=final_sources)
                 Path(paths[1]).write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
                 (folder / 'output' / 'dbsec_report.md').write_text(render_dbsec_markdown(report), encoding='utf-8')
                 render_pdf(report, Path(paths[2]))

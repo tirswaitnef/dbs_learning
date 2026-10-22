@@ -14,7 +14,7 @@ const META_KEYS = [
 ];
 
 const PIPELINE_STEPS = [
-  { num: 1, title: 'Đánh giá & chuẩn hóa dữ liệu đầu vào (Mục 1–2)', detail: 'Đánh mã nguồn I-01+, kiểm tra chất lượng & che thông tin phiên nhạy cảm' },
+  { num: 1, title: 'AI (Ollama) đọc trực tiếp dữ liệu đầu vào (Mục 1–2)', detail: 'Đọc linh hoạt mọi phiên bản log công cụ & Báo cáo Pentest, đối khớp bằng chứng gốc I-01+ / E-01+' },
   { num: 2, title: 'Nạp kho tri thức OWASP chuyên biệt CSDL (Mục 3)', detail: '25 OWASP Cheat Sheets & mô hình nhúng ngữ nghĩa E5' },
   { num: 3, title: 'Đối chiếu OWASP Top 10:2025 & Truy xuất RAG (Mục 6.4 & 7)', detail: 'Chọn đoạn hướng dẫn gốc & ví dụ mã an toàn phù hợp CWE' },
   { num: 4, title: 'Phân tích bằng chứng E-01+, nguyên nhân & tác động (Mục 6)', detail: 'Tách rõ bằng chứng thực nghiệm và giả thuyết tầng mã nguồn' },
