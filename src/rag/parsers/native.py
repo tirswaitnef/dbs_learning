@@ -322,6 +322,9 @@ def _sqlmap_telemetry(clean):
     auth_m = re.search(r"(?im)^\s*Authentication\s+Context:\s*(.+?)\s*$", clean)
     if auth_m:
         telemetry["auth_context"] = _sanitize_cli(auth_m.group(1).strip())[:240]
+    scope_m = re.search(r"(?im)^\s*(?:Pentest\s+Scope\s+Rule|Excluded\s+Areas?):\s*(.+?)\s*$", clean)
+    if scope_m:
+        telemetry["scope_rule"] = _sanitize_cli(scope_m.group(1).strip())[:300]
     cli_m = re.search(r"(?im)^\s*(?:Command|CLI\s+Command):\s*(.+?)\s*$", clean)
     if cli_m:
         telemetry["cli_hint"] = _sanitize_cli(cli_m.group(1).strip())[:300]
@@ -359,26 +362,70 @@ def _sqlmap_telemetry(clean):
     return telemetry
 
 
-def _sqlmap_http_traffic(clean):
+def _request_targets_param(req_raw, param_name, target_url_str=""):
+    """Check whether raw HTTP request line / body injects into `param_name` rather than leaving baseline untouched."""
+    if not param_name:
+        return True
+    from urllib.parse import parse_qsl, unquote, urlsplit
+    base_vals = {}
+    if target_url_str:
+        base_vals = dict(parse_qsl(urlsplit(target_url_str).query, keep_blank_values=True))
+    first_line = req_raw.splitlines()[0] if req_raw else ""
+    parts = first_line.split()
+    req_target = parts[1] if len(parts) >= 2 else ""
+    body = req_raw.split("\n\n", 1)[1] if "\n\n" in req_raw else ""
+    for raw_part in (urlsplit(req_target).query, body):
+        for k, v in parse_qsl(raw_part, keep_blank_values=True):
+            if k == param_name:
+                if param_name in base_vals:
+                    return v != base_vals[param_name]
+                decoded = unquote(v)
+                return bool(re.search(r"['\"()=]|--|/\*|\b(?:SELECT|UNION|SLEEP|AND|OR|EXTRACTVALUE)\b", decoded, re.I))
+    return False
+
+
+def _sqlmap_http_traffic(clean, vuln_param="", target_url_str=""):
     """Extract raw wire-level HTTP request/response pairs recorded via sqlmap -t traffic capture."""
-    messages = []
     pattern = re.compile(
         r"HTTP request \[#(\d+)\]:\n(.*?)\n+HTTP response \[#\1\] \(([^\n)]*)\):\n(.*?)(?=\nHTTP request \[#\d+\]:|\n[=#]{20,}|\Z)",
         re.S,
     )
+    all_msgs = []
     for m in pattern.finditer(clean):
         req_id, req_raw, status_info, resp_raw = m.group(1), m.group(2).strip(), m.group(3).strip(), m.group(4).strip()
         if not req_raw:
             continue
         resp_full = resp_raw if resp_raw.startswith("HTTP/") else f"HTTP/1.1 {status_info}\n{resp_raw}"
-        messages.append({
+        all_msgs.append({
             "id": f"#{req_id}",
             "request": req_raw[:2400],
             "response": resp_full[:2400],
+            "targets_param": _request_targets_param(req_raw, vuln_param, target_url_str),
         })
-        if len(messages) >= 8:
+    if len(all_msgs) <= 8:
+        return all_msgs
+    # Full raw `-t traffic.txt` log attached: select 1 representative exchange per technique targeting `vuln_param`.
+    pool = [m for m in all_msgs if m["targets_param"]] or all_msgs
+    picked, used_ids = [], set()
+    tech_matchers = [
+        re.compile(r"\b(?:OR\s+NOT|AND\s+\d+=\d+|OR\s+\d+=\d+|MAKE_SET|RLIKE)\b", re.I),
+        re.compile(r"\b(?:EXTRACTVALUE|UPDATEXML|GTID_SUBSET|FLOOR|JSON_KEYS)\b", re.I),
+        re.compile(r"\b(?:SLEEP|BENCHMARK|PG_SLEEP|WAITFOR\s+DELAY)\s*\(", re.I),
+        re.compile(r"\bUNION\s+(?:ALL\s+)?SELECT\b", re.I),
+    ]
+    for rx in tech_matchers:
+        for item in reversed(pool) if "UNION" in rx.pattern else pool:
+            if item["id"] not in used_ids and rx.search(unquote_safe := re.sub(r"%([0-9A-Fa-f]{2})", lambda h: chr(int(h.group(1), 16)), item["request"])):
+                picked.append(item)
+                used_ids.add(item["id"])
+                break
+    for item in pool:
+        if len(picked) >= 6:
             break
-    return messages
+        if item["id"] not in used_ids:
+            picked.append(item)
+            used_ids.add(item["id"])
+    return picked[:8]
 
 
 def _sqlmap_cvss_header(clean):
@@ -411,9 +458,9 @@ def parse_sqlmap_log(content, source):
     # Kept as a recorded fact; no CWE, severity or target is derived from it.
     dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean)
     target_url = re.search(r"(?im)^\s*(?:Target\s+)?URL:\s*(https?://\S+)\s*$", clean)
+    target_url_val = target_url.group(1) if target_url else ""
     output_host = re.search(r"sqlmap[/\\]output[/\\]([A-Za-z0-9._-]+)", clean, re.I)
     telemetry = _sqlmap_telemetry(clean)
-    http_messages = _sqlmap_http_traffic(clean)
     cvss_sev, cvss_score, cvss_vector = _sqlmap_cvss_header(clean)
     meta_lines = []
     for label_re in (
@@ -461,16 +508,23 @@ def parse_sqlmap_log(content, source):
             raise ValueError("sqlmap-log adapter supports classic SQL injection only")
         line_number = clean[:match.start()].count("\n") + 1
         place = match.group(2).strip()
-        location = _location_for(match.group(1), place)
+        param_name = match.group(1).strip()
+        location = _location_for(param_name, place)
         http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
+        raw_http = _sqlmap_http_traffic(clean, vuln_param=param_name, target_url_str=target_url_val)
+        unmatched_ids = [m["id"] for m in raw_http if not m.get("targets_param", True)]
+        http_messages = [{k: v for k, v in m.items() if k != "targets_param"} for m in raw_http]
+        row_tel = dict(telemetry)
+        if unmatched_ids:
+            row_tel["unmatched_http_ids"] = unmatched_ids
         findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", cvss_sev,
                                 location,
                                 (block.rstrip() + post_text,), "sqlmap", f"{source}#line={line_number}",
-                                details={"parameter": match.group(1), "place": place,
+                                details={"parameter": param_name, "place": place,
                                          **({"method": http_method} if http_method else {}),
                                          "techniques": techniques,
                                          **({"dbms": dbms.group(1)} if dbms else {}),
-                                         **({"scan_telemetry": telemetry} if telemetry else {}),
+                                         **({"scan_telemetry": row_tel} if row_tel else {}),
                                          **({"cvss_score": cvss_score} if cvss_score else {}),
                                          **({"cvss_vector": cvss_vector} if cvss_vector else {}),
                                          **({"http_messages": http_messages} if http_messages else {}),

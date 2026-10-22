@@ -94,6 +94,8 @@ def render_pdf(report, path):
     ]
     if scan_ctx.get('auth_context'):
         scope_pairs.append(('Ngữ cảnh xác thực',scan_ctx['auth_context']))
+    if scan_ctx.get('scope_rule'):
+        scope_pairs.append(('Quy tắc & giới hạn phạm vi',scan_ctx['scope_rule']))
     if scan_ctx.get('telemetry_lines'):
         scope_pairs.append(('Thông số phiên quét','\n'.join(scan_ctx['telemetry_lines'])))
     if scan_ctx.get('db_identity'):
@@ -210,6 +212,10 @@ def render_pdf(report, path):
         ('Model AI',report.get('model') or MISSING),
         ('Trạng thái kiểm tra AI','; '.join(ai_trace) or MISSING),
     ])
+    while story and isinstance(story[-1], Spacer):
+        story.pop()
+    end_style=ParagraphStyle('end_mark',parent=small,alignment=1,spaceBefore=8,spaceAfter=0)
+    story.append(Paragraph('— Hết báo cáo —',end_style))
     def footer(canvas,doc):
         canvas.setStrokeColor(colors.HexColor('#dbe3e9'));canvas.line(44,39,A4[0]-44,39)
         canvas.setFont('RagText',7);canvas.setFillColor(muted);canvas.drawString(44,25,'AUDITNOTE | '+str(report.get('scan_sha256',''))[:12]);canvas.drawRightString(A4[0]-44,25,f'Trang {doc.page}')

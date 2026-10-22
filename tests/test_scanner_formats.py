@@ -407,6 +407,59 @@ class ScannerFormatTests(unittest.TestCase):
         self.assertTrue(any("Hardening a Microsoft SQL Server" in s for s in mssql_top5))
         self.assertTrue(any("Implementing Transport Layer Protection" in s for s in mssql_top5))
 
+    def test_sqlmap_scope_rule_and_parameter_aware_http_selection(self):
+        from dataclasses import asdict
+        from rag.parsers.native import parse_sqlmap_log
+        from rag.report_view import extract_scan_context
+
+        header_and_block = (
+            "Target URL: http://198.51.100.42/app/item?id=1&Submit=Submit\n"
+            "Authentication Context: Authenticated HTTP Cookie session (SID=[REDACTED])\n"
+            "CVSS: 8.1 (High) | CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N\n"
+            "Pentest Scope Rule: Isolated Lab Deep DB PoC (--dbs, --tables; NO --dump)\n"
+            "---\n"
+            "Parameter: id (GET)\n"
+            "    Type: boolean-based blind\n"
+            "    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)\n"
+            "    Payload: id=1' OR NOT 1111=1111-- abcd&Submit=Submit\n\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(1,CONCAT(0x5c,0x71))-- efgh&Submit=Submit\n"
+            "---\n"
+            "back-end DBMS: MySQL >= 5.1\n\n"
+        )
+        curated_log = (
+            header_and_block
+            + "HTTP request [#101]:\nGET /app/item?id=1&Submit=Submit%20OR%20NOT%201%3D1 HTTP/1.1\nHost: 198.51.100.42\n\n"
+            + "HTTP response [#101] (200 OK):\nContent-Type: text/html\n\nOK\n\n"
+            + "HTTP request [#202]:\nGET /app/item?id=1%27%20AND%20EXTRACTVALUE%281%2C1%29--%20x&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\n\n"
+            + "HTTP response [#202] (200 OK):\nContent-Type: text/html\n\nXPATH syntax error\n"
+        )
+        parsed = parse_sqlmap_log(curated_log, "scope_check.txt")
+        tel = parsed[0].details["scan_telemetry"]
+        self.assertIn("NO --dump", tel["scope_rule"])
+        self.assertEqual(tel["unmatched_http_ids"], ["#101"])
+        ctx = extract_scan_context({"findings": [asdict(f) for f in parsed]})
+        self.assertIn("NO --dump", ctx["scope_rule"])
+        self.assertTrue(any("#101" in g for g in ctx["repro_gaps"]))
+
+        # When raw >8 HTTP exchanges are appended, selector prefers true `id` payloads over `Submit` noise.
+        noise_chunks = "".join(
+            f"HTTP request [#{n}]:\nGET /app/item?id=1&Submit=Submit%20OR%20{n}%3D{n} HTTP/1.1\nHost: 198.51.100.42\n\n"
+            f"HTTP response [#{n}] (200 OK):\nContent-Type: text/html\n\nOK\n\n"
+            for n in range(1, 10)
+        )
+        true_chunks = (
+            "HTTP request [#51]:\nGET /app/item?id=1%27%20OR%20NOT%209227%3D9227--%20x&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\n\n"
+            "HTTP response [#51] (200 OK):\nContent-Type: text/html\n\nOK\n\n"
+            "HTTP request [#52]:\nGET /app/item?id=1%27%20AND%20EXTRACTVALUE%281%2C1%29--%20x&Submit=Submit HTTP/1.1\nHost: 198.51.100.42\n\n"
+            "HTTP response [#52] (200 OK):\nContent-Type: text/html\n\nXPATH\n"
+        )
+        parsed_raw = parse_sqlmap_log(header_and_block + noise_chunks + true_chunks, "raw_traffic_check.txt")
+        picked_ids = [m["id"] for m in parsed_raw[0].details["http_messages"]]
+        self.assertEqual(picked_ids, ["#51", "#52"])
+        self.assertNotIn("unmatched_http_ids", parsed_raw[0].details["scan_telemetry"])
+
 
 if __name__ == "__main__":
     unittest.main()
