@@ -106,6 +106,10 @@ class AnalysisFrameTests(unittest.TestCase):
         summary_prompt = llm.prompts[-1]["sources"]
         self.assertIn("phạm vi CSDL theo code: server_db/máy chủ CSDL", summary_prompt["F1"])
         self.assertIn("engine PostgreSQL", summary_prompt["F2"])
+        self.assertIn("K1", summary_prompt)
+        self.assertIn("MySQL/MariaDB", summary_prompt["K1"])
+        self.assertIn("PostgreSQL", summary_prompt["K1"])
+        self.assertIn("Tổng số bản ghi: 2", summary_prompt["TOTAL"])
         self.assertEqual(report["db_scope"]["summary"]["by_engine"], {"MySQL/MariaDB": 1, "PostgreSQL": 1})
 
     def test_report_markdown_shows_the_frame_and_the_variety_check(self):

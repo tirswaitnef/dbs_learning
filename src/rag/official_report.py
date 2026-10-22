@@ -42,7 +42,7 @@ def blocks(document):
         value=''.join(buffer).strip()
         if not value or not 50 <= len(value) <= 3500:
             return None
-        if not headings or re.search(r'references|acknowledg|authors|attack scenario|example', ' / '.join(headings), re.I):
+        if not headings or re.search(r'references|acknowledg|authors|attack scenario|example|\bdiscouraged\b|\banatomy\b|\bwhat is\b', ' / '.join(headings), re.I):
             return None
         # Exclude link inventories and headings masquerading as remediation.
         no_links=re.sub(r'\[[^\]]+\]\([^)]*\)', '', value)
@@ -92,21 +92,37 @@ def source_candidates(results, documents, preferred, *, max_chars=14000):
     candidates=[];seen=set()
     preferred=set(preferred)
     ranked=sorted(results,key=lambda r:(r['source'] not in preferred,-r['score']))
+    def add_block(name, doc, block, score):
+        key=(name,block['start'],block['end'])
+        if key in seen:return
+        seen.add(key)
+        item={**block,'source_id':f'S{len(candidates)+1}','source':name,
+              'source_sha256':doc.source_sha256,'score':score,
+              'url':'https://cheatsheetseries.owasp.org/cheatsheets/'+name[:-3]+'.html'}
+        if len(json.dumps(candidates+[item],ensure_ascii=False))<=max_chars:candidates.append(item)
+    best_score={}
     for hit in ranked:
         name=hit['source']
-        # Official English archive stores sheets directly in cheatsheets/, not arbitrary paths.
         if not re.fullmatch(r'[A-Za-z0-9_-]+\.md',name) or name not in by_source:continue
-        doc=by_source[name]
-        for block in blocks(doc):
-            # Expand a retrieved chunk to the whole overlapping paragraph, with its headings.
-            if block['end']<=hit['start'] or block['start']>=hit['end']:continue
-            key=(name,block['start'],block['end'])
-            if key in seen:continue
-            seen.add(key)
-            item={**block,'source_id':f'S{len(candidates)+1}','source':name,
-                  'source_sha256':doc.source_sha256,'score':hit['score'],
-                  'url':'https://cheatsheetseries.owasp.org/cheatsheets/'+name[:-3]+'.html'}
-            if len(json.dumps(candidates+[item],ensure_ascii=False))<=max_chars:candidates.append(item)
+        best_score[name]=max(best_score.get(name,-1.0),hit['score'])
+    for pass_preferred in (True,False):
+        if pass_preferred:
+            # Ensure core primary-defense sections of already-retrieved preferred sheets lead first.
+            for name in sorted(best_score,key=lambda n:-best_score[n]):
+                if name not in preferred:continue
+                doc=by_source[name]
+                for block in blocks(doc):
+                    if re.search(r'primary defense|defense option [123]\b',block['section'],re.I):
+                        add_block(name,doc,block,best_score[name])
+        for hit in ranked:
+            name=hit['source']
+            if (name in preferred)!=pass_preferred:continue
+            if not re.fullmatch(r'[A-Za-z0-9_-]+\.md',name) or name not in by_source:continue
+            doc=by_source[name]
+            for block in blocks(doc):
+                # Expand a retrieved chunk to the whole overlapping paragraph, with its headings.
+                if block['end']<=hit['start'] or block['start']>=hit['end']:continue
+                add_block(name,doc,block,hit['score'])
     return candidates
 
 

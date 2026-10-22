@@ -57,10 +57,11 @@ commands, action plans or advice (including advice disguised as a limitation).
 appropriately_uncertain=true only if scanner claims remain attributed, speculative impacts are
 explicitly conditional, and weak/absent evidence is not treated as a proven vulnerability or safe target.
 database_specific=true only if every claim that asserts a database layer, engine (MySQL, MariaDB,
-PostgreSQL, SQL Server, Oracle, MongoDB, Redis) or database control stays consistent with K1, invents
-none beyond the cited sources, and does not assert fields marked unknown in K1 as confirmed fact
-(attributing a tool alert title in M1 or raw evidence string in E* to the scanner is permitted).
-K1 is the frame computed by the program; when it lists one layer or one control, no other is claimed.
+PostgreSQL, SQL Server, Oracle, MongoDB, Redis) or database control stays consistent with K1 (and F*
+record summaries when reviewing a report summary), invents none beyond the cited sources, and does not
+assert fields marked unknown in K1 as confirmed fact (attributing a tool alert title in M1, raw evidence
+in E*, or record summary in F* to the scanner is permitted).
+K1 is the frame computed by the program; stay consistent with all layers, engines and controls listed in K1.
 Any uncertainty about compliance means false. Citation validity alone is insufficient.
 '''
 
@@ -133,7 +134,7 @@ def validate(data,sources):
     return data
 
 
-def generate_analysis(sources,llm,*,task,max_repairs=1):
+def generate_analysis(sources,llm,*,task,max_repairs=2):
     result={'status':'not_requested','claims':{},'sources':sources,'calls':0,
             'notice':'Kiểm tra cấu trúc/trích dẫn và rà soát bằng AI không bảo đảm đúng ngữ nghĩa.'}
     repair_note=None
@@ -193,10 +194,14 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
         frame_text=(f"phạm vi CSDL theo code: {frame.get('relevance','?')}/{frame.get('layer') or 'chưa xác định'}"
                     f"; engine {frame.get('engine') or 'chưa xác định'}"
                     f"; kiểm soát {frame.get('control_label') or 'chưa xác định'}")
-        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:800]}.")
-    summary_sources['TOTAL']=json.dumps(report['statistics'],ensure_ascii=False)
+        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:900]}.")
+    summary_sources['K1']=redact('Khung phạm vi CSDL tổng hợp toàn báo cáo (do code tính): '+(' | '.join(scope_lines(rows)) or str(scope_summary(rows))))[:1600]
+    sev_parts=', '.join(f"{k}={v}" for k,v in report['statistics']['by_input_severity'].items()) or 'không có'
+    summary_sources['TOTAL']=(f"Tổng số bản ghi: {report['statistics']['total']}; "
+                              f"phân bố mức độ đầu vào: {sev_parts}; "
+                              f"số bản ghi có hướng dẫn OWASP: {report['statistics']['with_guidance']}.")
     if progress:progress('AI summary...')
-    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu từ các bản ghi; không thêm mức độ tổng thể hoặc lời khuyên. Tác động không có bằng chứng thì để trống.')
+    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1 và TOTAL; không tự gán mức độ tổng thể, không viết lời khuyên hay hướng dẫn khắc phục, tác động phải nêu rõ dưới dạng có điều kiện.')
     report['analysis_calls']+=report['ai_summary']['calls']
     if progress:progress(f"AI summary: {report['ai_summary']['status']}")
     report['db_scope']={'summary':scope_summary(rows),'lines':scope_lines(rows)}

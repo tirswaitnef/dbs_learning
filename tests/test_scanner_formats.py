@@ -102,6 +102,22 @@ class ScannerFormatTests(unittest.TestCase):
         self.assertEqual(f.severity, "unknown")
         self.assertIn("target URL not established", f.location)
         self.assertEqual(f.details["parameter"], "q")
+        self.assertEqual(f.details["method"], "GET")
+
+    def test_sqlmap_dbs_and_output_host_captured_without_leaking_windows_user_path(self):
+        sample = (
+            (FIXTURES / "sqlmap.log").read_text(encoding="utf-8")
+            + "\n[11:08:18] [INFO] the back-end DBMS is MySQL\n"
+              "back-end DBMS: MySQL >= 5.1 (MariaDB fork)\n"
+              "available databases [2]:\n[*] dvwa\n[*] information_schema\n"
+              "[11:08:19] [INFO] fetched data logged to text files under "
+              "'C:\\Users\\DemoUser\\AppData\\Local\\sqlmap\\output\\192.0.2.55'\n"
+        )
+        f = parse_sqlmap_log(sample, "scan.txt")[0]
+        self.assertEqual(f.location, "host=192.0.2.55 (sqlmap output log); parameter=q (GET)")
+        self.assertNotIn("DemoUser", f.location)
+        self.assertEqual(len(f.evidence), 2)
+        self.assertIn("dvwa", f.evidence[1])
 
     def test_utf16_powershell_redirection_supported_in_parser_and_web_detect(self):
         from rag.web_server import detect_format

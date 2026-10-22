@@ -235,11 +235,26 @@ def parse_nmap(content, source):
 
 def parse_sqlmap_log(content, source):
     """Classic sqlmap confirmed injection-point blocks only; no heuristic parsing."""
-    clean = re.sub(r"\x1b\[[0-9;]*m", "", content)
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", content).replace("\r\n", "\n").replace("\r", "\n")
     blocks = list(re.finditer(r"^Parameter:\s*(.+?)\s*\(([^\n]+)\)\s*$", clean, re.M))
     # The documented "back-end DBMS:" line states the engine sqlmap fingerprinted.
     # Kept as a recorded fact; no CWE, severity or target is derived from it.
     dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean)
+    target_url = re.search(r"(?im)^\s*(?:Target\s+)?URL:\s*(https?://\S+)\s*$", clean)
+    output_host = re.search(r"sqlmap[/\\]output[/\\]([A-Za-z0-9._-]+)", clean, re.I)
+    meta_lines = []
+    for label_re in (
+        r"(?im)^\s*web server operating system:\s*.+$",
+        r"(?im)^\s*web application technology:\s*.+$",
+        r"(?im)^\s*back-end DBMS:\s*.+$",
+    ):
+        found = re.search(label_re, clean)
+        if found:
+            meta_lines.append(found.group(0).strip())
+    dbs_match = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
+    if dbs_match:
+        meta_lines.append(dbs_match.group(0).strip())
+    post_evidence = ("\n".join(meta_lines),) if dbs_match else ()
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -255,10 +270,20 @@ def parse_sqlmap_log(content, source):
         if any(re.search(r"LDAP|XPath|NoSQL|GraphQL", t, re.I) for t in re.findall(r"(?m)^\s+Title:\s*(.+)$", block)):
             raise ValueError("sqlmap-log adapter supports classic SQL injection only")
         line_number = clean[:match.start()].count("\n") + 1
+        place = match.group(2).strip()
+        if target_url:
+            location = f"{target_url.group(1)} (parameter={match.group(1)}, {place})"
+        elif output_host:
+            location = f"host={output_host.group(1)} (sqlmap output log); parameter={match.group(1)} ({place})"
+        else:
+            location = f"parameter={match.group(1)} ({place}); target URL not established by parser"
+        http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
         findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", "unknown",
-                                f"parameter={match.group(1)} ({match.group(2)}); target URL not established by parser",
-                                (block.rstrip(),), "sqlmap", f"{source}#line={line_number}",
-                                details={"parameter": match.group(1), "place": match.group(2), "techniques": techniques,
+                                location,
+                                (block.rstrip(),) + post_evidence, "sqlmap", f"{source}#line={line_number}",
+                                details={"parameter": match.group(1), "place": place,
+                                         **({"method": http_method} if http_method else {}),
+                                         "techniques": techniques,
                                          **({"dbms": dbms.group(1)} if dbms else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
                                          "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
