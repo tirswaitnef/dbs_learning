@@ -213,7 +213,7 @@ def context_source_text(row):
         seg=[]
         if app_s:seg.append("schema ứng dụng: "+", ".join(app_s))
         if sys_s:seg.append("schema hệ thống mặc định của DBMS (không phải CSDL ứng dụng): "+", ".join(sys_s))
-        parts.append("Dữ liệu đã trích xuất thực tế trong log — "+"; ".join(seg)+".")
+        parts.append("Dữ liệu đã trích xuất thực tế trong log — "+"; ".join(seg)+" (phép quét mới dừng ở liệt kê tên schema, chưa trích xuất các bảng và bản ghi bên trong schema ứng dụng).")
     lab=detect_lab_indicator([row])
     if lab:parts.append(lab['note_vi'])
     eol=detect_eol_banners([row])
@@ -238,25 +238,25 @@ def defense_layer_label(card):
     sec=str(card.get('section','')).lower()
     src=str(card.get('source','')).lower()
     if 'query_parameterization' in src or 'using php' in sec or 'prepared statement example' in sec:
-        return 'Lớp 2 — Mẫu mã nguồn an toàn OWASP (Prepared Statement / PDO)'
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement / PHP PDO'
     if 'defense option 1' in sec:
-        return 'Lớp 1 — Phòng vệ gốc: Truy vấn tham số hóa (Prepared Statements)'
+        return 'Phòng vệ gốc — Truy vấn tham số hóa (Prepared Statements)'
     if 'defense option 2' in sec:
-        return 'Phòng vệ thay thế: Thủ tục lưu trữ tham số hóa (Stored Procedures)'
+        return 'Phòng vệ thay thế — Thủ tục lưu trữ tham số hóa (Stored Procedures)'
     if 'least privilege' in sec:
-        return 'Lớp 3 — Phòng vệ chiều sâu CSDL: Nguyên tắc đặc quyền tối thiểu (Least Privilege)'
+        return 'Phòng vệ chiều sâu CSDL — Nguyên tắc đặc quyền tối thiểu (Least Privilege)'
     if 'input validation' in sec:
-        return 'Lớp 4 — Phòng vệ chiều sâu ứng dụng: Kiểm tra/ép kiểu đầu vào theo Allow-list'
+        return 'Phòng vệ chiều sâu ứng dụng — Kiểm tra/ép kiểu đầu vào theo Allow-list'
     if 'error_handling' in src or 'error handling' in sec:
-        return 'Lớp 5 — Kiểm soát phản hồi lỗi: Ẩn chi tiết lỗi CSDL phía client (chặn Error-based SQLi)'
+        return 'Kiểm soát phản hồi lỗi — Ẩn chi tiết lỗi CSDL phía client (chặn Error-based SQLi)'
     if 'configuring secure authentication' in sec:
-        return 'Lớp 1 — Xác thực CSDL: Bắt buộc mật khẩu mạnh & tài khoản riêng biệt'
+        return 'Xác thực CSDL — Bắt buộc mật khẩu mạnh & tài khoản riêng biệt'
     if 'protecting the backend database' in sec:
-        return 'Lớp 2 — Cô lập mạng CSDL: Chỉ bind localhost / giới hạn cổng TCP qua tường lửa'
+        return 'Cô lập mạng CSDL — Chỉ bind localhost / giới hạn cổng TCP qua tường lửa'
     if 'creating secure permissions' in sec:
-        return 'Lớp 3 — Phân quyền CSDL: Loại bỏ sử dụng tài khoản quản trị mặc định (root/sa)'
+        return 'Phân quyền CSDL — Loại bỏ sử dụng tài khoản quản trị mặc định (root/sa)'
     if 'hardening' in sec or 'configuration and hardening' in sec:
-        return 'Lớp 4 — Cứng hóa máy chủ CSDL (Database Server Hardening)'
+        return 'Cứng hóa máy chủ CSDL (Database Server Hardening)'
     return 'Trích nguyên văn hướng dẫn phòng vệ OWASP'
 
 

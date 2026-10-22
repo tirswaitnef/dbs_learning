@@ -52,7 +52,7 @@ def render_pdf(report, path):
         t.setStyle(TableStyle([('BACKGROUND',(0,0),(-1,0),accent_bg),('VALIGN',(0,0),(-1,-1),'TOP'),('LINEBELOW',(0,0),(-1,0),.7,navy),('LINEBELOW',(0,1),(-1,-1),.3,colors.HexColor('#dbe3e9')),('LEFTPADDING',(0,0),(-1,-1),8),('RIGHTPADDING',(0,0),(-1,-1),8),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6)]));story.append(t);story.append(Spacer(1,6))
     def kv_table(pairs):
         data=[[Paragraph(safe(k),small),Paragraph(safe(v),body)] for k,v in pairs]
-        t=Table(data,colWidths=[width*.28,width*.72],hAlign='LEFT')
+        t=Table(data,colWidths=[width*.24,width*.76],hAlign='LEFT')
         t.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LINEBELOW',(0,0),(-1,-1),.3,colors.HexColor('#dbe3e9')),('BACKGROUND',(0,0),(0,-1),colors.HexColor('#f7fafc')),('LEFTPADDING',(0,0),(-1,-1),7),('RIGHTPADDING',(0,0),(-1,-1),7),('TOPPADDING',(0,0),(-1,-1),5),('BOTTOMPADDING',(0,0),(-1,-1),5)]));story.append(t);story.append(Spacer(1,6))
 
     meta=report.get('report_metadata') or {};rows=report['findings'];width=A4[0]-88
