@@ -243,6 +243,9 @@ def context_source_text(row):
     techs=d.get('techniques') or []
     if techs:
         parts.append(f"Đây là 1 điểm lỗ hổng SQL Injection duy nhất trên tham số {d.get('place','')} '{d.get('parameter','')}', được xác nhận qua {len(techs)} kỹ thuật kiểm thử ({', '.join(techs)}) — không phải {len(techs)} lỗ hổng riêng lẻ.")
+        blind_kinds=[t for t in techs if 'blind' in str(t).lower()]
+        if blind_kinds and d.get('http_messages'):
+            parts.append("Lưu ý đọc bằng chứng HTTP thô cho kỹ thuật mù ("+", ".join(blind_kinds)+"): bản chất khai thác mù được xác minh qua sự chênh lệch phản hồi giữa điều kiện TRUE/FALSE (boolean-based) hoặc độ trễ thời gian phản hồi RTT so với mức nền (time-based SLEEP), trong khi error-based và UNION query hiển thị trực tiếp dữ liệu/lỗi SQL ngay trong thân HTTP response.")
     dbs=tel.get('databases') or []
     if dbs:
         app_s,sys_s=split_schemas(dbs)

@@ -148,7 +148,10 @@ def render_pdf(report, path):
         for i,item in enumerate(row.get('evidence',[]),1):evidence(f"[E{i}]\n{item}",mono=True)
         if tech.get('exchanges') and any(ex.get('response') for ex in tech['exchanges']):
             add('Giao dịch HTTP Request / Response thực tế (Traffic Capture)',sub)
-            for idx_ex,ex in enumerate(tech['exchanges'][:4],1):
+            row_techs=(row.get('details') or {}).get('techniques') or []
+            if any('blind' in str(t).lower() for t in row_techs):
+                add('Lưu ý đối chiếu kỹ thuật Blind SQLi: với error-based và UNION query, dữ liệu/lỗi SQL hiển thị trực tiếp trong thân HTTP Response; riêng với boolean-based blind và time-based blind, bằng chứng khai thác nằm ở sự khác biệt hành vi phản hồi giữa mệnh đề TRUE/FALSE và độ trễ thời gian phản hồi (RTT) do hàm SLEEP() gây ra so với request nền.',small)
+            for idx_ex,ex in enumerate(tech['exchanges'][:6],1):
                 if ex.get('request'):evidence(f"[HTTP Request #{idx_ex}]\n{ex['request']}",mono=True)
                 if ex.get('response'):evidence(f"[HTTP Response #{idx_ex}]\n{ex['response']}",mono=True)
         elif tech['requests']:

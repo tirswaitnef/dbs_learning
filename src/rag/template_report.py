@@ -217,13 +217,13 @@ def render_template_pdf(report, path, *, client='[Chưa cung cấp]', tester='[C
         messages = details.get('http_messages') or []
         P('Yêu cầu (Request)', h3)
         if messages:
-            for m in messages[:4]:
+            for m in messages[:6]:
                 P(safe(redact(m.get('request', ''))[:2400]), code)
         else:
             P(MISSING + '.')
         P('Phản hồi (Response)', h3)
         if messages:
-            for m in messages[:4]:
+            for m in messages[:6]:
                 P(safe(redact(m.get('response', ''))[:2400]), code)
         else:
             P(MISSING + '.')
