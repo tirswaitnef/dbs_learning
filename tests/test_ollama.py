@@ -525,20 +525,25 @@ class OllamaIntegrationTests(unittest.TestCase):
                 pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
             self.assertTrue(pdf_file.read_bytes().startswith(b"%PDF-"))
             full_pdf_text = __import__("html").unescape("\n".join(rendered_paragraphs))
-            self.assertIn("8.1 — CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", full_pdf_text)
+            self.assertIn("8.1", full_pdf_text)
+            self.assertIn("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", full_pdf_text)
             self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
-            for forbidden in ("SHA-256", "Model AI", "ollama/qwen3:4b", "AUDITNOTE |", "scanner_alert", "[K1]", "[C1]", "[F1]"):
+            for forbidden in ("AUDITNOTE", "AuditNote", "audit trail", "scanner_alert", "[K1]", "[C1]", "[F1]"):
                 self.assertNotIn(forbidden, full_pdf_text)
             for expected_sec in (
-                "1. Tóm tắt điều hành",
-                "2. Phạm vi và Phương pháp kiểm thử",
-                "3. Tổng hợp phát hiện theo Danh mục OWASP",
-                "4. Chi tiết các phát hiện",
-                "5. Phân loại mức độ rủi ro",
-                "6. Khuyến nghị khắc phục",
-                "7. Phụ lục",
-                "W-001:",
-                "— Kết thúc Báo cáo —",
+                "1. Thông tin chung",
+                "2. Đánh giá dữ liệu đầu vào",
+                "3. Phương pháp phân tích",
+                "4. Tóm tắt kết quả",
+                "5. Danh sách phát hiện",
+                "6. Phân tích chi tiết phát hiện",
+                "7. Đề xuất remediation",
+                "8. Giới hạn và độ tin cậy của báo cáo",
+                "9. Kết luận",
+                "10. Phụ lục",
+                "F-01:",
+                "I-01",
+                "E-01",
             ):
                 self.assertIn(expected_sec, full_pdf_text)
 
@@ -1093,12 +1098,14 @@ class OllamaIntegrationTests(unittest.TestCase):
             with patch("reportlab.platypus.Paragraph", side_effect=spy_para):
                 render_pdf(saved, tmp_p / "verified.pdf")
             joined_pdf = __import__("html").unescape("\n".join(rendered_paragraphs))
-            pdf_sec4 = joined_pdf.split('<a name="sec4"/>4. Detailed Findings', 1)[1].split('<a name="sec5"/>5. Risk Ratings', 1)[0]
-            pdf_sec6 = joined_pdf.split('<a name="sec6"/>6. Remediation Recommendations', 1)[1].split('<a name="sec7"/>7. Appendix', 1)[0]
-            self.assertNotIn("Remediation:", pdf_sec4)
-            self.assertIn("[W-001 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", pdf_sec6)
-            self.assertIn("[W-002 | GET 'id' — 198.51.100.77/vulnerabilities/sqli/]", pdf_sec6)
-            self.assertNotIn("Set Secure, HttpOnly, and SameSite attributes on session cookies", pdf_sec6)
+            pdf_sec6 = joined_pdf.split('<a name="sec6"/>6. Phân tích chi tiết phát hiện', 1)[1].split('<a name="sec7"/>7. Đề xuất remediation', 1)[0]
+            pdf_sec7 = joined_pdf.split('<a name="sec7"/>7. Đề xuất remediation', 1)[1].split('<a name="sec8"/>8. Giới hạn và độ tin cậy của báo cáo', 1)[0]
+            self.assertNotIn("7.2. Biện pháp đề xuất", pdf_sec6)
+            self.assertIn("F-01:", pdf_sec7)
+            self.assertIn("F-02:", pdf_sec7)
+            self.assertIn("Prepared statements ensure an attacker cannot alter SQL query intent", pdf_sec7)
+            self.assertIn("apply context-aware output encoding", pdf_sec7)
+            self.assertNotIn("Set Secure, HttpOnly, and SameSite attributes on session cookies", pdf_sec7)
 
 
 if __name__ == "__main__":

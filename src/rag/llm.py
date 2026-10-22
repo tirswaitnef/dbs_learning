@@ -36,7 +36,7 @@ def format_ai_trace_text(trace: dict) -> str:
     entries = trace.get("entries") or []
     lines = [
         "================================================================================",
-        "NHẬT KÝ LỆNH GỬI AI & PHẢN HỒI NGUYÊN VĂN (AUDITNOTE AI TRACE)",
+        "NHẬT KÝ LỆNH GỬI AI & PHẢN HỒI NGUYÊN VĂN (DBSEC OWASP RAG)",
         f"Chế độ chạy : {mode}",
         f"Mô hình AI  : {model}",
         f"Nguồn kết quả: {'Tái sử dụng từ Cache SHA-256 (bật Luôn gọi AI mới để chạy trực tiếp)' if cached else 'Gọi trực tiếp mô hình AI'}",

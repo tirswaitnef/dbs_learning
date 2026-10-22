@@ -1,203 +1,210 @@
 <!doctype html>
 <html lang="vi">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AuditNote — Trợ lý AI phân tích &amp; sinh báo cáo kiểm thử bảo mật CSDL</title>
-<link rel="stylesheet" href="/style.css">
-<script src="/app.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DBSec OWASP — Báo cáo Kiểm thử Bảo mật CSDL &amp; Đề xuất Remediation theo OWASP</title>
+  <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
-<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
-<symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 1-8 8H5l-3 3V11a9 9 0 0 1 18 0Z"/></symbol>
-<symbol id="i-paper" viewBox="0 0 24 24"><path d="m8 13 7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7L13 2M7 14l7-7"/></symbol>
-<symbol id="i-arrow" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
-<symbol id="i-file" viewBox="0 0 24 24"><path d="M13 3H5v18h14V9l-6-6Zm0 0v6h6M8 13h8M8 17h5"/></symbol>
-<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
-<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
-<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
-<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
-<symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
-<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 2 8 3v7c0 5-8 10-8 10S4 17 4 12V5l8-3Z"/><path d="m8 11 3 3 5-5"/></symbol>
-<symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></symbol>
-</defs></svg>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Lịch sử báo cáo">
+      <div class="sidebar-top">
+        <a class="brand" href="#new" id="brand-link">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path>
+              <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
+            </svg>
+          </span>
+          <span>DBSec OWASP</span>
+        </a>
+        <button class="icon-button mobile-only" id="close-sidebar" type="button" aria-label="Đóng thanh bên">✕</button>
+      </div>
 
-<button class="scrim" id="scrim" aria-label="Đóng thanh bên" hidden></button>
-
-<aside id="sidebar">
-  <a class="brand" href="/" aria-label="AuditNote trang chủ">
-    <span class="brand-icon"><svg><use href="#i-shield"/></svg></span>
-    <span class="brand-text">AuditNote</span>
-    <span class="beta">LOCAL</span>
-  </a>
-
-  <button class="new-chat" id="new-chat" type="button">
-    <svg><use href="#i-plus"/></svg>
-    <span>Tạo báo cáo mới</span>
-  </button>
-
-  <div class="sidebar-label">LỊCH SỬ BÁO CÁO</div>
-  <nav id="history" aria-label="Lịch sử báo cáo">
-    <p class="history-empty">Các phiên phân tích và file PDF của bạn sẽ lưu tại đây.</p>
-  </nav>
-
-  <div class="sidebar-bottom">
-    <div class="policy-icon"><svg><use href="#i-layers"/></svg></div>
-    <div>
-      <strong>Kiến trúc đối chiếu 4 lớp</strong>
-      <p>Log gốc · Quy tắc tĩnh CWE/EOL · Kho OWASP Cheat Sheet · AI cục bộ rà soát chéo.</p>
-    </div>
-  </div>
-
-  <div class="profile">
-    <span class="avatar">AN</span>
-    <div>
-      <strong>Không gian cục bộ</strong>
-      <span>100% xử lý trên máy này</span>
-    </div>
-    <span class="green-dot"></span>
-  </div>
-</aside>
-
-<main>
-  <header>
-    <div class="header-left">
-      <button class="icon-button mobile-menu" id="menu" type="button" aria-label="Mở lịch sử">
-        <svg><use href="#i-menu"/></svg>
+      <button class="new-chat" id="new-chat" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        <span>Phiên báo cáo mới</span>
       </button>
-      <span class="header-title">Trợ lý AI Báo cáo Kiểm thử Bảo mật CSDL</span>
-      <span class="header-sep">/</span>
-      <span class="header-sub">OWASP Top 10:2025 &amp; Cheat Sheet RAG</span>
-    </div>
-    <span class="local-badge" id="engine-badge">
-      <span class="green-dot" id="engine-dot"></span>
-      <span id="engine-text">Đang kết nối máy chủ cục bộ…</span>
-    </span>
-  </header>
 
-  <div id="config-notice" class="config-notice" hidden></div>
+      <div class="history-label">Báo cáo đã tạo</div>
+      <nav class="history" id="history" aria-live="polite"></nav>
 
-  <div id="viewport" class="viewport">
-    <section id="welcome" class="welcome">
-      <div class="eyebrow"><span></span> HỆ THỐNG HỖ TRỢ ĐÁNH GIÁ &amp; BÁO CÁO BẢO MẬT</div>
-      <div class="hero-mark">
-        <svg><use href="#i-file"/></svg>
-        <span><svg><use href="#i-check"/></svg></span>
-      </div>
-      <h1>Từ kết quả quét kỹ thuật<br><em>đến báo cáo chuẩn đối chiếu OWASP.</em></h1>
-      <p class="intro">
-        Tải lên một hoặc nhiều file kết quả kiểm thử (<strong>sqlmap</strong>, <strong>Nmap</strong>, <strong>OWASP ZAP</strong>, <strong>Burp</strong>, <strong>Nuclei</strong>, <strong>Nessus</strong>) để phân tích tiếng Việt có kiểm chứng trích dẫn và xuất PDF chuyên nghiệp.
-      </p>
-      <div class="steps">
-        <div><span>01</span> Đính kèm 1 hoặc nhiều log</div>
-        <i>→</i>
-        <div><span>02</span> Truy xuất OWASP &amp; AI rà soát chéo</div>
-        <i>→</i>
-        <div><span>03</span> Xem trực tiếp &amp; tải PDF</div>
-      </div>
-    </section>
-
-    <section id="messages" class="messages" aria-label="Chi tiết tiến trình báo cáo" hidden></section>
-
-    <section class="compose-zone" id="compose-zone">
-      <form id="upload-form" class="composer">
-        <div class="file-list-wrap" id="file-chip" hidden>
-          <div class="file-list-header">
-            <span id="file-summary"></span>
-            <button id="remove-file" type="button" class="clear-files">Xóa tất cả</button>
-          </div>
-          <div class="file-chips" id="file-chips"></div>
-        </div>
-
-        <textarea id="note" rows="2" maxlength="1000" aria-label="Ghi chú cho lần kiểm thử" placeholder="Kéo thả file kết quả kiểm thử vào khung này hoặc bấm “Đính kèm file” bên dưới… (có thể thêm ghi chú ngữ cảnh nếu cần)"></textarea>
-
-        <div class="composer-actions">
-          <div class="attach-group">
-            <button type="button" class="attach" id="attach" aria-label="Đính kèm file kiểm thử">
-              <svg><use href="#i-paper"/></svg>
-              <span>Đính kèm file</span>
-            </button>
-            <span class="divider"></span>
-            <label for="format">Định dạng:</label>
-            <select id="format">
-            <option value="auto">Tự động nhận diện định dạng</option>
-            <option value="zap">OWASP ZAP · JSON (.json)</option>
-            <option value="nmap">Nmap · XML (.xml)</option>
-            <option value="burp">Burp Suite · XML (.xml)</option>
-            <option value="nessus">Nessus · XML (.nessus/.xml)</option>
-            <option value="nuclei">Nuclei · JSONL (.jsonl)</option>
-            <option value="sqlmap-log">sqlmap · Log (.txt/.log)</option>
-            <option value="normalized">JSON chuẩn hóa</option>
-            </select>
-          </div>
-
-          <button class="send" type="submit" id="send" aria-label="Gửi file và tạo báo cáo">
-            <span>Tạo báo cáo PDF</span>
-            <svg><use href="#i-arrow"/></svg>
-          </button>
-        </div>
-
-        <details class="report-options" open>
-          <summary>Tùy chọn mẫu Báo cáo Pentest (Ngôn ngữ, Trang bìa &amp; Chế độ AI)</summary>
-          <div class="report-fields">
-            <label>Ngôn ngữ báo cáo xuất ra
-              <select id="meta-report_lang">
-                <option value="vi" selected>Tiếng Việt (Bố cục y hệt file mẫu)</option>
-                <option value="en">English (Giống 100% nhãn &amp; bố cục file mẫu)</option>
-              </select>
-            </label>
-            <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Để trống sẽ tự lấy theo tên/host trong file"></label>
-            <label>Đơn vị tiếp nhận (Prepared for)<input id="meta-client" maxlength="180" placeholder="Ví dụ: Hội đồng Đánh giá / Đơn vị Chủ quản"></label>
-            <label>Người thực hiện kiểm thử (Prepared by)<input id="meta-prepared_by" maxlength="180" placeholder="Để trống sẽ tự ghi tên công cụ từ file đầu vào"></label>
-            <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Để trống sẽ tự lấy thời gian trong file"></label>
-            <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="CONFIDENTIAL"></label>
-            <label>Lọc bản ghi quan sát sơ bộ / mở cổng
-              <select id="meta-xss_decision">
-                <option value="drop" selected>Chỉ đưa lỗ hổng đã xác nhận vào Mục 4 (Mặc định)</option>
-                <option value="confirm">Bao gồm cả các ghi nhận sơ bộ / quan sát dịch vụ</option>
-              </select>
-            </label>
-            <label>Chế độ gọi AI &amp; Bộ nhớ đệm (Cache)
-              <select id="meta-force_fresh_ai">
-                <option value="false" selected>Dùng lại Cache nếu trùng y hệt file cũ (Nhanh)</option>
-                <option value="true">Luôn gọi trực tiếp AI mới (Xem trực tiếp mọi lệnh gửi Ollama)</option>
-              </select>
-            </label>
-          </div>
-        </details>
-
-        <input id="file" type="file" accept=".json,.xml,.jsonl,.log,.txt,.nessus" multiple hidden>
-        <div class="drop-label">Thả 1 hoặc nhiều file kiểm thử vào đây để gộp chung vào một báo cáo</div>
-      </form>
-
-      <p class="form-error" id="form-error" role="alert" hidden></p>
-      <p class="input-help">Hỗ trợ 7 định dạng: <code>OWASP ZAP</code>, <code>Burp Suite</code>, <code>Nmap</code>, <code>Nessus</code>, <code>Nuclei</code>, <code>sqlmap</code>, <code>JSON chuẩn hóa</code> · Tối đa 10 MB / 100 phát hiện · Có thể gộp nhiều công cụ trong cùng một báo cáo</p>
-
-      <div class="info-cards">
-        <div>
-          <svg><use href="#i-shield"/></svg>
+      <div class="sidebar-footer">
+        <div class="status-pill" id="mode-pill">Đang kiểm tra cấu hình</div>
+        <div class="user-card">
+          <span class="avatar" aria-hidden="true">DB</span>
           <div>
-            <strong>Chống suy đoán sai sự thật</strong>
-            <p>Mọi nhận định AI đều bắt buộc trích dẫn nguyên văn từ log đầu vào, đối chiếu nhất quán với CVSS/cookie và qua lượt rà soát chéo riêng.</p>
-          </div>
-        </div>
-        <div>
-          <svg><use href="#i-file"/></svg>
-          <div>
-            <strong>Theo dõi tiến trình trực tiếp 6 bước</strong>
-            <p>Hiển thị rõ từng bước xử lý E5, truy xuất OWASP, viết nháp, kiểm chứng trích dẫn và đồng hồ đếm giây trực tiếp trên CPU.</p>
+            <strong>DBSec OWASP</strong>
+            <span>Chạy cục bộ · 127.0.0.1</span>
           </div>
         </div>
       </div>
+    </aside>
 
-      <p class="privacy" id="privacy">Dữ liệu kiểm thử, kho vector OWASP và mô hình ngôn ngữ chạy cục bộ trên máy tính của bạn.</p>
-    </section>
+    <div class="backdrop" id="backdrop" hidden></div>
+
+    <main class="main" id="main">
+      <header class="mobile-header">
+        <button class="icon-button" id="open-sidebar" type="button" aria-label="Mở lịch sử">☰</button>
+        <strong>DBSec OWASP</strong>
+        <button class="icon-button" id="mobile-new" type="button" aria-label="Báo cáo mới">＋</button>
+      </header>
+
+      <div class="banner" id="banner" role="status" hidden></div>
+
+      <section class="workspace" id="workspace">
+        <div class="empty-state" id="empty-state">
+          <div class="eyebrow"><span></span>KIỂM THỬ BẢO MẬT CSDL · CHUẨN OWASP TOP 10:2025 &amp; CHEAT SHEET</div>
+          <div class="hero-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
+              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path>
+              <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
+            </svg>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
+          </div>
+          <h1>Báo cáo kiểm thử bảo mật CSDL &amp; <em>đề xuất remediation theo OWASP</em></h1>
+          <p class="intro">Tải lên một hoặc nhiều tệp kết quả kiểm thử từ <strong>sqlmap</strong>, <strong>Nmap</strong>, <strong>OWASP ZAP</strong>, <strong>Burp Suite</strong>, <strong>Nuclei</strong>, <strong>Nessus</strong> hoặc <strong>JSON chuẩn hóa</strong>. Hệ thống tự động đánh mã nguồn dữ liệu <code>I-01+</code>, trích xuất bằng chứng <code>E-01+</code>, phân loại phát hiện <code>F-01+</code> trung thực theo dữ liệu gốc (không tự tạo số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất báo cáo <strong>10 mục hoàn chỉnh</strong> (PDF, Markdown, JSON).</p>
+          <div class="steps" aria-label="Quy trình xử lý">
+            <div><span>1</span>Đánh giá dữ liệu <code>I-01+</code> &amp; tách bằng chứng <code>E-01+</code></div>
+            <i>→</i>
+            <div><span>2</span>Đối chiếu RAG OWASP Top 10:2025 &amp; Cheat Sheet</div>
+            <i>→</i>
+            <div><span>3</span>Kết xuất Báo cáo 10 mục chuẩn PDF &amp; Markdown</div>
+          </div>
+        </div>
+
+        <div class="messages" id="messages" hidden></div>
+
+        <form class="compose-zone" id="upload-form" novalidate>
+          <div class="composer" id="dropzone">
+            <input id="file-input" name="file" type="file" accept=".json,.xml,.jsonl,.txt,.log,.nessus" multiple hidden>
+
+            <div class="file-list-wrap" id="file-list-wrap" hidden>
+              <div class="file-list-header">
+                <span id="file-count-label">1 nguồn dữ liệu đầu vào</span>
+                <button class="clear-files" id="clear-file" type="button">Xóa tất cả</button>
+              </div>
+              <div class="file-chips" id="file-chips"></div>
+            </div>
+
+            <textarea id="note" name="note" rows="2" maxlength="1000" placeholder="Ghi chú phạm vi kiểm thử được phép (Mục 1 — ví dụ: Môi trường Lab cô lập, chỉ kiểm thử trên tham số id, không chạy --dump)..."></textarea>
+
+            <div class="composer-actions">
+              <div class="attach-group">
+                <button class="attach" id="pick-file" type="button">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                  </svg>
+                  <span>Chọn tệp kết quả kiểm thử</span>
+                </button>
+                <span class="divider" aria-hidden="true"></span>
+                <label for="format">Định dạng đầu vào</label>
+                <select id="format" name="format">
+                  <option value="auto">Tự động nhận diện từng tệp</option>
+                  <option value="sqlmap-log">sqlmap · log (.txt/.log)</option>
+                  <option value="nmap">Nmap · XML (-oX)</option>
+                  <option value="zap">OWASP ZAP · JSON/XML</option>
+                  <option value="burp">Burp Suite · XML</option>
+                  <option value="nuclei">Nuclei · JSONL/JSON</option>
+                  <option value="nessus">Nessus · .nessus XML</option>
+                  <option value="normalized">JSON chuẩn hóa</option>
+                </select>
+              </div>
+              <button class="send" id="submit-btn" type="submit">
+                <span>Phân tích &amp; Xuất Báo cáo</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                  <polyline points="12 5 19 12 12 19"></polyline>
+                </svg>
+              </button>
+            </div>
+
+            <details class="report-options" id="report-options">
+              <summary>Thông tin khung Báo cáo 10 mục (Mục 1 &amp; Mục 7.5 — để trống hệ thống tự trích từ dữ liệu)</summary>
+              <div class="report-fields">
+                <label>Mã báo cáo (Mục 1)
+                  <input id="meta-report_id" maxlength="120" placeholder="Để trống tự sinh (VD: RPT-DBSEC-20261022-...)">
+                </label>
+                <label>Tên dự án / Đề tài (Mục 1)
+                  <input id="meta-project_name" maxlength="180" placeholder="VD: Đề tài Kiểm thử Bảo mật CSDL &amp; OWASP Remediation">
+                </label>
+                <label>Đối tượng kiểm thử (Mục 1)
+                  <input id="meta-target_object" maxlength="240" placeholder="Để trống tự trích URL / IP / Cổng từ dữ liệu quét">
+                </label>
+                <label>Hệ quản trị CSDL (Mục 1)
+                  <input id="meta-dbms_override" maxlength="180" placeholder="Để trống tự nhận diện DBMS &amp; phiên bản từ log">
+                </label>
+                <label>Thời gian kiểm thử (Mục 1)
+                  <input id="meta-assessment_period" maxlength="180" placeholder="Để trống tự trích mốc thời gian từ tệp đầu vào">
+                </label>
+                <label>Kết quả kiểm tra lại sau khắc phục (Mục 7.5)
+                  <select id="meta-retest_status">
+                    <option value="" selected>Chưa thực hiện (Mặc định chuẩn khi chưa retest)</option>
+                    <option value="Chưa đủ dữ liệu">Chưa đủ dữ liệu</option>
+                    <option value="Đạt">Đạt (Đã có kết quả kiểm tra lại xác nhận)</option>
+                    <option value="Chưa đạt">Chưa đạt (Lỗ hổng vẫn tái hiện khi kiểm tra lại)</option>
+                  </select>
+                </label>
+                <label>Bằng chứng kiểm tra lại (Mục 7.5 &amp; 10.4)
+                  <input id="meta-retest_evidence" maxlength="500" placeholder="Để trống nếu chưa thực hiện kiểm tra lại">
+                </label>
+                <label>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm
+                  <select id="meta-force_fresh_ai">
+                    <option value="" selected>Dùng lại Cache SHA-256 nếu trùng tệp (Nhanh)</option>
+                    <option value="1">Luôn gọi trực tiếp Ollama mới (Xem mọi lệnh gửi AI)</option>
+                  </select>
+                </label>
+              </div>
+            </details>
+
+            <div class="drop-label" aria-hidden="true">Thả một hoặc nhiều tệp kết quả kiểm thử (Nmap, sqlmap, ZAP, Burp, Nuclei, Nessus...)</div>
+          </div>
+
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+          <p class="input-help">Hỗ trợ gộp nhiều tệp thành <code>I-01, I-02...</code> (ví dụ: <code>nmap.xml</code> + <code>sqlmap.txt</code> + <code>zap.json</code>). Giữ nguyên mức độ gốc (<code>Chưa xác định</code> khi công cụ không xuất điểm) · Tối đa 10 MB.</p>
+
+          <div class="info-cards" id="info-cards">
+            <div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <polyline points="9 12 11 14 15 10"></polyline>
+              </svg>
+              <div>
+                <strong>Trung thực dữ liệu · Chuẩn khung 10 mục</strong>
+                <p>Tách biệt rõ <em>Đã xác nhận</em>, <em>Có dấu hiệu</em>, <em>Chưa đủ dữ liệu</em>; liên kết chặt chẽ <code>I-xx → F-xx → E-xx → OWASP</code>, không tự suy diễn mức độ nghiêm trọng hay khẳng định hệ thống đã an toàn.</p>
+              </div>
+            </div>
+            <div>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                <line x1="8" y1="21" x2="16" y2="21"></line>
+                <line x1="12" y1="17" x2="12" y2="21"></line>
+              </svg>
+              <div>
+                <strong>Ollama Local Tiếng Việt &amp; Kho OWASP CSDL</strong>
+                <p>Xử lý 100% cục bộ với 25 tài liệu <em>OWASP Cheat Sheet Series</em> chuyên biệt CSDL &amp; <em>OWASP Top 10:2025</em>, tự động che khóa phiên nhạy cảm <code>[REDACTED]</code>.</p>
+              </div>
+            </div>
+          </div>
+
+          <p class="privacy" id="privacy-note">Mọi dữ liệu đầu vào chỉ được xử lý cục bộ trên máy này và không gửi lên đám mây bên ngoài.</p>
+        </form>
+      </section>
+
+      <footer>
+        DBSec OWASP <span>·</span> Báo cáo Kiểm thử Bảo mật CSDL &amp; Đề xuất Remediation theo OWASP (Mục 1–10).
+      </footer>
+    </main>
   </div>
 
-  <footer>AuditNote <span>·</span> Phân tích có căn cứ, khắc phục có trích dẫn chuẩn OWASP.</footer>
-</main>
-
-<div class="toast" id="toast" role="status" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="/app.js"></script>
 </body>
 </html>

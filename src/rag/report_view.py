@@ -4,7 +4,13 @@ import re
 from collections import Counter
 from pathlib import Path
 
-META_FIELDS={'application':180,'client':180,'prepared_by':180,'assessment_period':180,'classification':80,'roles':1000,'excluded_areas':1000,'xss_decision':32,'xss_poc':1000,'mask_public_ips':16,'target_alias':120,'report_lang':16,'cvss_mode':16,'force_fresh_ai':16}
+META_FIELDS={
+    'report_id':120,'project_name':180,'application':180,'target_object':240,'client':180,
+    'dbms_override':180,'prepared_by':180,'assessment_period':180,'allowed_scope':1000,
+    'excluded_areas':1000,'retest_status':80,'retest_evidence':500,'classification':80,
+    'roles':1000,'xss_decision':32,'xss_poc':1000,'mask_public_ips':16,'target_alias':120,
+    'report_lang':16,'cvss_mode':16,'force_fresh_ai':16,'note':1000,
+}
 MISSING='Không được cung cấp trong đầu vào.'
 SEVERITIES=[('critical','Nghiêm trọng'),('high','Cao'),('medium','Trung bình'),('low','Thấp'),('informational','Thông tin'),('unknown','Chưa xác định')]
 STATUS_LABELS={'ai_reviewed':'Có diễn giải AI đã qua kiểm tra tự động','rejected_output':'Diễn giải AI chưa đạt kiểm tra','api_error':'Lỗi gọi AI','not_requested':'Không gọi AI'}

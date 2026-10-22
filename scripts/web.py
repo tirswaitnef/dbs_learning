@@ -37,7 +37,7 @@ def _background_warmup():
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description='Local pentest report chatbot')
+    p=argparse.ArgumentParser(description='Local DB Security & OWASP Remediation Report Web UI')
     p.add_argument('--host',default='127.0.0.1')
     p.add_argument('--port',type=int,default=8765)
     p.add_argument('--no-browser',action='store_true')

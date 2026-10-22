@@ -707,15 +707,15 @@ footer span{margin:0 7px}
   color:var(--ink-secondary)!important;
 }
 
-/* Live Event Stream & Collapsible Audit Log */
-.event-log-box,.audit-log{
+/* Live Event Stream & Collapsible Process Log */
+.event-log-box,.event-panel{
   margin-top:14px;
   border:1px solid var(--line);
   border-radius:10px;
   background:#f9fbf9;
   overflow:hidden;
 }
-.event-log-head,.audit-log summary{
+.event-log-head,.event-panel summary{
   padding:8px 12px;
   font-size:11.5px;
   font-weight:600;
@@ -726,8 +726,8 @@ footer span{margin:0 7px}
   justify-content:space-between;
   align-items:center;
 }
-.audit-log summary{cursor:pointer;list-style:none}
-.audit-log:not([open]) summary{border-bottom:0}
+.event-panel summary{cursor:pointer;list-style:none}
+.event-panel:not([open]) summary{border-bottom:0}
 .event-list{
   list-style:none;
   margin:0;
@@ -860,6 +860,7 @@ footer span{margin:0 7px}
   color:var(--ink-secondary);
 }
 .tag-mini.ok{background:var(--accent-soft);border-color:#c6ded3;color:var(--accent);font-weight:600}
+.tag-mini.warn{background:#fff8eb;border-color:#efd29a;color:#92580a;font-weight:600}
 
 .download-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .download{
