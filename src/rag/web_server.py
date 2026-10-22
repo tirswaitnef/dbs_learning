@@ -244,26 +244,28 @@ class JobManager:
             summary_status=report.get('ai_summary',{}).get('status')
             selection_failures=sum(r.get('generation_status') in {'api_error','rejected_output'} for r in rows)
             partial=not self.demo and bool(rows) and (skipped or summary_status!='ai_reviewed' or selection_failures)
+            from .pentest_polish import prepare_pentest_view
+            pview=prepare_pentest_view(report)
             preview=[{
-                'id':str(r.get('id','')),
-                'title':str(r.get('title',''))[:140],
-                'severity':str(r.get('severity','unknown')),
-                'cwe':str(r.get('cwe','unknown')),
-                'kind':str(r.get('kind','scanner_alert')),
-                'guidance_count':len(r.get('guidance') or []),
-                'ai_status':(r.get('ai_analysis') or {}).get('status','not_requested'),
-            } for r in rows[:25]]
+                'id':e['pentest_id'],
+                'title':e['title'][:140],
+                'severity':e['severity_key'],
+                'cwe':str(e['row'].get('cwe','unknown')),
+                'kind':'confirmed',
+                'guidance_count':len(e['remediation']['bullets']),
+            } for e in pview['entries'][:25]]
             summary={
                 'findings':len(rows),
-                'with_guidance':sum(bool(r.get('guidance')) for r in rows),
+                'confirmed_findings':len(pview['entries']),
+                'dropped_observations':pview['dropped_observations'],
+                'with_guidance':len(pview['global_recommendations']),
                 'scope_blocked':sum(r.get('owasp_top10',{}).get('status')!='in_scope' for r in rows),
                 'ai_reviewed':reviewed_ok,
                 'ai_unavailable':skipped,
                 'selection_failures':selection_failures,
                 'summary_status':summary_status,
                 'duration_sec':round(max(0.1,_time.monotonic()-t0),1),
-                'model':str(report.get('model','')),
-                'scan_sha256':str(report.get('scan_sha256',''))[:12],
+                'privacy_audit':pview['privacy_audit'],
                 'findings_preview':preview,
             }
             done_stage='Đã tạo PDF; có phần AI chưa hoàn tất' if partial else 'Báo cáo PDF đã sẵn sàng'
@@ -375,17 +377,20 @@ class Handler(BaseHTTPRequestHandler):
                         issues.append('Chưa thấy tài liệu Cheat Sheet Series trong data/raw/owasp/official.')
             return self.send_data(200,{'token':self.server.token,'demo':self.server.manager.demo,'provider':provider,'configured':configured or self.server.manager.demo,'model':model,'issues':issues,'formats':FORMATS,'max_bytes':MAX_UPLOAD})
         if path=='/api/jobs':return self.send_data(200,self.server.manager.list())
-        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json))?',path)
+        match=re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md))?',path)
         if match:
             try:job=self.server.manager.get(match[1])
             except KeyError:return self.send_data(404,{'error':'Không tìm thấy cuộc trò chuyện.'})
             if not match[2]:return self.send_data(200,job)
             if job['status'] not in {'completed','partial'}:return self.send_data(409,{'error':'Báo cáo chưa sẵn sàng.'})
-            kind=match[2];file=self.server.manager.directory/match[1]/'output'/('report.'+kind)
+            kind=match[2]
+            fname='pentest_report.md' if kind=='md' else ('report.'+kind)
+            file=self.server.manager.directory/match[1]/'output'/fname
             if not file.is_file():return self.send_data(404,{'error':'Không tìm thấy file báo cáo.'})
             inline=kind=='pdf' and parse_qs(parsed_url.query).get('inline',['0'])[0]=='1'
             disp='inline' if inline else 'attachment'
-            return self.send_data(200,file.read_bytes(),'application/pdf' if kind=='pdf' else 'application/json',{'Content-Disposition':f'{disp}; filename="bao-cao-{match[1][:8]}.{kind}"'})
+            ctype={'pdf':'application/pdf','json':'application/json; charset=utf-8','md':'text/markdown; charset=utf-8'}[kind]
+            return self.send_data(200,file.read_bytes(),ctype,{'Content-Disposition':f'{disp}; filename="bao-cao-pentest-{match[1][:8]}.{kind}"'})
         self.send_data(404,{'error':'Không tìm thấy đường dẫn.'})
 
     def do_POST(self):

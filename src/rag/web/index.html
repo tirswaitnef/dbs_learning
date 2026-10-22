@@ -138,14 +138,28 @@
           </button>
         </div>
 
-        <details class="report-options">
-          <summary>Thông tin trang bìa báo cáo PDF (tùy chọn)</summary>
+        <details class="report-options" open>
+          <summary>Thông tin trang bìa, xác minh XSS &amp; bảo mật dữ liệu (Pentest)</summary>
           <div class="report-fields">
             <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Ví dụ: Cổng dịch vụ web &amp; hệ quản trị CSDL nội bộ"></label>
-            <label>Đơn vị / môn học / khách hàng<input id="meta-client" maxlength="180" placeholder="Ví dụ: Khóa luận tốt nghiệp ATTT"></label>
-            <label>Người thực hiện kiểm thử<input id="meta-prepared_by" maxlength="180" placeholder="Họ tên sinh viên / kiểm thử viên"></label>
-            <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Mặc định lấy theo dấu thời gian trong log"></label>
-            <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="Ví dụ: Nội bộ — Phục vụ đánh giá bảo mật"></label>
+            <label>Đơn vị tiếp nhận (Prepared for)<input id="meta-client" maxlength="180" placeholder="Ví dụ: Hội đồng Đánh giá / Đơn vị Chủ quản"></label>
+            <label>Người thực hiện kiểm thử (Prepared by)<input id="meta-prepared_by" maxlength="180" placeholder="Họ tên kiểm thử viên / sinh viên"></label>
+            <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Mặc định lấy theo thời gian trong log"></label>
+            <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="CONFIDENTIAL"></label>
+            <label>Xác minh thủ công cảnh báo XSS sơ bộ
+              <select id="meta-xss_decision">
+                <option value="drop" selected>Loại bỏ cảnh báo chưa verify thủ công (Chuẩn Pentest)</option>
+                <option value="confirm">Đã tự verify là lỗ hổng thật — Giữ thành W-002: Reflected XSS</option>
+              </select>
+            </label>
+            <label>Ghi chú / PoC XSS sau khi verify thủ công (nếu giữ)<input id="meta-xss_poc" maxlength="1000" placeholder="Ví dụ: GET /...?id=1&lt;svg/onload=alert(1)&gt; thực thi hộp thoại trên trình duyệt"></label>
+            <label>Rà soát &amp; ẩn IP thực / Cookie / Đường dẫn nhạy cảm
+              <select id="meta-mask_public_ips">
+                <option value="true" selected>Tự động ẩn IP thực &amp; dữ liệu nhạy cảm (Khuyến nghị)</option>
+                <option value="false">Giữ nguyên địa chỉ IP gốc trong báo cáo</option>
+              </select>
+            </label>
+            <label>Tên miền đại diện thay cho IP thực<input id="meta-target_alias" maxlength="120" value="target-app.local" placeholder="target-app.local"></label>
           </div>
         </details>
 

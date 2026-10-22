@@ -20,12 +20,12 @@ const SEVERITY_VI = {
 };
 
 const PIPELINE_STEPS = [
-  { num: 1, title: 'Đọc & chuẩn hóa file kiểm thử', desc: 'Nhận diện công cụ, gộp bản ghi & tính SHA-256' },
-  { num: 2, title: 'Kho tri thức OWASP & mô hình E5', desc: 'Xác thực 137 Cheat Sheets & vector ngữ nghĩa' },
-  { num: 3, title: 'Truy xuất phòng vệ đa lớp OWASP', desc: 'Tìm kiếm ngữ nghĩa & chọn đoạn hướng dẫn gốc' },
-  { num: 4, title: 'Phân tích AI & rà soát từng phát hiện', desc: 'Viết tiếng Việt, kiểm tra trích dẫn & rà soát chéo' },
-  { num: 5, title: 'Tổng hợp Tổng quan điều hành AI', desc: 'Đối chiếu toàn cục F*, K1, C1 & thống kê' },
-  { num: 6, title: 'Dàn trang & kết xuất PDF / JSON', desc: 'Tạo mục lục tự động, bảng chứng cứ & phụ lục' }
+  { num: 1, title: 'Đọc & chuẩn hóa dữ liệu kiểm thử', desc: 'Nhận diện công cụ quét, lọc nhiễu & rà soát dữ liệu nhạy cảm' },
+  { num: 2, title: 'Nạp cơ sở tri thức bảo mật OWASP', desc: 'Đối chiếu 137 tài liệu hướng dẫn OWASP chính thức' },
+  { num: 3, title: 'Chọn lọc hướng khắc phục trọng tâm', desc: 'Tổng hợp biện pháp khắc phục ngắn gọn & ví dụ mã nguồn' },
+  { num: 4, title: 'Phân tích chi tiết lỗ hổng & tác động', desc: 'Biên soạn mô tả kỹ thuật & tác động nghiệp vụ dễ hiểu' },
+  { num: 5, title: 'Biên tập Tóm tắt điều hành Pentest', desc: 'Tổng hợp mức độ rủi ro tổng thể & lộ trình ưu tiên xử lý' },
+  { num: 6, title: 'Dàn trang & xuất Báo cáo Pentest PDF', desc: 'Tạo trang bìa, mục lục, chi tiết W-001+ & phụ lục bằng chứng' }
 ];
 
 let config = null, jobs = [], selected = null, files = [], uploading = false, timer = null, tickTimer = null, lastSignature = '';
@@ -422,23 +422,19 @@ function renderJob(job) {
     const badge = element('div', 'pdf-icon');
     badge.append(icon('file'));
     const label = element('div');
-    const subMeta = ['PDF A4 tiếng Việt', 'Nguồn OWASP Top 10:2025'];
-    if (s.model) subMeta.push(s.model);
-    label.append(element('strong', '', 'Báo cáo phân tích bảo mật đã sẵn sàng'), element('p', '', subMeta.join(' · ')));
+    const subMeta = ['Báo cáo Pentest A4 chuẩn OWASP', 'Đã rà soát ẩn dữ liệu nhạy cảm'];
+    label.append(element('strong', '', 'Báo cáo Kiểm thử Xâm nhập đã sẵn sàng'), element('p', '', subMeta.join(' · ')));
     headLeft.append(badge, label);
     head.append(headLeft);
-    if (s.scan_sha256) {
-      head.append(element('span', 'sha-tag', 'SHA-256: ' + s.scan_sha256));
-    }
+    const maskedTotal = (s.privacy_audit?.ips_masked || 0) + (s.privacy_audit?.secrets_masked || 0) + (s.privacy_audit?.paths_masked || 0);
+    head.append(element('span', 'sha-tag', maskedTotal > 0 ? ('Đã ẩn ' + maskedTotal + ' mục IP/nhạy cảm') : 'Không phát hiện IP công khai rò rỉ'));
     download.append(head);
 
-    const thirdMetric = job.demo
-      ? [String(s.scope_blocked || 0), 'Ngoài phạm vi Top 10']
-      : [typeof s.ai_reviewed === 'number' ? (s.ai_reviewed + '/' + s.findings) : String(s.findings), 'Đạt rà soát AI'];
+    const thirdMetric = [String(s.dropped_observations || 0), 'Cảnh báo nhiễu đã lọc'];
     const metrics = element('div', 'metrics');
     for (const [val, txt] of [
-      [String(s.findings), 'Tổng bản ghi'],
-      [String(s.with_guidance), 'Có hướng dẫn OWASP'],
+      [String(s.confirmed_findings ?? s.findings), 'Lỗ hổng xác nhận'],
+      [String(s.with_guidance), 'Khuyến nghị khắc phục'],
       thirdMetric,
       [formatDurationHuman(s.duration_sec), 'Thời gian xử lý']
     ]) {
@@ -461,8 +457,7 @@ function renderJob(job) {
         );
         const tags = element('div', 'preview-tags');
         if (r.cwe && r.cwe !== 'unknown') tags.append(element('span', 'tag-mini', r.cwe));
-        tags.append(element('span', 'tag-mini', r.guidance_count ? r.guidance_count + ' lớp OWASP' : 'Ngoài phạm vi khắc phục'));
-        if (r.ai_status === 'ai_reviewed') tags.append(element('span', 'tag-mini ok', '✓ AI đã rà soát'));
+        tags.append(element('span', 'tag-mini', r.guidance_count ? r.guidance_count + ' mục khắc phục' : 'Đã ghi nhận'));
         rowEl.append(main, tags);
         pv.append(rowEl);
       }
@@ -479,14 +474,18 @@ function renderJob(job) {
 
     const dlPdf = element('a', 'download secondary');
     dlPdf.href = '/api/jobs/' + encodeURIComponent(job.id) + '/pdf' + (qTok ? '?' + qTok : '');
-    dlPdf.download = 'bao-cao-' + job.id.slice(0, 8) + '.pdf';
+    dlPdf.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.pdf';
     dlPdf.append(icon('down'), document.createTextNode('Tải file PDF về máy'));
+
+    const dlMd = element('a', 'json-link', 'Tải bản Markdown (.md)');
+    dlMd.href = '/api/jobs/' + encodeURIComponent(job.id) + '/md' + (qTok ? '?' + qTok : '');
+    dlMd.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.md';
 
     const dlJson = element('a', 'json-link', 'Tải dữ liệu JSON');
     dlJson.href = '/api/jobs/' + encodeURIComponent(job.id) + '/json' + (qTok ? '?' + qTok : '');
-    dlJson.download = 'bao-cao-' + job.id.slice(0, 8) + '.json';
+    dlJson.download = 'bao-cao-pentest-' + job.id.slice(0, 8) + '.json';
 
-    actions.append(viewPdf, dlPdf, dlJson);
+    actions.append(viewPdf, dlPdf, dlMd, dlJson);
     download.append(actions);
 
     if (job.events && job.events.length) {
@@ -610,7 +609,10 @@ form.addEventListener('submit', async e => {
   $('send').disabled = true;
   try {
     const metaJson = JSON.stringify(
-      Object.fromEntries(['application', 'client', 'prepared_by', 'assessment_period', 'classification'].map(k => [k, $('meta-' + k).value.trim()]))
+      Object.fromEntries(
+        ['application', 'client', 'prepared_by', 'assessment_period', 'classification', 'xss_decision', 'xss_poc', 'mask_public_ips', 'target_alias']
+          .map(k => [k, ($('meta-' + k)?.value || '').trim()])
+      )
     );
     let job;
     if (files.length === 1) {

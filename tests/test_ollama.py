@@ -506,11 +506,55 @@ class OllamaIntegrationTests(unittest.TestCase):
             with patch("reportlab.platypus.Paragraph", side_effect=spy_paragraph):
                 pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
             self.assertTrue(pdf_file.read_bytes().startswith(b"%PDF-"))
-            full_pdf_text = "\n".join(rendered_paragraphs)
+            full_pdf_text = __import__("html").unescape("\n".join(rendered_paragraphs))
             self.assertIn("giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào", full_pdf_text)
             self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
-            self.assertIn("quy tắc đối chiếu tĩnh trong code dự án", full_pdf_text)
-            self.assertIn("Tổng quan AI: Có diễn giải AI đã qua kiểm tra tự động", full_pdf_text)
+            # All 6 pentest report polish guarantees:
+            for forbidden in ("SHA-256", "Model AI", "ollama/qwen3:4b", "AUDITNOTE |", "scanner_alert", "[K1]", "[C1]", "[F1]"):
+                self.assertNotIn(forbidden, full_pdf_text)
+            self.assertIn("Tác động đối với hoạt động & nghiệp vụ", full_pdf_text)
+            self.assertIn("W-001:", full_pdf_text)
+
+    def test_pentest_polish_xss_decision_and_public_ip_redaction(self):
+        from rag.parsers.native import parse_sqlmap_log
+        from rag.pentest_polish import prepare_pentest_view, render_pentest_markdown
+
+        raw_log = (
+            "Target URL: http://8.8.4.4/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+            "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=secretcookie999; security=low)\n"
+            "CVSS: 8.1 (High) | CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N\n"
+            "[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks\n"
+            "---\n"
+            "Parameter: id (GET)\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(1,CONCAT(0x5c,0x71))-- abcd&Submit=Submit\n"
+            "---\n"
+            "back-end DBMS: MySQL >= 5.1\n"
+            "[LOCAL_PENTESTER_HOME]\\AppData\\Local\\sqlmap\\output\\8.8.4.4\n"
+        )
+        rows = [f.__dict__ for f in parse_sqlmap_log(raw_log, "check.txt")]
+        for r in rows:
+            r["owasp_top10"] = {"status": "in_scope", "categories": [{"id": "A05:2025", "title": "Injection"}], "reason": ""}
+            r["guidance"] = []
+        base_report = {"schema_version": 1, "generated_at": "2026-10-22T00:00:00+00:00", "findings": rows, "report_metadata": {}}
+
+        # Default `drop`: unverified XSS observation excluded + public IP & cookie & path completely scrubbed
+        view_drop = prepare_pentest_view(base_report)
+        self.assertEqual([e["pentest_id"] for e in view_drop["entries"]], ["W-001"])
+        self.assertEqual(view_drop["dropped_observations"], 1)
+        md_drop = render_pentest_markdown(base_report)
+        self.assertNotIn("8.8.4.4", md_drop)
+        self.assertNotIn("secretcookie999", md_drop)
+        self.assertNotIn("AppData", md_drop)
+        self.assertIn("target-app.local", md_drop)
+
+        # Manual `confirm`: verified Reflected XSS promoted cleanly to W-002 (Medium, CVSS 6.1)
+        base_confirm = {**base_report, "report_metadata": {"xss_decision": "confirm", "xss_poc": "GET /vulnerabilities/sqli/?id=1<svg/onload=alert(1)> -> alert(1)"}}
+        view_confirm = prepare_pentest_view(base_confirm)
+        self.assertEqual([e["pentest_id"] for e in view_confirm["entries"]], ["W-001", "W-002"])
+        self.assertEqual(view_confirm["entries"][1]["severity_key"], "medium")
+        self.assertEqual(view_confirm["entries"][1]["cvss_score"], "6.1")
 
 
 if __name__ == "__main__":

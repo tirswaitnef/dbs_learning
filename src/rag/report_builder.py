@@ -159,13 +159,19 @@ def render_markdown(report):
 
 
 def write_report(report, output):
+    from .pentest_polish import prepare_pentest_view, render_pentest_markdown
     enforce(report)
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
+    view = prepare_pentest_view(report)
+    sanitized_report = view['work']
+    sanitized_report['privacy_audit'] = view['privacy_audit']
     from .pdf_report import render_pdf
     pdf_path = output / "report.pdf"
-    render_pdf(report, pdf_path)
+    render_pdf(sanitized_report, pdf_path)
     json_path, md_path = output / "report.json", output / "report.md"
-    json_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    md_path.write_text(render_markdown(report), encoding="utf-8")
+    pentest_md_path = output / "pentest_report.md"
+    json_path.write_text(json.dumps(sanitized_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(render_markdown(sanitized_report), encoding="utf-8")
+    pentest_md_path.write_text(render_pentest_markdown(sanitized_report), encoding="utf-8")
     return md_path, json_path, pdf_path

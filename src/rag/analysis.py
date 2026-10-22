@@ -102,6 +102,7 @@ def redact(value):
     value = re.sub(r'(?im)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:[^\r\n]*',r'\1: [REDACTED]',value)
     value = re.sub(r'''(?ix)(["']?(?<!empty-)(?:password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)''',r'\1[REDACTED]',value)
     value = re.sub(r'(?i)(https?://)[^\s/@:]+:[^\s/@]+@',r'\1[REDACTED]@',value)
+    value = re.sub(r"(?:[A-Za-z]:\\Users\\[^\\\r\n\"']+(?:\\[^\\\r\n\"']+)*|\[LOCAL_PENTESTER_HOME\](?:\\[^\r\n\"']+)*)",'[REDACTED_LOCAL_PATH]',value)
     return value
 
 
@@ -393,27 +394,14 @@ def _compact_quote(sid, quote):
 
 
 def narrative_lines(narrative):
-    """Shared content for PDF and Markdown; rejected prose is never exposed."""
+    """Shared clean narrative text for reports; strips internal source IDs (K1/C1/F1...)."""
+    from .pentest_polish import clean_internal_jargon
     if narrative.get('status')!='ai_reviewed':
-        return [narrative.get('reason','Chưa có diễn giải AI.')]
-    lines=['Diễn giải AI đã qua kiểm tra nguồn và một lượt AI rà soát; chưa được xác minh thủ công.']
+        return [clean_internal_jargon(narrative.get('reason','Chưa có nhận định bổ sung.'))]
+    lines=[]
     for section in SECTIONS:
         for claim in narrative['claims'][section]:
-            refs=', '.join(dict.fromkeys(r['source_id'] for r in claim['citations']))
-            lines.append(f"{LABELS[section]}: {claim['text_vi']} [{refs}]")
-    if narrative.get('truncated_sources'):lines.append('Ngữ cảnh AI bị giới hạn: '+', '.join(narrative['truncated_sources'])+'. Bằng chứng đầy đủ giữ ở phần đầu vào.')
-    used=[]
-    seen_flat={}
-    for section in SECTIONS:
-        for c in narrative['claims'][section]:
-            for r in c['citations']:
-                sid,q=r['source_id'],r['quote']
-                norm=re.sub(r'\s+',' ',str(q)).strip()
-                prev=seen_flat.setdefault(sid,[])
-                if any(norm in p or p in norm for p in prev):
-                    continue
-                prev.append(norm)
-                used.append(_compact_quote(sid,q))
-    lines.append('Đối chiếu nguồn trích dẫn:')
-    lines.extend(used)
+            cleaned=clean_internal_jargon(claim['text_vi'])
+            if cleaned:
+                lines.append(f"{LABELS[section]}: {cleaned}")
     return lines
