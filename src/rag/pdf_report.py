@@ -173,7 +173,8 @@ def render_pdf(report, path):
     if has_input_cvss:
         add('Lưu ý phương pháp chấm điểm: điểm số và vector CVSS hiển thị tại mục 4 được giữ nguyên trực tiếp từ dữ liệu kiểm thử đầu vào cung cấp sẵn kèm ngữ cảnh xác thực phiên (hệ thống và AI không tự tính hay tự gán lại CVSS); các bản ghi còn lại không có CVSS giữ nguyên mức độ gốc do công cụ ghi nhận.',small)
     else:
-        add('Lưu ý phương pháp chấm điểm: các công cụ như sqlmap/nmap không xuất điểm CVSS. Khi log thiếu thông tin xác thực (ví dụ PR:N không cần đăng nhập ~9.8 so với PR:L cần cookie phiên đăng nhập như DVWA ~8.8), hệ thống giữ nguyên mức gốc và hiển thị rõ mức độ chứng cứ khai thác thay vì tự bịa con số CVSS sai lệch.',small)
+        tool_list=', '.join(sorted({str(r.get('tool','')) for r in rows if r.get('tool')})) or 'công cụ kiểm thử'
+        add(f'Lưu ý phương pháp chấm điểm: dữ liệu đầu vào từ {tool_list} không đính kèm điểm CVSS. Trong chuẩn CVSS v3.1, điểm số phụ thuộc trực tiếp vào ngữ cảnh xác thực thực tế (ví dụ PR:N không cần đăng nhập so với PR:L cần quyền phiên đăng nhập hợp lệ), nên hệ thống giữ nguyên mức độ gốc từ công cụ và hiển thị rõ phân tầng chứng cứ kỹ thuật thay vì tự suy đoán con số CVSS.',small)
 
     section(6,'Hướng dẫn khắc phục đa lớp theo OWASP')
     add('Các đoạn dưới đây được trích nguyên văn từ OWASP Cheat Sheet Series (giữ nguyên mã nguồn mẫu và thuật ngữ gốc) nhằm bao phủ phòng vệ theo chiều sâu.',small)

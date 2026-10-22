@@ -121,14 +121,14 @@
             <span class="divider"></span>
             <label for="format">Định dạng:</label>
             <select id="format">
-              <option value="auto">Tự động nhận diện</option>
-              <option value="sqlmap-log">sqlmap · Log (.txt/.log)</option>
-              <option value="nmap">Nmap · XML (.xml)</option>
-              <option value="zap">OWASP ZAP · JSON (.json)</option>
-              <option value="burp">Burp Suite · XML (.xml)</option>
-              <option value="nuclei">Nuclei · JSONL (.jsonl)</option>
-              <option value="nessus">Nessus · XML (.nessus/.xml)</option>
-              <option value="normalized">JSON chuẩn hóa</option>
+            <option value="auto">Tự động nhận diện định dạng</option>
+            <option value="zap">OWASP ZAP · JSON (.json)</option>
+            <option value="nmap">Nmap · XML (.xml)</option>
+            <option value="burp">Burp Suite · XML (.xml)</option>
+            <option value="nessus">Nessus · XML (.nessus/.xml)</option>
+            <option value="nuclei">Nuclei · JSONL (.jsonl)</option>
+            <option value="sqlmap-log">sqlmap · Log (.txt/.log)</option>
+            <option value="normalized">JSON chuẩn hóa</option>
             </select>
           </div>
 
@@ -141,11 +141,11 @@
         <details class="report-options">
           <summary>Thông tin trang bìa báo cáo PDF (tùy chọn)</summary>
           <div class="report-fields">
-            <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Ví dụ: DVWA — Môi trường Lab CSDL"></label>
+            <label>Ứng dụng / hệ thống mục tiêu<input id="meta-application" maxlength="180" placeholder="Ví dụ: Cổng dịch vụ web &amp; hệ quản trị CSDL nội bộ"></label>
             <label>Đơn vị / môn học / khách hàng<input id="meta-client" maxlength="180" placeholder="Ví dụ: Khóa luận tốt nghiệp ATTT"></label>
             <label>Người thực hiện kiểm thử<input id="meta-prepared_by" maxlength="180" placeholder="Họ tên sinh viên / kiểm thử viên"></label>
             <label>Thời gian đánh giá<input id="meta-assessment_period" maxlength="180" placeholder="Mặc định lấy theo dấu thời gian trong log"></label>
-            <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="Ví dụ: Nội bộ — Phục vụ bảo vệ khóa luận"></label>
+            <label>Mức độ phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="Ví dụ: Nội bộ — Phục vụ đánh giá bảo mật"></label>
           </div>
         </details>
 
@@ -154,7 +154,7 @@
       </form>
 
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <p class="input-help">Hỗ trợ JSON, XML, JSONL, LOG, TXT · Tối đa 10 MB / 100 phát hiện · Có thể chọn nhiều file liên tiếp (ví dụ: <code>nmap_csdl.xml</code> + <code>sqlmap_csdl_chuan_pentest.txt</code>)</p>
+      <p class="input-help">Hỗ trợ 7 định dạng: <code>OWASP ZAP</code>, <code>Burp Suite</code>, <code>Nmap</code>, <code>Nessus</code>, <code>Nuclei</code>, <code>sqlmap</code>, <code>JSON chuẩn hóa</code> · Tối đa 10 MB / 100 phát hiện · Có thể gộp nhiều công cụ trong cùng một báo cáo</p>
 
       <div class="info-cards">
         <div>

@@ -69,9 +69,17 @@ def parse_zap(data, source_name):
         raise ValueError("Expected ZAP JSON with site[]")
     findings = []
     severity = {"0": "informational", "1": "low", "2": "medium", "3": "high"}
+    zap_meta = {}
+    if data.get("@version"):
+        zap_meta["tool_version"] = str(data["@version"]).strip()
+    if data.get("@generated"):
+        zap_meta["scan_start"] = str(data["@generated"]).strip()
     for si, site in enumerate(data["site"]):
         if not isinstance(site.get("alerts"), list):
             raise ValueError("Expected ZAP alerts[]")
+        site_meta = {**zap_meta}
+        if site.get("@name"):
+            site_meta["target_site"] = str(site["@name"]).strip()
         for ai, alert in enumerate(site["alerts"]):
             instances = alert.get("instances", [])
             if not isinstance(instances, list):
@@ -97,6 +105,7 @@ def parse_zap(data, source_name):
                              "rule_id": alert.get("pluginid", ""),
                              "scanner_solution": alert.get("solution", ""),
                              "description": alert.get("desc", ""),
+                             **({"scan_telemetry": site_meta} if site_meta else {}),
                              "raw_instance": instance,
                              "raw_alert": {k: v for k, v in alert.items() if k != "instances"}}))
     return findings

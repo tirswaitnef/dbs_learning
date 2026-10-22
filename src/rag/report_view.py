@@ -161,6 +161,10 @@ def extract_scan_context(report, scan_path=None, format_=None):
                 scan_windows.append(win)
         parts=[]
         if tel.get('tool_version'):parts.append(f"{r.get('tool','tool')} {tel['tool_version']}")
+        if tel.get('target_site'):parts.append(f"mục tiêu {tel['target_site']}")
+        if tel.get('plugin_family'):parts.append(f"nhóm plugin: {tel['plugin_family']}")
+        if tel.get('protocol'):parts.append(f"giao thức: {tel['protocol']}")
+        if tel.get('matcher'):parts.append(f"matcher: {tel['matcher']}")
         if tel.get('request_count'):parts.append(f"{tel['request_count']} HTTP requests")
         if tel.get('level') is not None and tel.get('risk') is not None:
             ext=' (mở rộng bài kiểm tra theo DBMS)' if tel.get('extended_dbms_tests') else ''
@@ -300,8 +304,22 @@ def context_source_text(row):
 def defense_layer_label(card):
     sec=str(card.get('section','')).lower()
     src=str(card.get('source','')).lower()
-    if 'query_parameterization' in src or 'using php' in sec or 'prepared statement example' in sec:
-        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement / PHP PDO'
+    if 'using php' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement (PHP PDO)'
+    if 'using java' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement (Java)'
+    if 'using .net' in sec or 'asp .net' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement (.NET)'
+    if 'using ruby' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement (Ruby)'
+    if 'using rust' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Prepared Statement (Rust SQLx)'
+    if 'oracle using pl/sql' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Stored Procedure tham số hóa (Oracle PL/SQL)'
+    if 'sql server using transact-sql' in sec:
+        return 'Mẫu mã nguồn an toàn OWASP — Stored Procedure tham số hóa (SQL Server T-SQL)'
+    if 'query_parameterization' in src or 'prepared statement example' in sec:
+        return 'Nguyên lý tham số hóa truy vấn CSDL — OWASP Query Parameterization'
     if 'defense option 1' in sec:
         return 'Phòng vệ gốc — Truy vấn tham số hóa (Prepared Statements)'
     if 'defense option 2' in sec:
@@ -311,14 +329,16 @@ def defense_layer_label(card):
     if 'input validation' in sec:
         return 'Phòng vệ chiều sâu ứng dụng — Kiểm tra/ép kiểu đầu vào theo Allow-list'
     if 'error_handling' in src or 'error handling' in sec:
-        return 'Kiểm soát phản hồi lỗi — Ẩn chi tiết lỗi CSDL phía client (chặn Error-based SQLi)'
+        return 'Kiểm soát phản hồi lỗi — Ẩn chi tiết lỗi CSDL phía client'
+    if 'transport layer protection' in sec:
+        return 'Mã hóa đường truyền CSDL — Bảo vệ kết nối bằng TLS/SSL'
     if 'configuring secure authentication' in sec:
         return 'Xác thực CSDL — Bắt buộc mật khẩu mạnh & tài khoản riêng biệt'
     if 'protecting the backend database' in sec:
-        return 'Cô lập mạng CSDL — Chỉ bind localhost / giới hạn cổng TCP qua tường lửa'
+        return 'Cô lập mạng CSDL — Chỉ bind nội bộ / giới hạn cổng TCP qua tường lửa'
     if 'creating secure permissions' in sec:
-        return 'Phân quyền CSDL — Loại bỏ sử dụng tài khoản quản trị mặc định (root/sa)'
-    if 'hardening' in sec or 'configuration and hardening' in sec:
+        return 'Phân quyền CSDL — Loại bỏ sử dụng tài khoản quản trị mặc định (root/sa/postgres)'
+    if 'hardening' in sec or 'configuration and hardening' in sec or sec.endswith('/ mongodb'):
         return 'Cứng hóa máy chủ CSDL (Database Server Hardening)'
     return 'Trích nguyên văn hướng dẫn phòng vệ OWASP'
 

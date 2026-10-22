@@ -27,6 +27,17 @@ PREFERRED = {
         'Injection_Prevention_Cheat_Sheet.md',
     },
     'CWE-79': {'Cross_Site_Scripting_Prevention_Cheat_Sheet.md','DOM_based_XSS_Prevention_Cheat_Sheet.md'},
+    'CWE-306': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-1393': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-798': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-287': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-521': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-319': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-295': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-250': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-269': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-284': {'Database_Security_Cheat_Sheet.md'},
+    'CWE-285': {'Database_Security_Cheat_Sheet.md'},
 }
 SELECT_SCHEMA = {'type':'object','properties':{'source_ids':{'type':'array','items':{'type':'string'}}},'required':['source_ids']}
 SYSTEM = '''Select complementary OWASP remediation source IDs from the provided candidates.
@@ -135,11 +146,19 @@ def _code_example_regex(blob):
         return r'using java built-in feature'
     if any(k in low for k in ('asp.net','csharp','.net','iis','mssql','sql server')):
         return r'using \.net built-in feature'
-    if any(k in low for k in ('ruby','rails')):
+    if any(k in low for k in ('ruby','rails','activerecord')):
         return r'using ruby'
     if any(k in low for k in ('rust','sqlx')):
         return r'using rust'
-    return r'using php with php data objects'
+    if 'perl' in low:
+        return r'using perl'
+    if any(k in low for k in ('coldfusion','cold fusion')):
+        return r'using cold fusion'
+    if any(k in low for k in ('oracle','pl/sql','ora-')):
+        return r'oracle using pl/sql / stored procedure using bind variables'
+    if any(k in low for k in ('php','dvwa','bwapp','mutillidae','laravel','symfony','wordpress')):
+        return r'using php with php data objects'
+    return r'^query parameterization cheat sheet / introduction$'
 
 
 def _priority_patterns(finding):
@@ -160,13 +179,17 @@ def _priority_patterns(finding):
     if 'Database_Security_Cheat_Sheet.md' in preferred_sources(finding):
         db_hardening=(r'hardening a microsoft sql server' if re.search(r'mssql|sql server',blob,re.I)
                       else r'hardening a mysql or a mariadb server' if re.search(r'mysql|mariadb',blob,re.I)
+                      else r'database configuration and hardening / mongodb$' if re.search(r'mongodb|\bmongo\b',blob,re.I)
                       else r'database configuration and hardening$')
-        return [
+        patterns=[
             r'configuring secure authentication$',
             r'protecting the backend database$',
             r'creating secure permissions$',
             db_hardening,
         ]
+        if re.search(r'tls|ssl|cleartext|unencrypted|transport',blob,re.I):
+            patterns.insert(2,r'implementing transport layer protection$')
+        return patterns
     return [r'defense option [123]\b']
 
 
@@ -359,7 +382,7 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
             sub_queries=[query]
             if query.startswith('CWE-89 '):
                 sub_queries.extend([
-                    'PHP Data Objects PDO prepared statement parameterized query example',
+                    'Query Parameterization prepared statement parameterized query example',
                     'SQL injection additional defenses least privilege allow-list input validation',
                     'error handling generic error response log server side SQL exception',
                 ])

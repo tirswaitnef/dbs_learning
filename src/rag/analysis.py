@@ -347,10 +347,18 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
     summary_sources['TOTAL']=(f"Tổng số bản ghi: {report['statistics']['total']}; "
                               f"phân bố mức độ đầu vào: {sev_parts}; "
                               f"số bản ghi có hướng dẫn OWASP: {report['statistics']['with_guidance']}.")
+    sum_hints=['Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1, C1 và TOTAL']
+    if any((r.get('details') or {}).get('techniques') for r in rows):
+        sum_hints.append('phân biệt rõ số điểm lỗ hổng thực tế với số kỹ thuật kiểm thử trên cùng tham số')
+    if scan_ctx.get('schemas'):
+        sum_hints.append('phân biệt schema ứng dụng với schema hệ thống mặc định của DBMS')
+    if scan_ctx.get('lab'):
+        sum_hints.append('nêu rõ ngữ cảnh môi trường thực hành có chủ đích được ghi nhận trong C1')
+    sum_hints.append('không tự bịa điểm CVSS hay viết hướng dẫn khắc phục.')
     def _sum_progress(msg):
         if progress:progress(f"[step=5|pct=84] {msg}")
     if progress:progress('[step=5|pct=80] AI summary — Đang tổng hợp Tổng quan điều hành toàn báo cáo...')
-    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1, C1 và TOTAL; phân biệt rõ 1 điểm tiêm với số kỹ thuật kiểm thử, phân biệt schema ứng dụng với schema hệ thống, nêu rõ ngữ cảnh môi trường lab (như DVWA) nếu có trong C1, không tự bịa điểm CVSS hay viết hướng dẫn khắc phục.',progress=_sum_progress if progress else None,item_label='Tổng quan điều hành')
+    report['ai_summary']=generate_analysis(summary_sources,model,task='; '.join(sum_hints),progress=_sum_progress if progress else None,item_label='Tổng quan điều hành')
     report['analysis_calls']+=report['ai_summary']['calls']
     if progress:
         sum_vi='Đạt kiểm tra nguồn & rà soát AI' if report['ai_summary']['status']=='ai_reviewed' else report['ai_summary']['status']

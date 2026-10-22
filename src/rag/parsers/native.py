@@ -84,6 +84,11 @@ def decode_message(node):
 
 def parse_burp(content, source):
     root = safe_xml(content, "issues")
+    burp_meta = {}
+    if root.get("burpVersion"):
+        burp_meta["tool_version"] = root.get("burpVersion").strip()
+    if root.get("exportTime"):
+        burp_meta["scan_start"] = root.get("exportTime").strip()
     findings = []
     for i, issue in enumerate(root.findall("issue")):
         name = text(issue, "name")
@@ -109,6 +114,7 @@ def parse_burp(content, source):
                                          "rule_id": text(issue, "type"), "serial_number": text(issue, "serialNumber"),
                                          "insertion_point": text(issue, "location"), "cwes": cw,
                                          "scanner_solution": text(issue, "remediationDetail") or text(issue, "remediationBackground"),
+                                         **({"scan_telemetry": burp_meta} if burp_meta else {}),
                                          "http_messages": messages, "raw_xml": ET.tostring(issue, encoding="unicode")}))
     return findings
 
@@ -136,6 +142,13 @@ def parse_nuclei(content, source):
         if not isinstance(extracted, list):
             raise ValueError("Nuclei extracted-results must be an array")
         evidence.extend("extracted-result: " + str(value) for value in extracted if str(value).strip())
+        nuc_tel = {}
+        if row.get("timestamp"):
+            nuc_tel["scan_start"] = str(row["timestamp"]).strip()
+        if row.get("type"):
+            nuc_tel["protocol"] = str(row["type"]).strip()
+        if row.get("matcher-name"):
+            nuc_tel["matcher"] = str(row["matcher-name"]).strip()
         findings.append(Finding(f"NUCLEI-L{line_number}", info.get("name") or str(row["template-id"]),
                                 primary_cwe(cw), info.get("severity") or "unknown",
                                 row.get("matched-at") or row.get("url") or row.get("host") or "unknown",
@@ -143,7 +156,9 @@ def parse_nuclei(content, source):
                                 details={"rule_id": row["template-id"], "cwes": cw,
                                          "cves": classification.get("cve-id", []),
                                          "cvss_score": classification.get("cvss-score"),
+                                         "cvss_vector": classification.get("cvss-metrics"),
                                          "scanner_solution": info.get("remediation", ""),
+                                         **({"scan_telemetry": nuc_tel} if nuc_tel else {}),
                                          "raw_result": row}))
     return findings
 
@@ -156,17 +171,31 @@ def parse_nessus(content, source):
     findings = []
     severity = {"0": "informational", "1": "low", "2": "medium", "3": "high", "4": "critical"}
     for hi, host in enumerate(report.findall("ReportHost")):
+        host_tel = {}
+        for tag_node in host.findall("HostProperties/tag"):
+            tname = tag_node.get("name", "")
+            if tname == "HOST_START" and tag_node.text:
+                host_tel["scan_start"] = tag_node.text.strip()
+            elif tname == "HOST_END" and tag_node.text:
+                host_tel["scan_end"] = tag_node.text.strip()
+            elif tname == "operating-system" and tag_node.text:
+                host_tel["os_banner"] = tag_node.text.strip()
         for ri, item in enumerate(host.findall("ReportItem")):
             cw = cwes([n.text or "" for n in item.findall("cwe")])
             outputs = ["".join(n.itertext()).strip() for n in item.findall("plugin_output")]
             plugin_id = item.get("pluginID", "")
             # A CWE supplied by Nessus always wins; the project rule only fills a missing one.
             rule = None if cw else nessus_rule(plugin_id)
+            item_tel = {**host_tel}
+            if item.get("pluginFamily"):
+                item_tel["plugin_family"] = item.get("pluginFamily").strip()
             details = {"rule_id": plugin_id, "cwes": cw,
                        "cves": [n.text for n in item.findall("cve") if n.text],
                        "cvss_score": text(item, "cvss3_base_score") or text(item, "cvss_base_score"),
+                       "cvss_vector": text(item, "cvss3_vector") or text(item, "cvss_vector"),
                        "scanner_solution": text(item, "solution"),
                        "description": text(item, "description"),
+                       **({"scan_telemetry": item_tel} if item_tel else {}),
                        "raw_xml": ET.tostring(item, encoding="unicode")}
             if rule:
                 details.update(rule_details(rule, f"Nessus pluginID {plugin_id}"))
