@@ -201,6 +201,19 @@ class OllamaIntegrationTests(unittest.TestCase):
         res = generate_analysis(sources, flaky, task="test")
         self.assertEqual(res["status"], "ai_reviewed")
         self.assertIn("repair_note", flaky.seen[1])
+        self.assertIn("previous_draft", flaky.seen[1])
+
+        # Comma-joined bullet quotes snap onto exact verbatim source span; redundant prefixes are stripped.
+        sources_e2 = {**sources, "E2": "available databases [2]:\n[*] dvwa\n[*] information_schema"}
+        snapped = validate({
+            "observations": [{"text_vi": "Điểm quan sát: Công cụ sqlmap ghi nhận danh sách CSDL gồm dvwa và information_schema.",
+                              "citations": [{"source_id": "E2", "quote": "available databases [2]: dvwa, information_schema"}]}],
+            "potential_impacts": [], "limitations": [],
+        }, sources_e2)
+        self.assertEqual(snapped["observations"][0]["text_vi"],
+                         "Công cụ sqlmap ghi nhận danh sách CSDL gồm dvwa và information_schema.")
+        self.assertEqual(snapped["observations"][0]["citations"][0]["quote"],
+                         "available databases [2]:\n[*] dvwa\n[*] information_schema")
 
     def test_qa_and_web_end_to_end_with_local_ollama_pdf(self):
         class FakeEmbedder:

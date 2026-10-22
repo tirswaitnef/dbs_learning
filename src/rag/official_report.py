@@ -128,15 +128,40 @@ def source_candidates(results, documents, preferred, *, max_chars=14000):
 
 def select_sources(finding, candidates, settings, *, llm=None):
     if classify(finding)['status']!='in_scope' or not finding.evidence or not candidates:return [],'not_requested'
-    prompt=json.dumps({'finding':{'title':finding.title,'cwe':cwe_label(finding),'has_evidence':True,
-                                  'top10':classify(finding)['categories']},'candidates':candidates},ensure_ascii=False)
+    available={x['source_id']:x for x in candidates}
+    schema={
+        'type':'object',
+        'properties':{
+            'source_ids':{
+                'type':'array',
+                'items':{'type':'string','enum':list(available)},
+                'maxItems':3,
+            }
+        },
+        'required':['source_ids'],
+    }
+    base_payload={'finding':{'title':finding.title,'cwe':cwe_label(finding),'has_evidence':True,
+                             'top10':classify(finding)['categories']},'candidates':candidates}
     model=llm or (OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings))
-    data=json.loads(model.generate(prompt,system=SYSTEM,schema=SELECT_SCHEMA))
-    if not isinstance(data,dict) or set(data)!={'source_ids'}:raise ValueError('Invalid source selection schema')
-    ids=data['source_ids'];available={x['source_id']:x for x in candidates}
-    if not isinstance(ids,list) or len(ids)>3 or any(not isinstance(i,str) for i in ids):raise ValueError('Invalid selected IDs')
-    if len(set(ids))!=len(ids) or any(i not in available for i in ids):raise ValueError('Unknown or duplicate source IDs')
-    return [available[i] for i in ids], 'selected' if ids else 'insufficient_context'
+    repair=None
+    last_raw=None
+    for attempt in range(2):
+        payload=dict(base_payload)
+        if repair:
+            payload['previous_draft']=last_raw
+            payload['repair_note']=repair
+        last_raw=model.generate(json.dumps(payload,ensure_ascii=False),system=SYSTEM,schema=schema)
+        try:
+            data=json.loads(last_raw)
+            if not isinstance(data,dict) or set(data)!={'source_ids'}:raise ValueError('Invalid source selection schema')
+            ids=data['source_ids']
+            if not isinstance(ids,list) or len(ids)>3 or any(not isinstance(i,str) for i in ids):raise ValueError('Invalid selected IDs')
+            if len(set(ids))!=len(ids) or any(i not in available for i in ids):raise ValueError('Unknown or duplicate source IDs')
+            return [available[i] for i in ids], 'selected' if ids else 'insufficient_context'
+        except (ValueError,TypeError,KeyError) as exc:
+            if attempt>=1:raise
+            repair=(f"Previous output failed validation ({exc}). Return JSON {{\"source_ids\": [...]}} with 0 to 3 "
+                    f"DISTINCT unique IDs chosen ONLY from {list(available)} (no duplicates, max 3 items).")
 
 
 def guidance_from_source(source, cwe):
