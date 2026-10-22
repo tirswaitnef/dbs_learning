@@ -296,6 +296,14 @@ def _sqlmap_telemetry(clean):
     cli_m = re.search(r"(?im)^\s*(?:Command|CLI\s+Command):\s*(.+?)\s*$", clean)
     if cli_m:
         telemetry["cli_hint"] = _sanitize_cli(cli_m.group(1).strip())[:300]
+        if "level" not in telemetry:
+            cl_lvl = re.search(r"--level[=\s]+(\d+)", telemetry["cli_hint"])
+            if cl_lvl:
+                telemetry["level"] = int(cl_lvl.group(1))
+        if "risk" not in telemetry:
+            cl_rsk = re.search(r"--risk[=\s]+(\d+)", telemetry["cli_hint"])
+            if cl_rsk:
+                telemetry["risk"] = int(cl_rsk.group(1))
     cu_m = re.search(r"(?im)^\s*current user:\s*['\"]?([^'\"\r\n]+)['\"]?\s*$", clean)
     if cu_m:
         telemetry["current_user"] = cu_m.group(1).strip()
