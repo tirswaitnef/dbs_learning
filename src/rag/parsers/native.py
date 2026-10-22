@@ -254,7 +254,7 @@ def parse_sqlmap_log(content, source):
     dbs_match = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
     if dbs_match:
         meta_lines.append(dbs_match.group(0).strip())
-    post_evidence = ("\n".join(meta_lines),) if dbs_match else ()
+    post_text = "\n\n" + "\n".join(meta_lines) if dbs_match else ""
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -280,7 +280,7 @@ def parse_sqlmap_log(content, source):
         http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
         findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", "unknown",
                                 location,
-                                (block.rstrip(),) + post_evidence, "sqlmap", f"{source}#line={line_number}",
+                                (block.rstrip() + post_text,), "sqlmap", f"{source}#line={line_number}",
                                 details={"parameter": match.group(1), "place": place,
                                          **({"method": http_method} if http_method else {}),
                                          "techniques": techniques,

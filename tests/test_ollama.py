@@ -215,6 +215,16 @@ class OllamaIntegrationTests(unittest.TestCase):
         self.assertEqual(snapped["observations"][0]["citations"][0]["quote"],
                          "available databases [2]:\n[*] dvwa\n[*] information_schema")
 
+        # Quote present in M3/K1 but mistakenly labeled E1 by a small model snaps to its true source ID.
+        sources_m3 = {**sources_e2, "M3": "Vị trí do kiểm thử cung cấp: host=192.0.2.55 (sqlmap output log); parameter=id (GET)"}
+        relinked = validate({
+            "observations": [{"text_vi": "Công cụ sqlmap ghi nhận tham số id tại host 192.0.2.55.",
+                              "citations": [{"source_id": "E1", "quote": "host 192.0.2.55"}]}],
+            "potential_impacts": [], "limitations": [],
+        }, sources_m3)
+        self.assertEqual(relinked["observations"][0]["citations"][0],
+                         {"source_id": "M3", "quote": "host=192.0.2.55"})
+
     def test_qa_and_web_end_to_end_with_local_ollama_pdf(self):
         class FakeEmbedder:
             def embed_documents(self, texts):

@@ -104,7 +104,7 @@ def _resolve_quote(quote, source_text):
         return _resolve_quote(best, source_text)
     # Match exact contiguous word/number token sequence when punctuation/bullets differed across lines.
     q_tokens = [m.group(0).lower() for m in re.finditer(r'[^\W_]+', quote)]
-    if len(q_tokens) >= 3:
+    if len(q_tokens) >= 2:
         s_matches = list(re.finditer(r'[^\W_]+', source_text))
         s_tokens = [m.group(0).lower() for m in s_matches]
         n = len(q_tokens)
@@ -112,6 +112,22 @@ def _resolve_quote(quote, source_text):
             if s_tokens[idx:idx + n] == q_tokens:
                 return source_text[s_matches[idx].start():s_matches[idx + n - 1].end()]
     return None
+
+
+def _match_in_sources(sid, quote, sources):
+    resolved = _resolve_quote(quote, sources[sid])
+    if resolved is not None:
+        return sid, resolved
+    # When a small local model places a genuine verbatim quote from M3/K1/E* under another source_id
+    # of the same finding, snap source_id + quote to the true source rather than discarding valid prose.
+    if len(quote.strip()) >= 4:
+        for other_sid, other_text in sources.items():
+            if other_sid == sid:
+                continue
+            resolved = _resolve_quote(quote, other_text)
+            if resolved is not None:
+                return other_sid, resolved
+    return None, None
 
 
 def input_sources(row):
@@ -164,16 +180,17 @@ def validate(data,sources):
                 if not isinstance(sid,str) or sid not in sources:raise ValueError(f'Unknown analysis source: {sid}')
                 if not isinstance(q,str) or not q.strip() or len(q)>500:
                     raise ValueError('Quote not in source')
-                resolved=_resolve_quote(q,sources[sid])
+                matched_sid,resolved=_match_in_sources(sid,q,sources)
                 if resolved is None:
                     raise ValueError(f'Quote not in source {sid}: {q[:80]!r}')
+                ref['source_id']=matched_sid
                 ref['quote']=resolved
             count+=1
     if not count:raise ValueError('Empty analysis')
     return data
 
 
-def generate_analysis(sources,llm,*,task,max_repairs=2):
+def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None):
     result={'status':'not_requested','claims':{},'sources':sources,'calls':0,
             'notice':'Kiểm tra cấu trúc/trích dẫn và rà soát bằng AI không bảo đảm đúng ngữ nghĩa.'}
     schema=_schema_for(sources)
@@ -195,15 +212,17 @@ def generate_analysis(sources,llm,*,task,max_repairs=2):
                 failed=[k for k in sorted(keys) if not isinstance(verdict,dict) or verdict.get(k) is not True]
                 raise ValueError('Analysis review rejected: '+','.join(failed))
             result.update(status='ai_reviewed',claims=data)
-            result.pop('reason',None);result.pop('reason_code',None)
+            result.pop('reason',None);result.pop('reason_code',None);result.pop('detail',None)
             return result
         except (ValueError,TypeError,KeyError) as exc:
+            if progress:progress(f"  retry {attempt+1}: {exc}")
             repair_note=(f"Attempt {attempt+1} rejected ({exc}). Edit previous_draft in accented Vietnamese "
                          f"(no CJK, no advice/cần/nên/phải), attribute findings to the scanner ('Công cụ ghi nhận...'), "
                          f"start every potential_impacts claim with 'Nếu...' or 'Trong trường hợp...', copy exact "
                          f"verbatim substrings from {list(sources)}, and stay strictly consistent with K1.")
             if attempt>=max_repairs:
                 result.update(status='rejected_output',reason_code='schema_or_source_or_review_rejected',
+                              detail=str(exc),
                               reason='Không hiển thị diễn giải AI: đầu ra không vượt qua kiểm tra cấu trúc, nguồn hoặc rà soát nội dung.')
         except RuntimeError:
             result.update(status='api_error',reason='Không có diễn giải AI do lỗi gọi model; thông tin đầu vào vẫn được giữ.')
@@ -227,7 +246,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
     for index,row in enumerate(rows,1):
         if progress:progress(f"AI analysis {index}/{len(rows)}...")
         sources,truncated=input_sources(row)
-        analysis=generate_analysis(sources,model,task='Phân tích một bản ghi kiểm thử bằng tiếng Việt có dấu, không viết hướng dẫn khắc phục.')
+        analysis=generate_analysis(sources,model,task='Phân tích một bản ghi kiểm thử bằng tiếng Việt có dấu, không viết hướng dẫn khắc phục.',progress=progress)
         analysis['truncated_sources']=truncated
         row['ai_analysis']=analysis
         report['analysis_calls']+=analysis['calls']
@@ -246,7 +265,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
                               f"phân bố mức độ đầu vào: {sev_parts}; "
                               f"số bản ghi có hướng dẫn OWASP: {report['statistics']['with_guidance']}.")
     if progress:progress('AI summary...')
-    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1 và TOTAL; không tự gán mức độ tổng thể, không viết lời khuyên hay hướng dẫn khắc phục, tác động phải nêu rõ dưới dạng có điều kiện.')
+    report['ai_summary']=generate_analysis(summary_sources,model,task='Viết tổng quan báo cáo bằng tiếng Việt có dấu bám sát các nguồn F*, K1 và TOTAL; không tự gán mức độ tổng thể, không viết lời khuyên hay hướng dẫn khắc phục, tác động phải nêu rõ dưới dạng có điều kiện.',progress=progress)
     report['analysis_calls']+=report['ai_summary']['calls']
     if progress:progress(f"AI summary: {report['ai_summary']['status']}")
     report['db_scope']={'summary':scope_summary(rows),'lines':scope_lines(rows)}

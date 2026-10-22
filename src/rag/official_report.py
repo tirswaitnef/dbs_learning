@@ -112,7 +112,7 @@ def source_candidates(results, documents, preferred, *, max_chars=14000):
                 if name not in preferred:continue
                 doc=by_source[name]
                 for block in blocks(doc):
-                    if re.search(r'primary defense|defense option [123]\b',block['section'],re.I):
+                    if re.search(r'defense option [123]\b',block['section'],re.I):
                         add_block(name,doc,block,best_score[name])
         for hit in ranked:
             name=hit['source']

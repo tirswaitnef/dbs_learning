@@ -116,8 +116,8 @@ class ScannerFormatTests(unittest.TestCase):
         f = parse_sqlmap_log(sample, "scan.txt")[0]
         self.assertEqual(f.location, "host=192.0.2.55 (sqlmap output log); parameter=q (GET)")
         self.assertNotIn("DemoUser", f.location)
-        self.assertEqual(len(f.evidence), 2)
-        self.assertIn("dvwa", f.evidence[1])
+        self.assertEqual(len(f.evidence), 1)
+        self.assertIn("dvwa", f.evidence[0])
 
     def test_utf16_powershell_redirection_supported_in_parser_and_web_detect(self):
         from rag.web_server import detect_format
