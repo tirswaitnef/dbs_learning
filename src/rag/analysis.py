@@ -284,7 +284,7 @@ def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None,item_label=
     return result
 
 
-def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
+def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unverified_observations=False):
     rows=report['findings']
     provider=settings.resolved_provider
     prefix='ollama' if provider=='ollama' else 'gemini'
@@ -299,6 +299,12 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None):
     model=llm or (OllamaLLM(settings) if provider=='ollama' else GeminiLLM(settings))
     total_rows=len(rows)
     for index,row in enumerate(rows,1):
+        if drop_unverified_observations and row.get('kind')=='observation':
+            row['ai_analysis']={
+                'status':'skipped_observation','claims':{},'sources':{},'calls':0,
+                'reason':'Cảnh báo sơ bộ chưa xác minh đã được lọc khỏi báo cáo chính theo tùy chọn kiểm thử.',
+            }
+            continue
         base_pct=42+int(34*(index-1)/max(1,total_rows))
         end_pct=42+int(34*index/max(1,total_rows))
         row_tag=f"{row['id']} ({index}/{total_rows})"

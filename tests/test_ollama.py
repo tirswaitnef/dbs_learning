@@ -721,6 +721,104 @@ class OllamaIntegrationTests(unittest.TestCase):
             pdf_out = render_pdf(rep, Path(tmp) / "out.pdf")
             self.assertTrue(pdf_out.is_file() and pdf_out.stat().st_size > 5000)
 
+    def test_scan_hash_ai_cache_reuses_analysis_on_rerender_and_skips_dropped_observations(self):
+        import numpy as np
+
+        class _MiniEmbedder:
+            model_name = "intfloat/multilingual-e5-small"
+            revision = None
+
+            def embed_documents(self, texts):
+                arr = np.zeros((len(texts), 8), dtype=np.float32)
+                arr[:, 0] = 1.0
+                return arr
+
+            def embed_query(self, text):
+                arr = np.zeros((8,), dtype=np.float32)
+                arr[0] = 1.0
+                return arr
+
+        llm_calls = []
+
+        class _CountingLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                llm_calls.append(prompt)
+                data = json.loads(prompt)
+                if "candidates" in data:
+                    return json.dumps({"source_ids": [data["candidates"][0]["source_id"]]})
+                if "analysis" in data:
+                    return json.dumps({
+                        "supported": True, "no_remediation": True,
+                        "appropriately_uncertain": True, "database_specific": True,
+                    })
+                srcs = data["sources"]
+                first_sid = next((k for k in srcs if k.startswith(("E", "F"))), next(iter(srcs)))
+                quote = srcs[first_sid].splitlines()[0][:60]
+                return json.dumps({
+                    "observations": [{"text_vi": "Công cụ ghi nhận tham số id bị tiêm nhiễm SQL.", "citations": [{"source_id": first_sid, "quote": quote}]}],
+                    "potential_impacts": [{"text_vi": "Nếu triển khai thực tế, kẻ tấn công có thể đọc dữ liệu ứng dụng.", "citations": [{"source_id": first_sid, "quote": quote}]}],
+                    "limitations": [],
+                }, ensure_ascii=False)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_p = Path(tmp)
+            raw_dir = tmp_p / "raw"
+            raw_dir.mkdir()
+            (raw_dir / "SQL_Injection_Prevention_Cheat_Sheet.md").write_text(
+                "# SQL Injection Prevention\n\n## Defense Option 1: Prepared Statements\nUse parameterized queries with prepared statements for every SQL statement so user input is never concatenated into SQL code.\n",
+                encoding="utf-8",
+            )
+            (raw_dir / "SQL_Injection_Prevention_Cheat_Sheet.meta.json").write_text(
+                json.dumps({
+                    "title": "SQL Injection Prevention Cheat Sheet",
+                    "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+                    "cwe": "CWE-89",
+                }),
+                encoding="utf-8",
+            )
+            store_dir = tmp_p / "store"
+            settings = Settings(llm_provider="ollama", ollama_model="qwen2.5:7b")
+            ingest_documents(raw_dir, store_dir, settings, embedder=_MiniEmbedder())
+
+            scan_file = tmp_p / "dvwa.log"
+            scan_file.write_text(
+                "Target URL: http://8.8.4.4/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+                "[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks\n"
+                "---\n"
+                "Parameter: id (GET)\n"
+                "    Type: error-based\n"
+                "    Title: MySQL >= 5.1 AND error-based\n"
+                "    Payload: id=1' AND EXTRACTVALUE(1,1)-- a\n"
+                "---\n"
+                "back-end DBMS: MySQL >= 5.1\n",
+                encoding="utf-8",
+            )
+            with patch("rag.embeddings.E5Embedding", return_value=_MiniEmbedder()), \
+                 patch("rag.official_report.OllamaLLM", return_value=_CountingLLM()):
+                out1 = tmp_p / "out1"
+                run_corpus_report(
+                    scan_file, out1, settings,
+                    raw_directory=raw_dir, store_directory=store_dir,
+                    format_="sqlmap-log", offline=True,
+                    report_metadata={"xss_decision": "drop", "prepared_by": "Sinh viên A"},
+                )
+                first_call_count = len(llm_calls)
+                # Only 1 source selection + 2 finding calls + 2 summary calls = 5 calls (0 wasted on dropped observation!)
+                self.assertEqual(first_call_count, 5)
+
+                # Re-exporting the exact same log with new cover metadata & unmasked IP uses SHA-256 AI cache -> ZERO extra LLM calls!
+                out2 = tmp_p / "out2"
+                run_corpus_report(
+                    scan_file, out2, settings,
+                    raw_directory=raw_dir, store_directory=store_dir,
+                    format_="sqlmap-log", offline=True,
+                    report_metadata={"xss_decision": "drop", "prepared_by": "Sinh viên B", "mask_public_ips": "false"},
+                )
+                self.assertEqual(len(llm_calls), first_call_count)
+                md2 = (out2 / "pentest_report.md").read_text(encoding="utf-8")
+                self.assertIn("Sinh viên B", md2)
+                self.assertIn("8.8.4.4", md2)
+
 
 if __name__ == "__main__":
     unittest.main()

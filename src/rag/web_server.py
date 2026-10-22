@@ -238,12 +238,14 @@ class JobManager:
             report=json.loads(Path(paths[1]).read_text(encoding='utf-8'))
             if not Path(paths[2]).is_file():raise RuntimeError('PDF missing')
             rows=report['findings']
-            analyses=[r.get('ai_analysis',{}).get('status') for r in rows]
-            reviewed_ok=sum(s=='ai_reviewed' for s in analyses) if not self.demo else len(rows)
+            xss_dec_j=str((report.get('report_metadata') or {}).get('xss_decision') or '').strip().lower()
+            eval_rows=[r for r in rows if not (xss_dec_j=='drop' and r.get('kind')=='observation')]
+            analyses=[r.get('ai_analysis',{}).get('status') for r in eval_rows]
+            reviewed_ok=sum(s=='ai_reviewed' for s in analyses) if not self.demo else len(eval_rows)
             skipped=sum(s!='ai_reviewed' for s in analyses) if not self.demo else 0
             summary_status=report.get('ai_summary',{}).get('status')
-            selection_failures=sum(r.get('generation_status') in {'api_error','rejected_output'} for r in rows)
-            partial=not self.demo and bool(rows) and (skipped or summary_status!='ai_reviewed' or selection_failures)
+            selection_failures=sum(r.get('generation_status') in {'api_error','rejected_output'} for r in eval_rows)
+            partial=not self.demo and bool(eval_rows) and (skipped or summary_status!='ai_reviewed' or selection_failures)
             from .pentest_polish import prepare_pentest_view, sanitize_raw_scan_text
             pview=prepare_pentest_view(report)
             try:

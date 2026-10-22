@@ -294,7 +294,7 @@ def guidance_from_source(source, cwe):
             'source':source['source'],'start':source['start'],'end':source['end']}
 
 
-def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None, progress=None):
+def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None, progress=None, drop_unverified_observations=False):
     provider=settings.resolved_provider
     prefix='ollama' if provider=='ollama' else 'gemini'
     actor='AI cục bộ (Ollama)' if provider=='ollama' else 'Gemini'
@@ -304,7 +304,8 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
         scope=classify(finding)
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
-        if scope['status']=='in_scope' and finding.evidence:
+        skip_obs=bool(drop_unverified_observations and getattr(finding,'kind','')=='observation')
+        if scope['status']=='in_scope' and finding.evidence and not skip_obs:
             pct_start=20+int(20*(idx_f-1)/total_f)
             pct_done=20+int(20*idx_f/total_f)
             if progress:
@@ -432,13 +433,44 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                     if key not in merged or hit['score']>merged[key]['score']:
                         merged[key]=hit
             return sorted(merged.values(),key=lambda h:-h['score'])
+    scan_sha=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest()
+    xss_dec=str((report_metadata or {}).get('xss_decision') or '').strip().lower()
+    drop_obs=(xss_dec=='drop')
+    cache_dir=Path(store_directory)/'ai_cache'
+    cache_key=hashlib.sha256(json.dumps({
+        'v':2,'scan_sha256':scan_sha,'format':format_,'corpus_sha256':corpus_sha,
+        'model':settings.model_label,'xss_decision':xss_dec,
+    },sort_keys=True).encode('utf-8')).hexdigest()
+    cache_file=cache_dir/f'{cache_key}.json'
+    if cache_file.is_file():
+        try:
+            cached_report=json.loads(cache_file.read_text(encoding='utf-8'))
+            cached_report['generated_at']=datetime.now(timezone.utc).isoformat()
+            from .report_view import attach_context
+            attach_context(cached_report,scan_path,format_,report_metadata,display_filename)
+            if progress:
+                progress('[step=5|pct=92] Đã tái sử dụng kết quả phân tích AI đã kiểm chứng cho cùng tệp đầu vào (Cache SHA-256)')
+                progress('[step=6|pct=97] Đang kết xuất lại khung mẫu PDF & Markdown với cấu hình mới...')
+            return write_report(cached_report,output)
+        except Exception:
+            pass
+
     shared_llm=(OllamaLLM(settings) if settings.resolved_provider=='ollama' else GeminiLLM(settings)) if findings else None
     report=build_corpus_report(findings,settings,documents,search,corpus_sha256=corpus_sha,
-                              scan_sha256=hashlib.sha256(Path(scan_path).read_bytes()).hexdigest(),llm=shared_llm,progress=progress)
+                              scan_sha256=scan_sha,llm=shared_llm,progress=progress,
+                              drop_unverified_observations=drop_obs)
     from .report_view import attach_context
     attach_context(report,scan_path,format_,report_metadata,display_filename)
     from .analysis import enrich_report
-    enrich_report(report,settings,llm=shared_llm,progress=progress)
+    enrich_report(report,settings,llm=shared_llm,progress=progress,drop_unverified_observations=drop_obs)
+    active_rows=[r for r in report.get('findings',[]) if not (drop_obs and r.get('kind')=='observation')]
+    if (all(r.get('ai_analysis',{}).get('status')=='ai_reviewed' for r in active_rows)
+            and (not active_rows or report.get('ai_summary',{}).get('status')=='ai_reviewed')):
+        try:
+            cache_dir.mkdir(parents=True,exist_ok=True)
+            cache_file.write_text(json.dumps(report,ensure_ascii=False),encoding='utf-8')
+        except Exception:
+            pass
     if progress:
         progress('[step=6|pct=96] Đang dàn trang báo cáo PDF, tạo mục lục tự động và ghi dấu vết SHA-256...')
     return write_report(report,output)
