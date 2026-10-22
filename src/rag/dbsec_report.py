@@ -1043,8 +1043,8 @@ def prepare_dbsec_report(report: dict) -> dict:
     )
     methodology = {
         'method': (
-            'Phân tích kết hợp hai tầng (Hybrid Deterministic + Extractive OWASP RAG + Local AI Verification): '
-            '(1) chuẩn hóa tất định đầu ra công cụ quét và tách mã bằng chứng `E-xx`; '
+            'Phân tích kết hợp hai tầng (AI-First Direct Input Reading + Extractive OWASP RAG + Deterministic Verification): '
+            '(1) mô hình ngôn ngữ cục bộ đọc trực tiếp tệp kết quả kiểm thử / báo cáo đầu vào và đối khớp nguyên văn từng trích đoạn bằng chứng `E-xx`; '
             '(2) ánh xạ CWE sang `OWASP Top 10:2025` theo bảng chuẩn khóa cứng; '
             '(3) truy xuất ngữ nghĩa đoạn hướng dẫn gốc từ kho `OWASP Cheat Sheet Series` chuyên biệt CSDL; '
             '(4) tổng hợp phân tích & tự động kiểm chứng chéo trích dẫn để loại bỏ suy diễn không có bằng chứng.'
