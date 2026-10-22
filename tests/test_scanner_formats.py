@@ -199,6 +199,21 @@ class ScannerFormatTests(unittest.TestCase):
         self.assertTrue(any("Allow-list Input Validation" in s for s in top5_sections))
         self.assertTrue(any("Error Handling Cheat Sheet / Objective" in s for s in top5_sections))
 
+        complete_pentest_log = (
+            "Target URL: http://198.51.100.42/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+            "Authentication Context: Authenticated HTTP Cookie session (PHPSESSID=[REDACTED]; security=low)\n"
+            + synthetic_full
+            + "current user: 'root@localhost'\n"
+            + "current database: 'dvwa'\n"
+            + "current user is DBA: True\n"
+            + "Database: dvwa\n[2 tables]\n+-----------+\n| guestbook |\n| users     |\n+-----------+\n"
+        )
+        full_parsed = parse_sqlmap_log(complete_pentest_log, "pentest_full.log")
+        full_ctx = extract_scan_context({"findings": [asdict(f) for f in full_parsed], "input_format": "sqlmap-log"})
+        self.assertEqual(full_ctx["repro_gaps"], [])
+        self.assertIn("root@localhost", full_ctx["db_identity"])
+        self.assertEqual(full_ctx["tables_by_db"], {"dvwa": ["guestbook", "users"]})
+
 
 if __name__ == "__main__":
     unittest.main()

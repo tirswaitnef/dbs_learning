@@ -156,6 +156,16 @@ def extract_scan_context(report, scan_path=None, format_=None):
         if tel.get('stopped_after_first_vulnerable_param'):
             parts.append('dừng kiểm thử các tham số còn lại sau phát hiện đầu tiên ([y/N] N)')
         if tel.get('cli_hint'):parts.append(f"lệnh ghi nhận: {tel['cli_hint']}")
+        if tel.get('auth_context') and not ctx.get('auth_context'):
+            ctx['auth_context']=tel['auth_context']
+        if any(k in tel for k in ('current_user','current_db','is_dba')) and not ctx.get('db_identity'):
+            id_bits=[]
+            if tel.get('current_user'):id_bits.append(f"user='{tel['current_user']}'")
+            if tel.get('current_db'):id_bits.append(f"current_db='{tel['current_db']}'")
+            if tel.get('is_dba') is not None:id_bits.append(f"quyền DBA={'CÓ (rủi ro đặc quyền cao)' if tel['is_dba'] else 'Không'}")
+            ctx['db_identity']='; '.join(id_bits)
+        if tel.get('tables_by_db') and not ctx.get('tables_by_db'):
+            ctx['tables_by_db']=tel['tables_by_db']
         if parts:
             line='; '.join(parts)
             if line not in seen_tel:
@@ -179,8 +189,15 @@ def extract_scan_context(report, scan_path=None, format_=None):
             except Exception:pass
     fmt=format_ or report.get('input_format','')
     if fmt=='sqlmap-log' or any(str(r.get('tool','')).lower()=='sqlmap' for r in rows):
+        missing_bits=[]
         if any('sqlmap output log' in str(r.get('location','')) or 'not established' in str(r.get('location','')) for r in rows):
-            ctx['repro_gaps'].append('Stdout mặc định của sqlmap không lưu câu lệnh CLI đã chạy nên thiếu URL/endpoint đầy đủ, cookie/phiên đăng nhập (PR:N hay PR:L) và quyền tài khoản CSDL hiện tại (--current-user / --privileges).')
+            missing_bits.append('URL/endpoint đầy đủ')
+        if not ctx.get('auth_context'):
+            missing_bits.append('cookie/phiên đăng nhập (PR:N hay PR:L)')
+        if not ctx.get('db_identity'):
+            missing_bits.append('quyền tài khoản CSDL hiện tại (--current-user / --privileges)')
+        if missing_bits:
+            ctx['repro_gaps'].append('Stdout mặc định của sqlmap không lưu câu lệnh CLI đã chạy nên thiếu '+', '.join(missing_bits)+'.')
     if ctx['lab']:
         ctx['application_hint']=f"{ctx['lab']['name']} (nhận diện từ {ctx['lab']['basis']})"
     return ctx
@@ -213,7 +230,21 @@ def context_source_text(row):
         seg=[]
         if app_s:seg.append("schema ứng dụng: "+", ".join(app_s))
         if sys_s:seg.append("schema hệ thống mặc định của DBMS (không phải CSDL ứng dụng): "+", ".join(sys_s))
-        parts.append("Dữ liệu đã trích xuất thực tế trong log — "+"; ".join(seg)+" (phép quét mới dừng ở liệt kê tên schema, chưa trích xuất các bảng và bản ghi bên trong schema ứng dụng).")
+        tbl_note=""
+        if tel.get('tables_by_db'):
+            tbl_strs=[f"{dbn} ({', '.join(ts)})" for dbn,ts in tel['tables_by_db'].items()]
+            tbl_note="; các bảng đã liệt kê: "+"; ".join(tbl_strs)+" (dừng ở mức cấu trúc bảng, không trích xuất bản ghi)"
+        else:
+            tbl_note=" (phép quét mới dừng ở liệt kê tên schema, chưa trích xuất các bảng và bản ghi bên trong schema ứng dụng)"
+        parts.append("Dữ liệu đã trích xuất thực tế trong log — "+"; ".join(seg)+tbl_note+".")
+    if any(k in tel for k in ('current_user','current_db','is_dba')):
+        id_seg=[]
+        if tel.get('current_user'):id_seg.append(f"current user='{tel['current_user']}'")
+        if tel.get('current_db'):id_seg.append(f"current database='{tel['current_db']}'")
+        if tel.get('is_dba') is not None:id_seg.append(f"quyền DBA={'True' if tel['is_dba'] else 'False'}")
+        parts.append("Thông tin tài khoản CSDL từ log: "+"; ".join(id_seg)+".")
+    if tel.get('auth_context'):
+        parts.append("Ngữ cảnh xác thực ghi nhận: "+tel['auth_context']+".")
     lab=detect_lab_indicator([row])
     if lab:parts.append(lab['note_vi'])
     eol=detect_eol_banners([row])

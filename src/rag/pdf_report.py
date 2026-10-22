@@ -92,11 +92,18 @@ def render_pdf(report, path):
         ('Công cụ & định dạng',(', '.join(sorted({str(r.get('tool','')) for r in rows})) or MISSING)+'  |  '+str(report.get('input_format',MISSING))),
         ('Các vị trí ghi nhận','\n'.join(dict.fromkeys(str(r.get('location',MISSING)) for r in rows)) or MISSING),
     ]
+    if scan_ctx.get('auth_context'):
+        scope_pairs.append(('Ngữ cảnh xác thực',scan_ctx['auth_context']))
     if scan_ctx.get('telemetry_lines'):
         scope_pairs.append(('Thông số phiên quét','\n'.join(scan_ctx['telemetry_lines'])))
+    if scan_ctx.get('db_identity'):
+        scope_pairs.append(('Tài khoản & quyền CSDL',scan_ctx['db_identity']))
     if scan_ctx.get('schemas'):
         s_info=scan_ctx['schemas']
         scope_pairs.append(('Schema CSDL trích xuất',f"Ứng dụng: {', '.join(s_info['application']) or 'không có'}  |  Hệ thống DBMS: {', '.join(s_info['system']) or 'không có'}"))
+    if scan_ctx.get('tables_by_db'):
+        tbl_lines=[f"{dbn}: {', '.join(ts)}" for dbn,ts in scan_ctx['tables_by_db'].items()]
+        scope_pairs.append(('Bảng CSDL đã liệt kê','\n'.join(tbl_lines)))
     if scan_ctx.get('eol_notes'):
         scope_pairs.append(('Cảnh báo vòng đời (EOL)','\n'.join(scan_ctx['eol_notes'])))
     if scan_ctx.get('repro_gaps'):

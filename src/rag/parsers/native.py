@@ -288,9 +288,35 @@ def _sqlmap_telemetry(clean):
     tech_m = re.search(r"(?im)^\s*web application technology:\s*(.+?)\s*$", clean)
     if tech_m:
         telemetry["web_tech"] = tech_m.group(1).strip()
+    auth_m = re.search(r"(?im)^\s*Authentication\s+Context:\s*(.+?)\s*$", clean)
+    if auth_m:
+        telemetry["auth_context"] = _sanitize_cli(auth_m.group(1).strip())[:240]
+    cli_m = re.search(r"(?im)^\s*(?:Command|CLI\s+Command):\s*(.+?)\s*$", clean)
+    if cli_m:
+        telemetry["cli_hint"] = _sanitize_cli(cli_m.group(1).strip())[:300]
+    cu_m = re.search(r"(?im)^\s*current user:\s*['\"]?([^'\"\r\n]+)['\"]?\s*$", clean)
+    if cu_m:
+        telemetry["current_user"] = cu_m.group(1).strip()
+    cdb_m = re.search(r"(?im)^\s*current database:\s*['\"]?([^'\"\r\n]+)['\"]?\s*$", clean)
+    if cdb_m:
+        telemetry["current_db"] = cdb_m.group(1).strip()
+    dba_m = re.search(r"(?im)^\s*current user is DBA:\s*(True|False)\s*$", clean)
+    if dba_m:
+        telemetry["is_dba"] = dba_m.group(1).lower() == "true"
     dbs_m = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
     if dbs_m:
         telemetry["databases"] = [m.group(1).strip() for m in re.finditer(r"^\[\*\]\s+(.+?)\s*$", dbs_m.group(0), re.M)]
+    tables_by_db = {}
+    for tbl_m in re.finditer(
+        r"(?im)^Database:\s*(\S+)\s*\n\[\d+\s+tables?\]\s*\n\+[-+]+\+\n((?:\|[^\n]+\|\n)+)\+[-+]+\+",
+        clean,
+    ):
+        db_name = tbl_m.group(1).strip()
+        tbls = [r.strip(" |\t") for r in tbl_m.group(2).splitlines() if r.strip(" |\t")]
+        if tbls:
+            tables_by_db[db_name] = tbls
+    if tables_by_db:
+        telemetry["tables_by_db"] = tables_by_db
     return telemetry
 
 
@@ -309,6 +335,9 @@ def parse_sqlmap_log(content, source):
         r"(?im)^\s*web server operating system:\s*.+$",
         r"(?im)^\s*web application technology:\s*.+$",
         r"(?im)^\s*back-end DBMS:\s*.+$",
+        r"(?im)^\s*current user:\s*.+$",
+        r"(?im)^\s*current database:\s*.+$",
+        r"(?im)^\s*current user is DBA:\s*.+$",
     ):
         found = re.search(label_re, clean)
         if found:
@@ -316,7 +345,13 @@ def parse_sqlmap_log(content, source):
     dbs_match = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
     if dbs_match:
         meta_lines.append(dbs_match.group(0).strip())
-    post_text = "\n\n" + "\n".join(meta_lines) if dbs_match else ""
+    for tbl_block in re.finditer(
+        r"(?im)^Database:\s*\S+\s*\n\[\d+\s+tables?\]\s*\n\+[-+]+\+\n(?:\|[^\n]+\|\n)+\+[-+]+\+",
+        clean,
+    ):
+        meta_lines.append(tbl_block.group(0).strip())
+    has_post_enum = bool(dbs_match or any(k in telemetry for k in ("current_user", "current_db", "is_dba", "tables_by_db")))
+    post_text = "\n\n" + "\n".join(meta_lines) if has_post_enum else ""
 
     def _location_for(param_name, place_name):
         if target_url:
