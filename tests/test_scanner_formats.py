@@ -213,6 +213,55 @@ class ScannerFormatTests(unittest.TestCase):
         self.assertEqual(full_ctx["repro_gaps"], [])
         self.assertIn("root@localhost", full_ctx["db_identity"])
         self.assertEqual(full_ctx["tables_by_db"], {"dvwa": ["guestbook", "users"]})
+        self.assertIn("PHPSESSID=[REDACTED]", evidence_profile(asdict(full_parsed[0]))["note_vi"])
+
+        # Multi-file bundle (Nmap DB port + mysql-empty-password + sqlmap DB exploitation) -> single unified PDF report
+        import base64
+        import tempfile
+        import time
+        from rag.web_server import JobManager
+
+        nmap_ec2_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<nmaprun scanner="nmap" args="nmap -Pn -sV -p 80,3306 --script mysql-empty-password -oX nmap_csdl.xml 198.51.100.42" '
+            'startstr="Thu Oct 22 10:00:00 2026" version="7.95">\n'
+            '  <host><address addr="198.51.100.42" addrtype="ipv4"/>\n'
+            '    <ports>\n'
+            '      <port protocol="tcp" portid="80"><state state="open"/><service name="http" product="Apache httpd" version="2.4.25"/></port>\n'
+            '      <port protocol="tcp" portid="3306"><state state="open"/><service name="mysql" product="MariaDB" version="10.1.48"/>\n'
+            '        <script id="mysql-empty-password" output="&#xa;  root account has empty password&#xa;"/>\n'
+            '      </port>\n'
+            '    </ports>\n'
+            '  </host>\n'
+            '</nmaprun>\n'
+        ).encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            mgr = JobManager(tmp_dir, demo=True)
+            try:
+                job = mgr.submit_bundle({
+                    "bundle_version": 1,
+                    "files": [
+                        {"filename": "nmap_csdl.xml", "format": "auto", "content_b64": base64.b64encode(nmap_ec2_xml).decode()},
+                        {"filename": "sqlmap_csdl.txt", "format": "auto", "content_b64": base64.b64encode(complete_pentest_log.encode("utf-8")).decode()},
+                    ],
+                })
+                deadline = time.time() + 15
+                while time.time() < deadline:
+                    cur = mgr.get(job["id"])
+                    if cur["status"] in {"completed", "partial", "failed"}:
+                        break
+                    time.sleep(0.1)
+                self.assertEqual(cur["status"], "completed", cur.get("error"))
+                out_json = json.loads((Path(tmp_dir) / job["id"] / "output/report.json").read_text(encoding="utf-8"))
+                out_pdf = (Path(tmp_dir) / job["id"] / "output/report.pdf").read_bytes()
+                self.assertTrue(out_pdf.startswith(b"%PDF-"))
+                merged_cwes = {r["cwe"] for r in out_json["findings"]}
+                self.assertIn("CWE-89", merged_cwes)
+                self.assertIn("CWE-1393", merged_cwes)
+                merged_ctx = extract_scan_context(out_json)
+                self.assertEqual(merged_ctx["repro_gaps"], [])
+            finally:
+                mgr.close()
 
 
 if __name__ == "__main__":

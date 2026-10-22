@@ -111,10 +111,15 @@ def evidence_profile(row):
         schema_parts=[]
         if app_dbs:schema_parts.append("schema ứng dụng '"+', '.join(app_dbs)+"'")
         if sys_dbs:schema_parts.append("schema hệ thống '"+', '.join(sys_dbs)+"'")
+        tbl_cnt=sum(len(v) for v in (tel.get('tables_by_db') or {}).values())
+        tbl_suffix=f", {tbl_cnt} bảng" if tbl_cnt else ""
+        auth_tail=(f"giữ 'unknown' ở trường gốc vì công cụ không tự xuất điểm CVSS (ngữ cảnh xác thực ghi nhận: {tel['auth_context']})."
+                   if tel.get('auth_context')
+                   else "giữ 'unknown' ở trường gốc vì công cụ không xuất CVSS và thiếu ngữ cảnh xác thực (PR:N/PR:L).")
         return {'tier':'exploited_in_log',
-                'label_vi':f"Đã khai thác trích xuất dữ liệu trong log (1 điểm tiêm / {len(techs)} kỹ thuật; đọc {len(dbs)} schema)",
+                'label_vi':f"Đã khai thác trích xuất dữ liệu trong log (1 điểm tiêm / {len(techs)} kỹ thuật; đọc {len(dbs)} schema{tbl_suffix})",
                 'note_vi':(f"Log chứng minh khai thác thành công bằng {len(techs)} kỹ thuật ({', '.join(techs)}) và đã liệt kê {', '.join(schema_parts)}. "
-                           "Nhóm lỗi SQL Injection trích xuất được dữ liệu thường thuộc mức Cao/Nghiêm trọng trong thực tế; giữ 'unknown' ở trường gốc vì công cụ không xuất CVSS và thiếu ngữ cảnh xác thực (PR:N/PR:L).")}
+                           "Nhóm lỗi SQL Injection trích xuất được dữ liệu thường thuộc mức Cao/Nghiêm trọng trong thực tế; "+auth_tail)}
     if techs:
         return {'tier':'confirmed_payload',
                 'label_vi':f"Công cụ xác nhận payload phản hồi (1 điểm tiêm / {len(techs)} kỹ thuật)",
@@ -135,13 +140,16 @@ def extract_scan_context(report, scan_path=None, format_=None):
     rows=report.get('findings') or []
     ctx={'lab':detect_lab_indicator(rows),'eol_notes':detect_eol_banners(rows),'telemetry_lines':[],'repro_gaps':[]}
     seen_tel=set()
+    scan_windows=[]
     for r in rows:
         d=r.get('details') if isinstance(r.get('details'),dict) else {}
         tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
         if not tel:continue
-        if tel.get('scan_start') and not ctx.get('scan_window'):
-            ctx['scan_window']=(f"{tel['scan_start']} – {tel['scan_end']} (ghi trong log {r.get('tool','')})"
-                                if tel.get('scan_end') else f"{tel['scan_start']} (ghi trong log {r.get('tool','')})")
+        if tel.get('scan_start'):
+            win=(f"{tel['scan_start']} – {tel['scan_end']} (ghi trong log {r.get('tool','')})"
+                 if tel.get('scan_end') else f"{tel['scan_start']} (ghi trong log {r.get('tool','')})")
+            if win not in scan_windows:
+                scan_windows.append(win)
         parts=[]
         if tel.get('tool_version'):parts.append(f"{r.get('tool','tool')} {tel['tool_version']}")
         if tel.get('request_count'):parts.append(f"{tel['request_count']} HTTP requests")
@@ -181,6 +189,8 @@ def extract_scan_context(report, scan_path=None, format_=None):
         if not any(clauses.issubset({c.strip() for c in big.split(';')}) for big in kept_tel):
             kept_tel.append(line)
     ctx['telemetry_lines']=kept_tel
+    if scan_windows and not ctx.get('scan_window'):
+        ctx['scan_window']='; '.join(scan_windows)
     if scan_path and not ctx.get('scan_window') and Path(scan_path).is_file():
         if format_=='zap':
             try:
@@ -188,9 +198,11 @@ def extract_scan_context(report, scan_path=None, format_=None):
                 if raw_json.get('@generated'):ctx['scan_window']=f"{raw_json['@generated']} (ghi trong file ZAP)"
             except Exception:pass
     fmt=format_ or report.get('input_format','')
-    if fmt=='sqlmap-log' or any(str(r.get('tool','')).lower()=='sqlmap' for r in rows):
+    sqlmap_rows=[r for r in rows if str(r.get('tool','')).lower()=='sqlmap']
+    if fmt=='sqlmap-log' or sqlmap_rows:
+        target_rows=sqlmap_rows or rows
         missing_bits=[]
-        if any('sqlmap output log' in str(r.get('location','')) or 'not established' in str(r.get('location','')) for r in rows):
+        if any('sqlmap output log' in str(r.get('location','')) or 'not established' in str(r.get('location','')) for r in target_rows):
             missing_bits.append('URL/endpoint đầy đủ')
         if not ctx.get('auth_context'):
             missing_bits.append('cookie/phiên đăng nhập (PR:N hay PR:L)')

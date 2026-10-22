@@ -1,5 +1,7 @@
 """Single-user loopback web UI. No shell execution, public hosting or external assets."""
+import base64
 import copy
+from dataclasses import asdict
 import hashlib
 import json
 import os
@@ -18,6 +20,7 @@ from .llm import check_ollama
 from .parsers import SUPPORTED_FORMATS, decode_text, load_findings
 
 MAX_UPLOAD = 10 * 1024 * 1024
+MAX_BUNDLE_BODY = 15 * 1024 * 1024
 TERMINAL = {'completed', 'partial', 'failed'}
 FORMATS = {'normalized':'JSON chuẩn hóa', 'zap':'OWASP ZAP · JSON', 'burp':'Burp Suite · XML',
            'nuclei':'Nuclei · JSONL', 'sqlmap-log':'sqlmap · log', 'nessus':'Nessus · XML', 'nmap':'Nmap · XML'}
@@ -132,6 +135,66 @@ class JobManager:
             job={'id':id_,'filename':name,'report_metadata':metadata,'format':fmt,'note':note,'status':'queued','stage':'Đã nhận file, đang chờ xử lý',
                  'created_at':now(),'updated_at':now(),'count':len(findings),'size':len(body),
                  'input_sha256':hashlib.sha256(body).hexdigest(),'demo':self.demo,'events':[],'error':None,'summary':None}
+            self.jobs[id_]=job;self._save(job)
+            self.executor.submit(self._run,id_)
+            return copy.deepcopy(job)
+
+    def submit_bundle(self,payload,note='',metadata=None):
+        from .report_view import clean_metadata
+        import shutil
+        metadata=clean_metadata(metadata)
+        if len(note)>1000:raise ValueError('Ghi chú tối đa 1000 ký tự.')
+        if not isinstance(payload,dict) or payload.get('bundle_version')!=1 or not isinstance(payload.get('files'),list):
+            raise ValueError('Gói nhiều file không hợp lệ.')
+        items=payload['files']
+        if not 1<=len(items)<=10:raise ValueError('Mỗi lần gửi tối đa 10 file kiểm thử.')
+        with self.lock:
+            if sum(j['status'] not in TERMINAL for j in self.jobs.values())>=4:
+                raise ValueError('Hàng đợi đã có 4 file. Chờ một báo cáo hoàn tất rồi gửi tiếp.')
+            id_=secrets.token_hex(16);folder=self.directory/id_;inputs_dir=folder/'inputs';inputs_dir.mkdir(parents=True)
+            total_size=0;merged_rows=[];seen_ids=set();safe_names=[];detected_formats=[];tools=[];hasher=hashlib.sha256()
+            try:
+                for idx,item in enumerate(items):
+                    if not isinstance(item,dict):raise ValueError('Mục file trong gói không hợp lệ.')
+                    raw_name=str(item.get('filename') or f'kiem-thu-{idx+1}')
+                    safe_name=re.sub(r'[\x00-\x1f\x7f]','',raw_name.replace('\\','/').split('/')[-1])[:120] or f'kiem-thu-{idx+1}'
+                    item_fmt=str(item.get('format') or 'auto')
+                    if item_fmt not in ('auto',*SUPPORTED_FORMATS):raise ValueError('Định dạng không được hỗ trợ.')
+                    b64=item.get('content_b64')
+                    if not isinstance(b64,str) or not b64:raise ValueError(f'File {safe_name} rỗng hoặc không hợp lệ.')
+                    try:data_bytes=base64.b64decode(b64,validate=True)
+                    except Exception:raise ValueError(f'Không giải mã được nội dung file {safe_name}.') from None
+                    total_size+=len(data_bytes)
+                    if not data_bytes or total_size>MAX_UPLOAD:
+                        raise ValueError('Tổng dung lượng các file phải lớn hơn 0 và không vượt quá 10 MB.')
+                    raw_path=inputs_dir/f'{idx:02d}_{re.sub(r"[^A-Za-z0-9._-]","_",safe_name)}'
+                    raw_path.write_bytes(data_bytes)
+                    hasher.update(safe_name.encode('utf-8')+b'\0'+data_bytes+b'\0')
+                    fmt=detect_format(raw_path) if item_fmt=='auto' else item_fmt
+                    parsed=load_findings(raw_path,fmt)
+                    safe_names.append(safe_name);detected_formats.append(fmt)
+                    for f in parsed:
+                        row=asdict(f);row['evidence']=list(row['evidence'])
+                        base_id=row['id'];uid=base_id;n=2
+                        while uid in seen_ids:uid=f'{base_id}#{n}';n+=1
+                        seen_ids.add(uid);row['id']=uid
+                        if row['tool'] not in tools:tools.append(row['tool'])
+                        merged_rows.append(row)
+                if len(merged_rows)>100:raise ValueError('Mỗi báo cáo hỗ trợ tối đa 100 phát hiện. Hãy chia nhỏ file.')
+                normalized_doc={'schema_version':1,'tool':' + '.join(tools) if tools else 'multi-scanner','findings':merged_rows}
+                scan_bytes=json.dumps(normalized_doc,ensure_ascii=False,indent=2).encode('utf-8')
+                (folder/'input.scan').write_bytes(scan_bytes)
+            except Exception as exc:
+                shutil.rmtree(folder,ignore_errors=True)
+                if isinstance(exc,ValueError) and str(exc).startswith(('PDF đầu','Chưa nhận','Mỗi báo cáo','Mỗi lần','Tổng dung lượng','Gói nhiều','Định dạng','Không giải mã','File ')):
+                    raise
+                raise ValueError('Một trong các file gửi lên không đúng cấu trúc công cụ kiểm thử. Hãy kiểm tra lại từng file; chưa gọi AI.') from None
+            display_name=(' + '.join(safe_names))[:160]
+            job={'id':id_,'filename':display_name,'report_metadata':metadata,'format':'normalized',
+                 'input_formats':list(dict.fromkeys(detected_formats)),'note':note,'status':'queued',
+                 'stage':'Đã nhận và gộp '+str(len(items))+' file kiểm thử, đang chờ xử lý',
+                 'created_at':now(),'updated_at':now(),'count':len(merged_rows),'size':total_size,
+                 'input_sha256':hasher.hexdigest(),'demo':self.demo,'events':[],'error':None,'summary':None}
             self.jobs[id_]=job;self._save(job)
             self.executor.submit(self._run,id_)
             return copy.deepcopy(job)
@@ -269,14 +332,20 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Transfer-Encoding'):return self.send_data(400,{'error':'Không hỗ trợ kiểu truyền dữ liệu này.'})
         try:length=int(self.headers.get('Content-Length','0'))
         except ValueError:return self.send_data(400,{'error':'Kích thước file không hợp lệ.'})
-        if not 0<length<=MAX_UPLOAD:return self.send_data(413,{'error':'File phải có nội dung và không vượt quá 10 MB.'})
         params=parse_qs(query.query)
+        is_bundle=params.get('bundle',['0'])[0]=='1'
+        limit=MAX_BUNDLE_BODY if is_bundle else MAX_UPLOAD
+        if not 0<length<=limit:return self.send_data(413,{'error':'File phải có nội dung và không vượt quá 10 MB.'})
         filename=params.get('filename',['kiem-thu'])[0];fmt=params.get('format',['auto'])[0]
         note=params.get('note',[''])[0]
         try:
             body=self.rfile.read(length)
             if len(body)!=length:return self.send_data(400,{'error':'Tải lên chưa đầy đủ. Hãy gửi lại file.'})
-            job=self.server.manager.submit(body,filename,fmt,note,json.loads(params.get('metadata',['{}'])[0]))
+            meta=json.loads(params.get('metadata',['{}'])[0])
+            if is_bundle:
+                job=self.server.manager.submit_bundle(json.loads(body.decode('utf-8')),note,meta)
+            else:
+                job=self.server.manager.submit(body,filename,fmt,note,meta)
         except ValueError as exc:return self.send_data(400,{'error':str(exc)})
         except Exception:return self.send_data(500,{'error':'Không lưu được file. Kiểm tra quyền ghi hoặc dung lượng ổ đĩa.'})
         self.send_data(202,job)

@@ -46,11 +46,11 @@
         <label>Thời gian kiểm thử<input id="meta-assessment_period" maxlength="180" placeholder="Theo kiểm thử thực tế"></label>
         <label>Phân loại tài liệu<input id="meta-classification" maxlength="80" placeholder="Ví dụ: Nội bộ"></label>
         </div></details>
-        <input id="file" type="file" accept=".json,.xml,.jsonl,.log,.txt,.nessus" hidden>
-        <div class="drop-label">Thả file kiểm thử vào đây</div>
+        <input id="file" type="file" accept=".json,.xml,.jsonl,.log,.txt,.nessus" multiple hidden>
+        <div class="drop-label">Thả 1 hoặc nhiều file kiểm thử vào đây</div>
       </form>
       <p class="form-error" id="form-error" role="alert" hidden></p>
-      <p class="input-help">JSON, XML, JSONL, LOG · Tối đa 10 MB / 100 phát hiện · Có thể kéo thả file</p>
+      <p class="input-help">JSON, XML, JSONL, LOG · Tối đa 10 MB / 100 phát hiện · Có thể kéo thả nhiều file cùng lúc (ví dụ Nmap + sqlmap)</p>
       <div class="info-cards"><div><svg><use href="#i-shield"/></svg><div><strong>Đúng phạm vi OWASP</strong><p>Ngoài Top 10 vẫn được phân tích,<br>không đề xuất khắc phục.</p></div></div><div><svg><use href="#i-file"/></svg><div><strong>Một báo cáo, đủ căn cứ</strong><p>Phát hiện, bằng chứng và trích dẫn<br>được giữ cùng báo cáo PDF.</p></div></div></div>
       <p class="privacy" id="privacy">File, kho OWASP và phân tích AI chạy cục bộ trên máy này (Ollama local).<br>Ghi chú dùng để đặt ngữ cảnh cuộc trò chuyện; không thay đổi quy tắc báo cáo.</p>
     </section>
