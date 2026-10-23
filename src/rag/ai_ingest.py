@@ -660,7 +660,39 @@ def extract_findings_from_report_with_ai(
                 loc = str(item.get('location') or 'unknown').strip() or 'unknown'
                 param = str(item.get('parameter') or '').strip()
                 method = str(item.get('method') or '').strip().upper()
-                tool_used = str(item.get('tool') or detected_tool or 'ai-extracted').strip() or 'ai-extracted'
+                loc_tag_m = re.search(r'\s*\(parameter=([^,)]+)(?:,\s*([A-Za-z]+))?\)\s*$', loc, re.I)
+                if loc_tag_m:
+                    if not param:
+                        param = loc_tag_m.group(1).strip()
+                    if loc_tag_m.group(2) and not method:
+                        method = loc_tag_m.group(2).strip().upper()
+                    loc = loc[:loc_tag_m.start()].strip() or loc
+                if not param:
+                    pm = re.search(
+                        r"\b(GET|POST|PUT|DELETE|PATCH|COOKIE|HEADER)?\s*parameter\s+'([^']+)'",
+                        f"{title} {' '.join(str(x) for x in (item.get('evidence_quotes') or [])[:2])}",
+                        re.I,
+                    )
+                    if pm:
+                        if pm.group(1) and not method:
+                            method = pm.group(1).upper()
+                        param = pm.group(2).strip()
+                raw_tool = str(item.get('tool') or detected_tool or '').strip()
+                if raw_tool.lower() in {'', 'unknown', 'n/a', 'none', 'ai-extracted', 'ai'}:
+                    low_clean = clean[:4000].lower()
+                    for cand_tok, cand_lbl in (
+                        ('sqlmap', 'sqlmap'),
+                        ('nmap', 'nmap'),
+                        ('owasp zap', 'OWASP ZAP'),
+                        ('zaproxy', 'OWASP ZAP'),
+                        ('burp', 'Burp Suite'),
+                        ('nuclei', 'nuclei'),
+                        ('nessus', 'Nessus'),
+                    ):
+                        if cand_tok in low_clean:
+                            raw_tool = cand_lbl
+                            break
+                tool_used = raw_tool or 'công cụ kiểm thử'
 
                 verified_quotes: list[str] = []
                 for q in (item.get('evidence_quotes') or [])[:4]:
@@ -777,26 +809,34 @@ def _enrich_ai_with_structured(ai_findings: list[Finding], structured_findings: 
             used_struct.add(best_idx)
             sf = structured_findings[best_idx]
             sdet = sf.details or {}
-            # Carry over full raw HTTP packets / rule provenance / telemetry when structured export also had them
+            # Carry over parameter/method/techniques + full raw HTTP packets + rule provenance + clean telemetry
             if sdet.get('http_messages'):
                 s_msgs = list(sdet['http_messages'])
                 a_msgs = list(adet.get('http_messages') or [])
                 if len(s_msgs) > len(a_msgs) or sum(len(str(m)) for m in s_msgs) > sum(len(str(m)) for m in a_msgs):
                     adet['http_messages'] = s_msgs + [m for m in a_msgs if m not in s_msgs][:2]
-            for key in ('scanner_rule', 'rule_references', 'rule_cheatsheets', 'rule_id', 'cwes', 'cves', 'raw_xml', 'raw_alert'):
+            for key in (
+                'parameter', 'method', 'place', 'techniques',
+                'scanner_rule', 'rule_references', 'rule_cheatsheets',
+                'rule_id', 'cwes', 'cves', 'raw_xml', 'raw_alert',
+            ):
                 if sdet.get(key) and not adet.get(key):
                     adet[key] = sdet[key]
             if sdet.get('scan_telemetry'):
-                comb_tel = dict(sdet['scan_telemetry'])
-                comb_tel.update(adet.get('scan_telemetry') or {})
+                a_tel = dict(adet.get('scan_telemetry') or {})
+                comb_tel = dict(a_tel)
+                # Structured parser fields (exact timestamps, DBMS banner, request count) take precedence over loose LLM strings
+                comb_tel.update(sdet['scan_telemetry'])
                 adet['scan_telemetry'] = comb_tel
-            if sdet.get('dbms') and not adet.get('dbms'):
+            if sdet.get('dbms'):
                 adet['dbms'] = sdet['dbms']
             ev_list = list(af.evidence)
             for se in sf.evidence[:2]:
                 if se and se not in ev_list and len(ev_list) < 5:
                     ev_list.append(se)
-            af = replace(af, evidence=tuple(ev_list), details=adet)
+            merged_tool = sf.tool if (sf.tool and af.tool in {'ai-extracted', 'công cụ kiểm thử', 'unknown', ''}) else af.tool
+            merged_loc = sf.location if (sf.location and sf.location in af.location) else af.location
+            af = replace(af, tool=merged_tool, location=merged_loc, evidence=tuple(ev_list), details=adet)
         merged.append(af)
 
     existing_ids = {f.id for f in merged}

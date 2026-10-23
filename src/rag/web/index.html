@@ -213,6 +213,12 @@
                 <label>Bằng chứng kiểm tra lại (Mục 7.5 &amp; 10.4)
                   <input id="meta-retest_evidence" maxlength="500" placeholder="Để trống nếu chưa thực hiện kiểm tra lại">
                 </label>
+                <label>Chế độ trình bày Báo cáo PDF / Markdown
+                  <select id="meta-report_profile">
+                    <option value="compact" selected>Bản Tinh gọn / Trình bày (2–4 trang · Khuyến nghị)</option>
+                    <option value="full">Bản Hồ sơ Kiểm toán Đầy đủ (Full Audit)</option>
+                  </select>
+                </label>
                 <label class="debug-only" hidden>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm
                   <select id="meta-force_fresh_ai">
                     <option value="" selected>Dùng lại Cache SHA-256 nếu trùng tệp (Nhanh)</option>

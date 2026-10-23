@@ -12,6 +12,7 @@ const META_KEYS = [
   'assessment_period',
   'retest_status',
   'retest_evidence',
+  'report_profile',
   'force_fresh_ai',
 ];
 
@@ -487,24 +488,28 @@ function buildCompletedCard(job) {
   }
 
   const actions = create('div', 'download-actions');
-  const qTok = state.token ? `?token=${encodeURIComponent(state.token)}` : '';
-  const qInline = state.token ? `?inline=1&token=${encodeURIComponent(state.token)}` : '?inline=1';
+  const tokSuffix = state.token ? `&token=${encodeURIComponent(state.token)}` : '';
 
   const dl = create('a', 'download');
-  dl.href = `/api/jobs/${job.id}/pdf${qTok}`;
+  dl.href = `/api/jobs/${job.id}/pdf?profile=compact${tokSuffix}`;
   dl.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.pdf`;
-  dl.append(icon('download', 15), create('span', '', 'Tải Báo cáo PDF (10 mục)'));
+  dl.append(icon('download', 15), create('span', '', 'Tải PDF Tinh gọn (Trình bày)'));
 
   const viewBtn = create('a', 'download secondary');
-  viewBtn.href = `/api/jobs/${job.id}/pdf${qInline}`;
+  viewBtn.href = `/api/jobs/${job.id}/pdf?inline=1&profile=compact${tokSuffix}`;
   viewBtn.target = '_blank';
   viewBtn.rel = 'noopener';
   viewBtn.append(icon('eye', 15), create('span', '', 'Mở xem PDF trực tiếp'));
 
   const mdLink = create('a', 'json-link', 'Tải Markdown (.md)');
-  mdLink.href = `/api/jobs/${job.id}/md${qTok}`;
+  mdLink.href = `/api/jobs/${job.id}/md?profile=compact${tokSuffix}`;
   mdLink.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.md`;
 
+  const fullPdfLink = create('a', 'json-link', 'PDF Đầy đủ (Audit)');
+  fullPdfLink.href = `/api/jobs/${job.id}/pdf?profile=full${tokSuffix}`;
+  fullPdfLink.download = `bao-cao-bao-mat-csdl-day-du-${job.id.slice(0, 8)}.pdf`;
+
+  const qTok = state.token ? `?token=${encodeURIComponent(state.token)}` : '';
   const jsonLink = create('a', 'json-link', 'Tải JSON chuẩn hóa');
   jsonLink.href = `/api/jobs/${job.id}/json${qTok}`;
   jsonLink.download = `du-lieu-bao-cao-${job.id.slice(0, 8)}.json`;
@@ -513,7 +518,7 @@ function buildCompletedCard(job) {
   syncLogLink.href = `/api/jobs/${job.id}/log${qTok}`;
   syncLogLink.download = `du-lieu-da-lam-sach-${job.id.slice(0, 8)}.txt`;
 
-  actions.append(dl, viewBtn, mdLink, jsonLink, syncLogLink);
+  actions.append(dl, viewBtn, mdLink, fullPdfLink, jsonLink, syncLogLink);
   card.appendChild(actions);
   return card;
 }

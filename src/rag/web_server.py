@@ -733,8 +733,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_data(200, raw_txt, 'text/plain; charset=utf-8', {'Content-Disposition': f'attachment; filename="lenh-gui-ai-{match[1][:8]}.txt"'})
             if job['status'] not in {'completed', 'partial'}:
                 return self.send_data(409, {'error': 'Báo cáo chưa sẵn sàng.'})
-            fname = {'md': 'dbsec_report.md', 'log': 'sanitized_input.txt'}.get(kind, 'report.' + kind)
-            file = self.server.manager.directory / match[1] / 'output' / fname
+            out_dir = self.server.manager.directory / match[1] / 'output'
+            req_profile = parse_qs(parsed_url.query).get('profile', [''])[0].strip().lower()
+            default_prof = normalize_report_profile(None, job.get('report_metadata')) if 'normalize_report_profile' in globals() else 'compact'
+            from .dbsec_report import normalize_report_profile
+            eff_profile = normalize_report_profile(req_profile or None, job.get('report_metadata'))
+            report_json_file = out_dir / 'report.json'
+            if kind in {'pdf', 'md'} and report_json_file.is_file():
+                cached_target = out_dir / (
+                    f'report_v7_{eff_profile}.pdf' if kind == 'pdf' else f'dbsec_report_v7_{eff_profile}.md'
+                )
+                if not cached_target.is_file():
+                    rep_obj = json.loads(report_json_file.read_text(encoding='utf-8'))
+                    if kind == 'pdf':
+                        render_pdf(rep_obj, cached_target, profile=eff_profile)
+                    else:
+                        cached_target.write_text(render_dbsec_markdown(rep_obj, profile=eff_profile), encoding='utf-8')
+                file = cached_target
+            else:
+                fname = {'md': 'dbsec_report.md', 'log': 'sanitized_input.txt'}.get(kind, 'report.' + kind)
+                file = out_dir / fname
             if not file.is_file():
                 return self.send_data(404, {'error': 'Không tìm thấy file báo cáo.'})
             inline = kind == 'pdf' and parse_qs(parsed_url.query).get('inline', ['0'])[0] == '1'
@@ -745,9 +763,10 @@ class Handler(BaseHTTPRequestHandler):
                 'md': 'text/markdown; charset=utf-8',
                 'log': 'text/plain; charset=utf-8',
             }[kind]
+            prof_suffix = '-day-du' if (kind in {'pdf', 'md'} and eff_profile == 'full') else ''
             out_name_map = {
-                'pdf': f'bao-cao-bao-mat-csdl-{match[1][:8]}.pdf',
-                'md': f'bao-cao-bao-mat-csdl-{match[1][:8]}.md',
+                'pdf': f'bao-cao-bao-mat-csdl{prof_suffix}-{match[1][:8]}.pdf',
+                'md': f'bao-cao-bao-mat-csdl{prof_suffix}-{match[1][:8]}.md',
                 'json': f'du-lieu-bao-cao-{match[1][:8]}.json',
                 'log': f'du-lieu-da-lam-sach-{match[1][:8]}.txt',
             }

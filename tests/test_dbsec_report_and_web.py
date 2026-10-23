@@ -820,6 +820,146 @@ class CourseworkReportAndWebTests(unittest.TestCase):
             finally:
                 mgr.executor.shutdown(wait=True)
 
+    def test_compact_vs_full_profile_caps_dedup_http_minify_and_3_page_budget(self):
+        """Regression test ensuring 1 real finding + 1 tentative note renders in 2–4 crisp pages with zero bloat."""
+        from pypdf import PdfReader
+        from rag.analysis import compress_report_post_extract
+
+        class _CompressMockLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                payload = json.loads(prompt)
+                return json.dumps({
+                    "items": [
+                        {
+                            "id": it["id"],
+                            "summary_vi": "Sử dụng truy vấn tham số hóa (Prepared Statements / PDO bindParam) để tách biệt dữ liệu đầu vào khỏi câu lệnh SQL.",
+                        }
+                        for it in payload.get("items", [])
+                    ]
+                }, ensure_ascii=False)
+
+        f1 = {
+            "id": "AI-01",
+            "title": "SQL Injection in GET parameter 'id' via boolean-based blind (OR clause with NOT)",
+            "cwe": "CWE-89",
+            "severity": "high",
+            "tool": "ai-extracted",
+            "location": "http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit (parameter=id, GET)",
+            "kind": "scanner_alert",
+            "evidence": [
+                "Parameter: id (GET)\n    Type: boolean-based blind\n    Payload: id=1' OR NOT 5452=5452-- -&Submit=Submit",
+                "    Type: error-based\n    Payload: id=1' AND EXTRACTVALUE(5879,CONCAT(0x5c,0x7170787671,1))-- nWty&Submit=Submit",
+                "    Type: time-based blind\n    Payload: id=1' AND SLEEP(2)-- -&Submit=Submit",
+            ],
+            "details": {
+                "techniques": ["boolean-based blind", "error-based", "time-based blind", "UNION query"],
+                "dbms": "MySQL >= 5.0.12",
+                "http_messages": [
+                    {
+                        "id": "#1008",
+                        "request": "GET /vulnerabilities/sqli/?id=1&Submit=Submit%60%29%20OR%20NOT%205452%3D5452%23 HTTP/1.1\nCache-Control: no-cache\nUser-Agent: sqlmap/1.10\nAccept-Encoding: gzip,deflate\nConnection: close\nHost: 198.51.100.79",
+                        "response": "HTTP/1.1 200 OK\nCache-Control: no-cache\n<pre>ID: 1</pre>",
+                    },
+                    {
+                        "id": "#239",
+                        "request": "GET /vulnerabilities/sqli/?id=1%27%20AND%20EXTRACTVALUE%285879%2C1%29--%20nWty&Submit=Submit HTTP/1.1\nCache-Control: no-cache\nCookie: PHPSESSID=topsecret999; security=low\nUser-Agent: sqlmap/1.10\nAccept-Encoding: gzip,deflate\nConnection: close\nHost: 198.51.100.79",
+                        "response": "HTTP/1.1 200 OK\nDate: Thu, 22 Oct 2026 04:22:09 GMT\nServer: Apache/2.4.25 (Debian)\nCache-Control: no-store, no-cache\nContent-Type: text/html; charset=UTF-8\n[... HTML giao dien DVWA rut gon ...]\n<pre>XPATH syntax error: '\\qpxvq1qpjxq'</pre>",
+                    },
+                    {
+                        "id": "#3838",
+                        "request": "GET /vulnerabilities/sqli/?id=1&Submit=Submit%2CSLEEP%282%29 HTTP/1.1\nHost: 198.51.100.79",
+                        "response": "HTTP/1.1 200 OK\n<pre>ID: 1</pre>",
+                    },
+                ],
+                "scan_telemetry": {
+                    "dbms": "MySQL >= 5.1 (MariaDB fork)",
+                    "web_tech": "Apache 2.4.25, PHP 7.0.33",
+                    "os_banner": "Linux Debian 9 (stretch)",
+                    "scan_start": "11:21:57 /2026-10-22/ to 11:28:12 /2026-10-22/",
+                    "scan_end": "2026-10-22 11:28:12",
+                    "current_user": "app@localhost",
+                    "current_db": "dvwa",
+                    "is_dba": False,
+                    "databases": ["dvwa", "information_schema"],
+                    "tables_by_db": {"dvwa": ["guestbook", "users"]},
+                    "auth_context": "Cookie phiên đã đăng nhập (security=low)",
+                    "unmatched_http_ids": ["#1008", "#3838"],
+                },
+            },
+            "guidance": [
+                {"section": "Injection Prevention Cheat Sheet / Defense Option 1: Prepared Statements", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html", "source_excerpt": "Prepared statements ensure that an attacker is not able to change the intent of a query."},
+                {"section": "Query Parameterization Cheat Sheet / Using PHP with PHP Data Objects", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html", "source_excerpt": "Example PHP PDO:\n```php\n$stmt = $dbh->prepare('SELECT first_name FROM users WHERE user_id = :id');\n$stmt->bindParam(':id', $id, PDO::PARAM_INT);\n```"},
+                {"section": "SQL Injection Prevention Cheat Sheet / Additional Defenses / Least Privilege", "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html", "source_excerpt": "Minimize database privileges assigned to every application account."},
+                {"section": "SQL Injection Prevention Cheat Sheet / Additional Defenses / Allow-list Input Validation", "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html", "source_excerpt": "Input validation acts as a secondary defense."},
+                {"section": "Error Handling Cheat Sheet / Objective", "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html", "source_excerpt": "Return generic error messages to users and log details server-side."},
+            ],
+        }
+        f1["owasp_top10"] = classify(f1)
+
+        f2 = {
+            "id": "SQLMAP-OBS-1",
+            "title": "Heuristic XSS indicator",
+            "cwe": "CWE-79",
+            "severity": "info",
+            "tool": "sqlmap",
+            "location": "http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit",
+            "kind": "observation",
+            "evidence": ["[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable"],
+            "details": {"parameter": "id", "method": "GET", "confidence": "heuristic"},
+            "guidance": [],
+        }
+        f2["owasp_top10"] = classify(f2)
+
+        rep = {
+            "schema_version": 1,
+            "generated_at": "2026-10-23T01:40:00+00:00",
+            "mode": "ollama-top10-analysis-extractive",
+            "model": "ollama/qwen3:4b",
+            "input_format": "sqlmap-log",
+            "input_filename": "sqlmap_csdl_chuan_pentest.txt",
+            "scan_sha256": "a201fb99" * 8,
+            "knowledge_sha256": "830a0090" * 8,
+            "findings": [f1, f2],
+            "report_metadata": {
+                "target_object": "http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit; http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit (parameter=id, GET)"
+            },
+        }
+        compress_report_post_extract(rep, llm=_CompressMockLLM())
+
+        m_comp = prepare_dbsec_report(rep, profile="compact")
+        m_full = prepare_dbsec_report(rep, profile="full")
+
+        # Hard caps in compact mode: max 2 evidences & max 2 OWASP refs per finding
+        self.assertLessEqual(len(m_comp["findings"][0]["evidences"]), 2)
+        self.assertLessEqual(len(m_comp["findings"][0]["rem_refs"]), 2)
+        self.assertEqual(len(m_full["findings"][0]["rem_refs"]), 5)
+
+        # Wrong-parameter packets (#1008, #3838) excluded; #239 proof kept & boilerplate HTTP headers stripped
+        ev_snippets = "\n".join(e["snippet"] for e in m_comp["findings"][0]["evidences"])
+        self.assertIn("#239", ev_snippets)
+        self.assertIn("XPATH syntax error", ev_snippets)
+        self.assertNotIn("[Request #1008]", ev_snippets)
+        self.assertNotIn("[Request #3838]", ev_snippets)
+        self.assertNotIn("Cache-Control:", ev_snippets)
+        self.assertNotIn("Accept-Encoding:", ev_snippets)
+        self.assertNotIn("topsecret999", ev_snippets)
+
+        md_comp = render_dbsec_markdown(rep, profile="compact")
+        self.assertNotIn("ai-extracted", md_comp)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            p_comp = render_pdf(rep, Path(tmp) / "compact.pdf", profile="compact")
+            p_full = render_pdf(rep, Path(tmp) / "full.pdf", profile="full")
+            rc = PdfReader(str(p_comp))
+            rf = PdfReader(str(p_full))
+            self.assertGreaterEqual(len(rc.pages), 2)
+            self.assertLessEqual(len(rc.pages), 4)
+            self.assertLess(len(rc.pages), len(rf.pages))
+            full_pdf_text = "\n".join(pg.extract_text() for pg in rc.pages)
+            self.assertNotIn("ai-extracted", full_pdf_text)
+            # General Info table rendered ONCE only (not duplicated between cover page and Section 1)
+            self.assertEqual(full_pdf_text.count("Mã báo cáo"), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

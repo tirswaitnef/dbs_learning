@@ -33,6 +33,7 @@ from .pentest_polish import (
     build_cvss_rationale,
     clean_internal_jargon,
     collect_ip_mapping,
+    compact_http_exchange,
     sanitize_text_value,
 )
 from .report_view import (
@@ -127,8 +128,19 @@ def classify_finding_state(row: dict) -> str:
     return STATE_CONFIRMED
 
 
+def _clean_tool_display(raw_tool: str, fallback_pool: list[str] | None = None) -> str:
+    t = str(raw_tool or '').strip()
+    if t.lower() not in {'', 'ai-extracted', 'ai', 'unknown', 'none', 'n/a'}:
+        return t
+    for cand in (fallback_pool or []):
+        c = str(cand or '').strip()
+        if c.lower() not in {'', 'ai-extracted', 'ai', 'unknown', 'none', 'n/a'}:
+            return c
+    return 'công cụ kiểm thử'
+
+
 def _infer_dbms_summary(findings: list[dict], scan_ctx: dict, sanitize) -> str:
-    """Extract DBMS engine/version strictly from telemetry, service banners, titles, or evidence."""
+    """Extract DBMS engine/version strictly from telemetry, service banners, titles, or evidence (deduplicated)."""
     found: list[str] = []
     for r in findings:
         det = r.get('details') or {}
@@ -150,10 +162,18 @@ def _infer_dbms_summary(findings: list[dict], scan_ctx: dict, sanitize) -> str:
             cand = sanitize(m.group(1).strip())
             if not any(cand.lower() in prev.lower() for prev in found):
                 found.append(cand)
+    # Keep longest canonical banner per DB engine family when multiple version probes overlap (e.g. MySQL >= 5.1 (MariaDB fork))
     dedup: list[str] = []
-    for item in found:
-        if item and not any(item.lower() == d.lower() for d in dedup):
-            dedup.append(item)
+    for item in sorted(found, key=len, reverse=True):
+        if not item:
+            continue
+        low = item.lower()
+        if any(low in d.lower() for d in dedup):
+            continue
+        # Subsume bare secondary MySQL/MariaDB version probe strings when a full MySQL/MariaDB fork banner already exists
+        if ('mysql' in low or 'mariadb' in low) and any(('mysql' in d.lower() and 'mariadb' in d.lower()) or ('mysql >=' in d.lower() and low.startswith('mysql >=')) for d in dedup):
+            continue
+        dedup.append(item)
     return '; '.join(dedup) if dedup else 'Chưa xác định từ dữ liệu đầu vào'
 
 
@@ -230,6 +250,19 @@ def _extract_code_blocks_from_guidance(guidance: list[dict], stack_hint: str = '
     return candidates[:1]
 
 
+def _packet_proof_score(pkt: dict) -> int:
+    req = unquote(str(pkt.get('request') or '')).lower()
+    resp = str(pkt.get('response') or '').lower()
+    score = 0
+    if any(k in resp for k in ('xpath syntax error', 'sql syntax', 'sqlstate', 'ora-', 'psqlexception', 'mysql_fetch', 'sqlite3.')):
+        score += 10
+    if 'union' in req and 'select' in req:
+        score += 6
+    if any(k in req + resp for k in ('<script', 'onerror=', 'onload=')):
+        score += 5
+    return score
+
+
 def _build_evidence_items_for_finding(
     row: dict,
     *,
@@ -237,6 +270,8 @@ def _build_evidence_items_for_finding(
     next_ev_num: int,
     sanitize,
     ai_obs: list[str],
+    is_compact: bool = True,
+    fallback_tools: list[str] | None = None,
 ) -> tuple[list[dict], int, str]:
     """Build globally numbered E-xx evidence items strictly from real finding proof & packets."""
     items: list[dict] = []
@@ -244,104 +279,23 @@ def _build_evidence_items_for_finding(
     tel = det.get('scan_telemetry') or {}
     cwe = str(row.get('cwe') or '').strip()
     state = classify_finding_state(row)
+    tool_disp = sanitize(_clean_tool_display(row.get('tool'), fallback_tools))
 
     matched_packets, excluded_note = _analyze_http_messages(row, lang='vi')
+    matched_packets = sorted(matched_packets, key=_packet_proof_score, reverse=True)
 
-    # 1. Primary scanner proof lines
-    ev_lines = [sanitize(str(x).strip()) for x in (row.get('evidence') or []) if str(x).strip()]
-    if ev_lines:
-        eid = f'E-{next_ev_num:02d}'
-        next_ev_num += 1
-        raw_snippet = '\n'.join(ev_lines[:6])
-        if ai_obs:
-            explanation = clean_internal_jargon(ai_obs[0])
-        elif state == STATE_TENTATIVE:
-            explanation = (
-                'Dòng nhật ký sơ bộ từ công cụ kiểm thử cho thấy dấu hiệu phản chiếu/nghi vấn trên đầu vào, '
-                'nhưng mới ở mức dò tự động (heuristic), chưa có gói tin khai thác hoàn chỉnh xác nhận thực thi.'
-            )
-        else:
-            explanation = (
-                f"Kết quả đầu ra trực tiếp từ công cụ `{sanitize(row.get('tool') or 'scanner')}` ghi nhận dấu hiệu kỹ thuật "
-                f"tại `{sanitize(row.get('location') or 'mục tiêu')}`."
-            )
-        items.append({
-            'id': eid,
-            'source_id': source_id,
-            'kind': 'Trích đoạn kết quả công cụ kiểm thử',
-            'snippet': raw_snippet[:2000],
-            'explanation': explanation,
-        })
-
-    # 2. Matched HTTP Request / Response packets (sqlmap #id or ZAP/Burp/Nuclei raw exchange)
-    if matched_packets:
-        for pkt_idx, pkt in enumerate(matched_packets[:3]):
-            eid = f'E-{next_ev_num:02d}'
-            next_ev_num += 1
-            pid = str(pkt.get('id') or f'HTTP-{pkt_idx + 1}')
-            req_s = sanitize(str(pkt.get('request') or '').strip())
-            resp_s = sanitize(str(pkt.get('response') or '').strip())
-            combined = []
-            if req_s:
-                combined.append(f"[Request {pid}]\n{req_s[:950]}")
-            if resp_s:
-                combined.append(f"[Response {pid}]\n{resp_s[:950]}")
-            pkt_explain = []
-            if 'xpath syntax error' in resp_s.lower() or 'sql syntax' in resp_s.lower() or 'exception' in resp_s.lower():
-                pkt_explain.append(
-                    f"Gói phản hồi `{pid}` chứa thông báo lỗi truy vấn CSDL trực tiếp trong thân phản hồi HTTP, "
-                    f"chứng minh đầu vào đã làm biến đổi cú pháp câu lệnh thực thi tại tầng CSDL."
-                )
-            elif 'union' in unquote(req_s).lower() and ('information_schema' in unquote(req_s).lower() or 'select' in unquote(req_s).lower()):
-                pkt_explain.append(
-                    f"Cặp gói tin `{pid}` chứng minh khả năng nối kết quả truy vấn (`UNION SELECT`) và trích xuất siêu dữ liệu "
-                    f"trực tiếp ra giao diện phản hồi HTTP 200."
-                )
-            elif len(ai_obs) > 1 and pkt_idx == 0:
-                pkt_explain.append(clean_internal_jargon(ai_obs[1]))
-            else:
-                pkt_explain.append(
-                    f"Cặp gói tin yêu cầu/phản hồi `{pid}` ghi lại nguyên văn lưu lượng kiểm thử (đã che thông tin phiên nhạy cảm `[REDACTED]`)."
-                )
-            items.append({
-                'id': eid,
-                'source_id': source_id,
-                'kind': f'Lưu lượng HTTP thực tế ({pid})',
-                'snippet': '\n\n'.join(combined),
-                'explanation': ' '.join(pkt_explain),
-            })
-    elif det.get('request') or det.get('response'):
-        eid = f'E-{next_ev_num:02d}'
-        next_ev_num += 1
-        req_s = sanitize(str(det.get('request') or '').strip())
-        resp_s = sanitize(str(det.get('response') or '').strip())
-        combined = []
-        if req_s:
-            combined.append(f"[Request]\n{req_s[:950]}")
-        if resp_s:
-            combined.append(f"[Response]\n{resp_s[:950]}")
-        items.append({
-            'id': eid,
-            'source_id': source_id,
-            'kind': 'Gói tin yêu cầu / phản hồi từ công cụ quét',
-            'snippet': '\n\n'.join(combined),
-            'explanation': (
-                clean_internal_jargon(ai_obs[1])
-                if len(ai_obs) > 1
-                else 'Bằng chứng gói tin yêu cầu và phản hồi do công cụ kiểm thử thu thập trực tiếp trên mục tiêu.'
-            ),
-        })
-
-    # 3. Database enumeration telemetry block when present on DB injection findings
-    if cwe in {'CWE-89', 'CWE-564', 'CWE-943'} and any(tel.get(k) is not None for k in ('current_user', 'current_db', 'is_dba', 'databases', 'tables')):
-        eid = f'E-{next_ev_num:02d}'
-        next_ev_num += 1
-        t_lines = []
+    # DB enumeration lines (merged into E-01 in compact mode so finding stays <= 2 crisp evidence items)
+    has_db_enum = cwe in {'CWE-89', 'CWE-564', 'CWE-943'} and any(
+        tel.get(k) is not None for k in ('current_user', 'current_db', 'is_dba', 'databases', 'tables', 'tables_by_db')
+    )
+    t_lines: list[str] = []
+    dba_note = ''
+    if has_db_enum:
         if tel.get('dbms'):
             t_lines.append(f"back-end DBMS: {sanitize(tel['dbms'])}")
         if tel.get('current_user'):
-            t_lines.append(f"current user: '{sanitize(tel['current_user'])}'")
-        if tel.get('current_db'):
+            t_lines.append(f"current user: '{sanitize(tel['current_user'])}'" + (f" | current database: '{sanitize(tel['current_db'])}'" if tel.get('current_db') else ''))
+        elif tel.get('current_db'):
             t_lines.append(f"current database: '{sanitize(tel['current_db'])}'")
         if tel.get('is_dba') is not None:
             t_lines.append(f"current user is DBA: {tel['is_dba']}")
@@ -350,23 +304,120 @@ def _build_evidence_items_for_finding(
         for db_n, tbl_list in (tel.get('tables_by_db') or tel.get('tables') or {}).items():
             t_lines.append(f"Database {sanitize(db_n)} tables [{len(tbl_list)}]: {', '.join(sanitize(x) for x in tbl_list)}")
         dba_note = (
-            'Tài khoản kết nối CSDL không có quyền quản trị tối cao (`is_dba = False`), giúp giới hạn phạm vi leo thang sang hệ điều hành.'
+            'Tài khoản CSDL không có quyền DBA (`is_dba = False`), giới hạn leo thang hệ điều hành.'
             if tel.get('is_dba') is False
             else (
-                'Tài khoản kết nối CSDL đang mang đặc quyền quản trị (`is_dba = True`), làm gia tăng đáng kể phạm vi ảnh hưởng trên máy chủ CSDL.'
+                'Tài khoản CSDL mang đặc quyền DBA (`is_dba = True`), gia tăng nghiêm trọng phạm vi tác động.'
                 if tel.get('is_dba') is True
-                else 'Mức đặc quyền quản trị DBA chưa được xác nhận đầy đủ.'
+                else ''
             )
         )
+
+    # 1. Primary scanner proof lines (merged with concise DB schema proof in compact mode)
+    ev_lines = [sanitize(str(x).strip()) for x in (row.get('evidence') or []) if str(x).strip()]
+    if ev_lines or (is_compact and t_lines):
+        eid = f'E-{next_ev_num:02d}'
+        next_ev_num += 1
+        max_ev_lines = 3 if is_compact else 6
+        snippet_parts = list(ev_lines[:max_ev_lines])
+        kind_lbl = 'Trích đoạn kết quả công cụ kiểm thử'
+        if is_compact and t_lines:
+            snippet_parts.extend(t_lines[:4])
+            kind_lbl = 'Trích đoạn kết quả công cụ & siêu dữ liệu CSDL'
+        raw_snippet = '\n'.join(snippet_parts)
+        if ai_obs:
+            explanation = clean_internal_jargon(ai_obs[0])
+            if is_compact and dba_note and 'dba' not in explanation.lower():
+                explanation = f"{explanation.rstrip('.')} ({dba_note})"
+        elif state == STATE_TENTATIVE:
+            explanation = (
+                'Nhật ký sơ bộ ghi nhận dấu hiệu phản xạ đầu vào ở mức dò tự động (heuristic), '
+                'chưa có gói tin khai thác thực thi hoàn chỉnh.'
+            )
+        else:
+            explanation = (
+                f"Đầu ra trực tiếp từ `{tool_disp}` ghi nhận bằng chứng kỹ thuật tại `{sanitize(row.get('location') or 'mục tiêu')}`."
+                + (f' {dba_note}' if is_compact and dba_note else '')
+            )
+        items.append({
+            'id': eid,
+            'source_id': source_id,
+            'kind': kind_lbl,
+            'snippet': raw_snippet[: (720 if is_compact else 2000)],
+            'explanation': explanation[: (320 if is_compact else 900)],
+        })
+
+    # 2. Matched HTTP Request / Response packets (max 1 minified proof in compact mode; up to 3 full packets in audit mode)
+    pkt_limit = 1 if is_compact else 3
+    if matched_packets:
+        for pkt_idx, pkt in enumerate(matched_packets[:pkt_limit]):
+            eid = f'E-{next_ev_num:02d}'
+            next_ev_num += 1
+            pid = str(pkt.get('id') or f'HTTP-{pkt_idx + 1}')
+            req_s = sanitize(str(pkt.get('request') or '').strip())
+            resp_s = sanitize(str(pkt.get('response') or '').strip())
+            if is_compact:
+                pkt_snippet = compact_http_exchange(req_s, resp_s, pid)
+            else:
+                combined = []
+                if req_s:
+                    combined.append(f"[Request {pid}]\n{req_s[:950]}")
+                if resp_s:
+                    combined.append(f"[Response {pid}]\n{resp_s[:950]}")
+                pkt_snippet = '\n\n'.join(combined)
+            if 'xpath syntax error' in resp_s.lower() or 'sql syntax' in resp_s.lower() or 'exception' in resp_s.lower():
+                pkt_explain = (
+                    f"Phản hồi `{pid}` trả trực tiếp lỗi truy vấn CSDL trong thân HTTP, "
+                    f"chứng minh payload đầu vào đã làm thay đổi cú pháp thực thi tại tầng CSDL."
+                )
+            elif 'union' in unquote(req_s).lower() and ('information_schema' in unquote(req_s).lower() or 'select' in unquote(req_s).lower()):
+                pkt_explain = (
+                    f"Gói tin `{pid}` chứng minh khả năng nối kết quả `UNION SELECT` trực tiếp ra phản hồi HTTP 200."
+                )
+            else:
+                pkt_explain = f"Gói tin `{pid}` ghi nhận payload kiểm thử thực tế trên tham số đích (đã che khóa phiên `[REDACTED]`)."
+            items.append({
+                'id': eid,
+                'source_id': source_id,
+                'kind': f'Lưu lượng HTTP chứng minh ({pid})',
+                'snippet': pkt_snippet,
+                'explanation': pkt_explain,
+            })
+    elif det.get('request') or det.get('response'):
+        eid = f'E-{next_ev_num:02d}'
+        next_ev_num += 1
+        req_s = sanitize(str(det.get('request') or '').strip())
+        resp_s = sanitize(str(det.get('response') or '').strip())
+        if is_compact:
+            pkt_snippet = compact_http_exchange(req_s, resp_s, '')
+        else:
+            combined = []
+            if req_s:
+                combined.append(f"[Request]\n{req_s[:950]}")
+            if resp_s:
+                combined.append(f"[Response]\n{resp_s[:950]}")
+            pkt_snippet = '\n\n'.join(combined)
+        items.append({
+            'id': eid,
+            'source_id': source_id,
+            'kind': 'Gói tin yêu cầu / phản hồi từ công cụ quét',
+            'snippet': pkt_snippet,
+            'explanation': 'Bằng chứng gói tin yêu cầu/phản hồi thu thập trực tiếp trên mục tiêu.',
+        })
+
+    # 3. Separate full DB enumeration block in full audit mode (already merged into E-01 in compact mode)
+    if (not is_compact) and has_db_enum and t_lines:
+        eid = f'E-{next_ev_num:02d}'
+        next_ev_num += 1
         items.append({
             'id': eid,
             'source_id': source_id,
             'kind': 'Siêu dữ liệu phiên làm việc & lược đồ CSDL thu thập được',
             'snippet': '\n'.join(t_lines),
-            'explanation': f"Xác nhận trực tiếp danh tính kết nối và cấu trúc lược đồ CSDL qua lỗ hổng. {dba_note}",
+            'explanation': f"Xác nhận trực tiếp danh tính kết nối và cấu trúc lược đồ CSDL qua lỗ hổng. {dba_note}".strip(),
         })
 
-    return items, next_ev_num, excluded_note
+    return items, next_ev_num, ('' if is_compact else excluded_note)
 
 
 def _bundled_cheatsheet_count() -> int:
@@ -493,13 +544,61 @@ def _build_potential_impact(row: dict, state: str, ai_impacts: list[str], saniti
     return ' '.join(parts)
 
 
-def prepare_dbsec_report(report: dict) -> dict:
+def _select_top_guidance_for_finding(guidance_list: list[dict], *, stack_hint: str, is_compact: bool) -> list[dict]:
+    """Select max 2 high-value distinct OWASP items in compact mode (1 primary defense + 1 stack code / secondary control)."""
+    deduped: list[dict] = []
+    seen_sec: set[str] = set()
+    for g in guidance_list:
+        sec = str(g.get('section') or g.get('title') or 'OWASP Cheat Sheet').strip()
+        if sec in seen_sec:
+            continue
+        seen_sec.add(sec)
+        deduped.append(g)
+    if not is_compact or len(deduped) <= 2:
+        return deduped[: (2 if is_compact else 5)]
+
+    hint_low = stack_hint.lower()
+
+    def _primary_rank(g: dict) -> int:
+        sec = str(g.get('section') or g.get('title') or '').lower()
+        raw = str(g.get('source_excerpt') or g.get('text') or g.get('excerpt') or '')
+        if 'defense option 1' in sec or 'primary' in sec or 'output encoding' in sec or 'secure authentication' in sec:
+            return 10
+        if not _FENCED_CODE_RE.search(raw):
+            return 6
+        return 2
+
+    def _code_rank(g: dict) -> int:
+        sec = str(g.get('section') or g.get('title') or '').lower()
+        raw = str(g.get('source_excerpt') or g.get('text') or g.get('excerpt') or '')
+        has_code = bool(_FENCED_CODE_RE.search(raw))
+        s_match = (
+            (('php' in hint_low or 'apache' in hint_low or 'dvwa' in hint_low) and 'php' in sec)
+            or (('java' in hint_low or 'spring' in hint_low) and 'java' in sec)
+            or (('.net' in hint_low or 'mssql' in hint_low) and '.net' in sec)
+        )
+        return (8 if has_code else 0) + (6 if s_match else 0) + (3 if 'parameterization' in sec or 'least privilege' in sec else 0)
+
+    primary = max(deduped, key=_primary_rank)
+    rest = [g for g in deduped if g is not primary]
+    secondary = max(rest, key=_code_rank)
+    return [primary, secondary]
+
+
+def normalize_report_profile(profile: str | None = None, meta: dict | None = None) -> str:
+    raw = str(profile or (meta or {}).get('report_profile') or 'compact').strip().lower()
+    return 'full' if raw in {'full', 'audit', 'archive', 'day_du'} else 'compact'
+
+
+def prepare_dbsec_report(report: dict, *, profile: str | None = None) -> dict:
     """Build complete structured model for Sections 1..10 of the official coursework template."""
     if isinstance(report, dict) and 'general_info' in report and 'methodology' in report and 'quality_assessment' in report:
         return copy.deepcopy(report)
     work = copy.deepcopy(report)
     enforce(work)
     meta = work.get('report_metadata') or {}
+    resolved_profile = normalize_report_profile(profile, meta)
+    is_compact = (resolved_profile == 'compact')
     xss_dec = str(meta.get('xss_decision') or '').strip().lower()
     raw_findings = list(work.get('findings') or [])
 
@@ -521,6 +620,18 @@ def prepare_dbsec_report(report: dict) -> dict:
     def sanitize(val) -> str:
         return sanitize_text_value(str(val or ''), ip_map, redaction_stats)
 
+    clean_tools_pool: list[str] = []
+    for r in raw_findings:
+        cleaned_t = _clean_tool_display(r.get('tool'))
+        if cleaned_t != 'công cụ kiểm thử' and sanitize(cleaned_t) not in clean_tools_pool:
+            clean_tools_pool.append(sanitize(cleaned_t))
+    if not clean_tools_pool:
+        fmt_hint_l = str(work.get('input_format') or '').lower()
+        for tok, lbl in (('sqlmap', 'sqlmap'), ('nmap', 'nmap'), ('zap', 'OWASP ZAP'), ('burp', 'Burp Suite'), ('nuclei', 'nuclei'), ('nessus', 'Nessus')):
+            if tok in fmt_hint_l:
+                clean_tools_pool.append(lbl)
+                break
+
     # --- Section 2.1 Input Sources (supports single file OR multi-file bundle I-01..I-K) ---
     raw_sources = work.get('input_sources') or []
     input_sources: list[dict] = []
@@ -531,12 +642,6 @@ def prepare_dbsec_report(report: dict) -> dict:
             sid = f'I-{idx:02d}'
             fmt_code = str(src.get('format') or work.get('input_format') or 'auto')
             fcount = int(src.get('finding_count', 0))
-            missing_bits = []
-            if not scan_ctx.get('auth_context') and not any(
-                re.search(r'(?im)^\s*(?:Cookie|Authorization)\s*:', str((r.get('details') or {}).get('request') or ''))
-                for r in active_findings
-            ):
-                missing_bits.append('ngữ cảnh xác thực')
             status_txt = (
                 f"Đầy đủ cho phạm vi quét ({fcount} bản ghi)"
                 if fcount > 0
@@ -555,19 +660,18 @@ def prepare_dbsec_report(report: dict) -> dict:
                 finding_to_source_id[str(fid)] = sid
     else:
         fmt_code = str(work.get('input_format') or 'normalized')
-        src_tools = list(dict.fromkeys(sanitize(r.get('tool') or '') for r in raw_findings if r.get('tool')))
         src_desc = FORMAT_DISPLAY.get(fmt_code, fmt_code)
-        if src_tools:
-            src_desc = f"{src_desc} ({', '.join(src_tools)})"
+        if clean_tools_pool:
+            src_desc = f"{src_desc} ({', '.join(clean_tools_pool)})"
         gaps = [str(g).strip().rstrip('.') for g in (scan_ctx.get('repro_gaps') or []) if str(g).strip()]
         has_any_unknown_sev = any(canonical_severity(r.get('severity'))[0] == 'unknown' for r in active_findings)
         status_notes = []
-        if gaps:
+        if gaps and not is_compact:
             status_notes.extend(gaps[:2])
         if has_any_unknown_sev:
-            status_notes.append('một số bản ghi không kèm mức độ nghiêm trọng gốc')
+            status_notes.append('không kèm điểm CVSS gốc')
         status_str = (
-            f"Đầy đủ cho phạm vi kiểm thử ({'; '.join(status_notes)})"
+            f"Đầy đủ ({len(active_findings)} bản ghi; {'; '.join(status_notes)})"
             if status_notes
             else f"Đầy đủ ({len(active_findings)} bản ghi chuẩn hóa)"
         )
@@ -583,16 +687,21 @@ def prepare_dbsec_report(report: dict) -> dict:
 
     default_source_id = input_sources[0]['id'] if input_sources else 'I-01'
 
-    # --- Section 1 General Information ---
+    # --- Section 1 General Information (deduplicated URLs, DBMS, timestamps & clean tool names) ---
     gen_at = str(work.get('generated_at') or '')
     gen_day = gen_at[:10].replace('-', '') if len(gen_at) >= 10 else datetime.now(timezone.utc).strftime('%Y%m%d')
     sha8 = str(work.get('scan_sha256') or '00000000')[:8].upper()
     report_id = meta.get('report_id') or f'RPT-DBSEC-{gen_day}-{sha8}'
 
     lab_info = scan_ctx.get('lab') or {}
-    targets = [sanitize(t) for t in (scan_ctx.get('targets') or []) if t]
-    if not targets:
-        targets = list(dict.fromkeys(sanitize(r.get('location') or '') for r in active_findings if r.get('location')))
+    raw_targets = [sanitize(t) for t in (scan_ctx.get('targets') or []) if t]
+    if not raw_targets:
+        raw_targets = [sanitize(r.get('location') or '') for r in active_findings if r.get('location')]
+    targets: list[str] = []
+    for raw_t in raw_targets:
+        clean_t = re.sub(r'\s*\(parameter=[^)]*\)\s*$', '', raw_t, flags=re.I).strip()
+        if clean_t and not any(clean_t.lower() == prev.lower() for prev in targets):
+            targets.append(clean_t)
 
     project_name = (
         meta.get('project_name')
@@ -600,19 +709,37 @@ def prepare_dbsec_report(report: dict) -> dict:
         or (f"Đánh giá bảo mật CSDL & ứng dụng {lab_info['name']}" if lab_info.get('name') else '')
         or (f"Đánh giá bảo mật CSDL & ứng dụng ({input_sources[0]['name']})")
     )
-    target_object = (
-        meta.get('target_object')
-        or meta.get('client')
-        or ('; '.join(targets[:4]) if targets else 'Chưa xác định rõ URL/địa chỉ đích trong dữ liệu đầu vào')
-    )
+    raw_target_override = str(meta.get('target_object') or meta.get('client') or '').strip()
+    if raw_target_override:
+        dedup_override: list[str] = []
+        for seg in [x.strip() for x in raw_target_override.split(';') if x.strip()]:
+            norm_seg = re.sub(r'\s*\(parameter=[^)]*\)\s*$', '', seg, flags=re.I).strip()
+            if norm_seg and not any(norm_seg.lower() == p.lower() for p in dedup_override):
+                dedup_override.append(norm_seg)
+        target_object = '; '.join(dedup_override) if dedup_override else raw_target_override
+    else:
+        target_object = '; '.join(targets[:4]) if targets else 'Chưa xác định rõ URL/địa chỉ đích trong dữ liệu đầu vào'
+
     dbms_summary = meta.get('dbms_override') or _infer_dbms_summary(active_findings, scan_ctx, sanitize)
-    tools_used = list(dict.fromkeys(sanitize(r.get('tool') or '') for r in raw_findings if r.get('tool')))
-    tools_str = ', '.join(tools_used) if tools_used else FORMAT_DISPLAY.get(str(work.get('input_format') or ''), 'Không ghi nhận trong đầu vào')
-    testing_window = (
-        meta.get('assessment_period')
-        or scan_ctx.get('scan_window')
-        or (f"Không ghi nhận mốc giờ quét gốc trong tệp đầu vào (thời điểm phân tích báo cáo: {gen_at[:16].replace('T', ' ')} UTC)" if gen_at else 'Không ghi nhận trong dữ liệu đầu vào')
-    )
+    tools_str = ', '.join(clean_tools_pool) if clean_tools_pool else FORMAT_DISPLAY.get(str(work.get('input_format') or ''), 'Không ghi nhận trong đầu vào')
+    raw_window = str(meta.get('assessment_period') or scan_ctx.get('scan_window') or '').strip()
+    if raw_window:
+        raw_window = re.sub(r'\(ghi trong log\s+ai-extracted\)', f"(ghi trong log {clean_tools_pool[0]})" if clean_tools_pool else '', raw_window, flags=re.I).strip(' ;')
+        win_segs = [w.strip() for w in raw_window.split(';') if w.strip()]
+        kept_wins: list[str] = []
+        for ws in win_segs:
+            hh = re.findall(r'\b\d{2}:\d{2}:\d{2}\b', ws)
+            if hh and any(all(t in p for t in hh) for p in kept_wins):
+                continue
+            if hh:
+                kept_wins = [p for p in kept_wins if not all(t in ws for t in (re.findall(r'\b\d{2}:\d{2}:\d{2}\b', p) or ['__none__']))]
+            kept_wins.append(ws)
+        testing_window = '; '.join(kept_wins)
+    else:
+        testing_window = (
+            f"Không ghi nhận mốc giờ quét gốc trong tệp đầu vào (thời điểm phân tích: {gen_at[:16].replace('T', ' ')} UTC)"
+            if gen_at else 'Không ghi nhận trong dữ liệu đầu vào'
+        )
     scope_parts: list[str] = []
     if meta.get('allowed_scope'):
         scope_parts.append(meta['allowed_scope'])
@@ -626,7 +753,7 @@ def prepare_dbsec_report(report: dict) -> dict:
         '; '.join(scope_parts)
         if scope_parts
         else (
-            f"Chỉ giới hạn trên mục tiêu xuất hiện trong dữ liệu đầu vào ({'; '.join(targets[:3])}); không bao gồm kiểm thử phá hủy hoặc trích xuất dữ liệu trái phép ngoài bằng chứng cung cấp"
+            'Giới hạn trong mục tiêu kiểm thử của tệp đầu vào; không thực hiện tấn công phá hủy hoặc trích xuất bản ghi dữ liệu trái phép'
             if targets
             else 'Chỉ phân tích trong phạm vi bản ghi đầu vào được cung cấp; chưa có văn bản khai báo phạm vi riêng'
         )
@@ -685,6 +812,8 @@ def prepare_dbsec_report(report: dict) -> dict:
             next_ev_num=next_ev_idx,
             sanitize=sanitize,
             ai_obs=ai_obs,
+            is_compact=is_compact,
+            fallback_tools=clean_tools_pool,
         )
         for ev_it in ev_items:
             all_evidences.append({**ev_it, 'finding_id': fid})
@@ -743,37 +872,42 @@ def prepare_dbsec_report(report: dict) -> dict:
             tech_signals = []
             techs_found = det.get('techniques') or tel.get('techniques') or []
             if techs_found:
-                tech_signals.append(f"{len(techs_found)} kỹ thuật khai thác thành công ({', '.join(techs_found)})")
+                tech_signals.append(f"{len(techs_found)} kỹ thuật ({', '.join(techs_found)})")
             if tel.get('databases'):
-                tech_signals.append(f"liệt kê được {len(tel['databases'])} cơ sở dữ liệu")
+                tech_signals.append(f"liệt kê {len(tel['databases'])} schema")
             if state == STATE_TENTATIVE:
-                tech_signals.append('mới dừng ở cảnh báo dò sơ bộ (heuristic)')
-            signal_clause = f" Về mặt kỹ thuật, bằng chứng thực tế ghi nhận: {'; '.join(tech_signals)}." if tech_signals else ''
+                tech_signals.append('cảnh báo dò sơ bộ heuristic')
+            signal_clause = f" Dấu hiệu kỹ thuật: {'; '.join(tech_signals)}." if tech_signals else ''
             sev_basis = (
-                f"Công cụ tạo dữ liệu đầu vào (`{sanitize(row.get('tool') or 'scanner')}`) không xuất nhãn mức độ nghiêm trọng hay điểm CVSS gốc cho bản ghi này; "
-                f"hệ thống giữ nguyên `Chưa xác định` để tuân thủ nguyên tắc không tự tạo số liệu.{signal_clause}"
+                f"Công cụ `{sanitize(_clean_tool_display(row.get('tool'), clean_tools_pool))}` không xuất nhãn mức độ hay điểm CVSS gốc; "
+                f"giữ nguyên `Chưa xác định` theo nguyên tắc trung thực dữ liệu.{signal_clause}"
             )
 
-        unknown_factors_bits = [str(g).strip().rstrip('.') for g in (scan_ctx.get('repro_gaps') or []) if str(g).strip()]
+        unknown_factors_bits: list[str] = []
+        if not is_compact:
+            unknown_factors_bits.extend(str(g).strip().rstrip('.') for g in (scan_ctx.get('repro_gaps') or []) if str(g).strip())
         if not tel.get('dumped_rows') and cwe_code == 'CWE-89' and state == STATE_CONFIRMED:
-            unknown_factors_bits.append('mức độ nhạy cảm thực tế của dữ liệu nghiệp vụ bên trong các bảng (do không chạy trích xuất dữ liệu)')
+            unknown_factors_bits.append('mức độ nhạy cảm thực tế của dữ liệu trong bảng (chưa trích xuất hàng dữ liệu)')
         if state == STATE_TENTATIVE:
-            unknown_factors_bits.append('kết quả kiểm chứng thực thi thực tế trên trình duyệt/máy khách độc lập')
-        for al in ai_limits:
+            unknown_factors_bits.append('kết quả kiểm chứng thực thi thực tế trên trình duyệt độc lập')
+        for al in ai_limits[: (1 if is_compact else 3)]:
             cleaned_al = clean_internal_jargon(al).rstrip('.')
+            # Passive OS/Apache EOL banner notes belong consolidated ONCE in Section 8.1, not repeated inside 6.5
+            if is_compact and ('eol' in cleaned_al.lower() or 'debian' in cleaned_al.lower() or 'apache 2.4' in cleaned_al.lower()):
+                continue
             if cleaned_al and cleaned_al not in unknown_factors_bits:
                 unknown_factors_bits.append(cleaned_al)
         unknown_factors = (
-            '; '.join(unknown_factors_bits) + '.'
+            '; '.join(unknown_factors_bits[: (2 if is_compact else 5)]) + '.'
             if unknown_factors_bits
-            else 'Phạm vi ảnh hưởng trên môi trường vận hành thực tế bên ngoài phiên kiểm thử hiện tại.'
+            else 'Phạm vi ảnh hưởng trên môi trường vận hành thực tế (chi tiết giới hạn chung tại Mục 8).'
         )
 
         # 6.6 & 6.7
         root_cause = _build_root_cause(row, state, component, ev_items, sanitize)
         potential_impact = _build_potential_impact(row, state, ai_impacts, sanitize)
 
-        # Section 7 Remediation per finding (dynamically built from RAG Cheat Sheets + native scanner guidance)
+        # Section 7 Remediation per finding (Top-2 OWASP controls in compact mode + 1 concise safe code snippet)
         guidance_list = list(row.get('guidance') or [])
         scanner_sol = sanitize(str(det.get('scanner_solution') or det.get('solution') or det.get('remediation') or '').strip())
         stack_hint = ' '.join([
@@ -784,24 +918,27 @@ def prepare_dbsec_report(report: dict) -> dict:
             ' '.join(str(x) for x in (row.get('evidence') or [])[:3]),
         ])
         code_examples = _extract_code_blocks_from_guidance(guidance_list, stack_hint=stack_hint)
+        if is_compact and code_examples:
+            trimmed_code_lines = [ln for ln in code_examples[0]['code'].splitlines() if ln.strip()][:10]
+            code_examples = [{**code_examples[0], 'code': '\n'.join(trimmed_code_lines)[:520]}]
 
         rem_steps: list[str] = []
         if state in {STATE_TENTATIVE, STATE_INSUFFICIENT}:
             rem_steps.append(
-                f"**Bước xác minh trước khi can thiệp (do `{fid}` đang ở trạng thái `{state}`):** thực hiện kiểm tra thủ công có kiểm soát "
-                f"tại {component} và đối chiếu mã nguồn/cấu hình. Chỉ triển khai bản vá bên dưới nếu xác nhận điểm yếu tồn tại thực tế."
+                f"**Xác minh thủ công trước khi sửa đổi (`{fid}` — `{state}`):** kiểm chứng thực tế tại {component}; chỉ triển khai bản vá bên dưới khi xác nhận dương tính thật."
             )
-        if scanner_sol:
-            rem_steps.append(f"**Khuyến nghị trực tiếp từ công cụ kiểm thử:** {scanner_sol}")
+        if scanner_sol and (not is_compact or not guidance_list):
+            rem_steps.append(f"**Khuyến nghị từ công cụ kiểm thử:** {scanner_sol}")
 
+        selected_guidance = _select_top_guidance_for_finding(guidance_list, stack_hint=stack_hint, is_compact=is_compact)
         ref_entries: list[dict] = []
-        seen_sections: set[str] = set()
-        for g in guidance_list:
+        for g in selected_guidance:
             sec_name = str(g.get('section') or g.get('title') or 'OWASP Cheat Sheet').strip()
             g_url = str(g.get('url') or '').strip()
-            if sec_name in seen_sections:
-                continue
-            seen_sections.add(sec_name)
+            short_sec = ' / '.join(p.strip() for p in sec_name.split('/') if p.strip())
+            if is_compact and len(short_sec) > 85:
+                parts_s = [p.strip() for p in sec_name.split('/') if p.strip()]
+                short_sec = f"{parts_s[0]} / {parts_s[-1]}" if len(parts_s) >= 2 else sec_name[:85]
             raw_g_txt = str(
                 g.get('source_excerpt')
                 or g.get('guidance_vi')
@@ -811,13 +948,17 @@ def prepare_dbsec_report(report: dict) -> dict:
                 or ''
             )
             prose_without_code = _FENCED_CODE_RE.sub(' ', raw_g_txt).strip()
-            cleaned_ex = _clean_markdown_excerpt(prose_without_code, max_len=440)
-            if cleaned_ex:
-                rem_steps.append(f"**Theo `{sec_name}` (OWASP):** {cleaned_ex}")
+            max_ex_len = 200 if is_compact else 440
+            cleaned_ex = _clean_markdown_excerpt(prose_without_code, max_len=max_ex_len)
+            ai_comp = str(g.get('guidance_summary_vi') or '').strip()
+            if is_compact and ai_comp:
+                rem_steps.append(f"**Theo `{short_sec}` (OWASP):** {ai_comp.rstrip('.')}.")
+            elif cleaned_ex:
+                rem_steps.append(f"**Theo `{short_sec if is_compact else sec_name}` (OWASP):** {cleaned_ex}")
             else:
                 card_act = _extract_card_action(g, row, lang='vi').strip().rstrip('.')
-                rem_steps.append(f"**Theo `{sec_name}` (OWASP):** {card_act}.")
-            ref_entries.append({'section': sec_name, 'url': g_url})
+                rem_steps.append(f"**Theo `{short_sec if is_compact else sec_name}` (OWASP):** {card_act}.")
+            ref_entries.append({'section': short_sec if is_compact else sec_name, 'url': g_url})
             sheet_title = sec_name.split(' / ')[0].strip()
             cited_owasp_docs[sheet_title] = {
                 'type': 'OWASP Cheat Sheet Series',
@@ -912,17 +1053,27 @@ def prepare_dbsec_report(report: dict) -> dict:
             + (f" và đặc thù hệ quản trị `{dbms_summary}`." if dbms_summary != 'Chưa xác định từ dữ liệu đầu vào' else '.')
         )
         retest_method = (
-            f"Chạy lại công cụ `{sanitize(row.get('tool') or 'kiểm thử bảo mật')}` cùng bộ tham số phạm vi tương đương bản quét `{src_id}`, "
-            f"kết hợp rà soát đối chiếu mã nguồn/cấu hình sau khi áp dụng bản vá."
+            f"Chạy lại `{sanitize(_clean_tool_display(row.get('tool'), clean_tools_pool))}` cùng tham số tương đương `{src_id}`, "
+            f"kết hợp đối chiếu mã nguồn/cấu hình sau khi vá."
         )
 
-        extra_ai_notes = [
-            clean_internal_jargon(o)
-            for o in ai_obs[1:]
-            if clean_internal_jargon(o)
-        ]
+        extra_ai_notes: list[str] = []
+        for o in ai_obs[1:]:
+            co = clean_internal_jargon(o)
+            if not co:
+                continue
+            if is_compact and any(tok in co.lower() for tok in ('eol', 'debian', 'apache 2.4', 'damn vulnerable', 'dvwa')):
+                continue
+            extra_ai_notes.append(co)
+            if is_compact and len(extra_ai_notes) >= 2:
+                break
         ev_prof = evidence_profile(row)
         clean_title = clean_internal_jargon(sanitize(row.get('title') or 'Phát hiện kiểm thử bảo mật')) or sanitize(row.get('title') or 'Phát hiện kiểm thử bảo mật')
+        state_detail_str = (
+            f"{state} — {ev_prof['label_vi']}"
+            if is_compact
+            else f"{state} ({ev_prof['label_vi']} — {ev_prof['note_vi']})"
+        )
         findings_out.append({
             'id': fid,
             'raw_id': str(row.get('id') or fid),
@@ -940,7 +1091,7 @@ def prepare_dbsec_report(report: dict) -> dict:
             'severity_key': sev_key,
             'severity_label': sev_label,
             'state': state,
-            'state_detail': f"{state} ({ev_prof['label_vi']} — {ev_prof['note_vi']})",
+            'state_detail': state_detail_str,
             'evidences': ev_items,
             'evidence_ids': [e['id'] for e in ev_items],
             'ai_notes': extra_ai_notes,
@@ -1029,9 +1180,14 @@ def prepare_dbsec_report(report: dict) -> dict:
         'present': '; '.join(have_bits) + '.',
         'missing': '; '.join(dict.fromkeys(missing_bits)) + '.',
         'analytic_limits': (
-            'Phân tích chỉ kết luận trên các thành phần, tham số và dịch vụ thực sự xuất hiện trong tệp đầu vào; '
-            'mọi nhận định về nguyên nhân ở tầng mã nguồn/cấu hình nội bộ chỉ được trình bày dưới dạng giả thuyết kỹ thuật cần đối chiếu thực tế'
+            'Chỉ kết luận trong phạm vi bằng chứng đầu vào (các giới hạn phân tích & môi trường chi tiết tổng hợp tại Mục 8)'
             + redact_limit_clause
+            if is_compact
+            else (
+                'Phân tích chỉ kết luận trên các thành phần, tham số và dịch vụ thực sự xuất hiện trong tệp đầu vào; '
+                'mọi nhận định về nguyên nhân ở tầng mã nguồn/cấu hình nội bộ chỉ được trình bày dưới dạng giả thuyết kỹ thuật cần đối chiếu thực tế'
+                + redact_limit_clause
+            )
         ),
     }
 
@@ -1043,33 +1199,35 @@ def prepare_dbsec_report(report: dict) -> dict:
     cs_count_phrase = f"bộ {cs_total} tài liệu chính thức thuộc " if cs_total else 'bộ tài liệu chính thức thuộc '
     matched_doc_titles = [d['title'] for d in cited_owasp_docs.values()]
     matched_doc_clause = (
-        f" Tài liệu đối chiếu trực tiếp cho bản quét này: {', '.join(f'`{t}`' for t in matched_doc_titles[:6])}."
+        f" Đối chiếu trực tiếp: {', '.join(f'`{t}`' for t in matched_doc_titles[:4])}."
         if matched_doc_titles
         else ''
     )
     methodology = {
         'method': (
-            'Phân tích kết hợp hai tầng (AI-First Direct Input Reading + Hybrid Extractive OWASP RAG + Deterministic Verification): '
-            '(1) mô hình ngôn ngữ cục bộ đọc trực tiếp tệp kết quả kiểm thử / báo cáo đầu vào, đối khớp nguyên văn từng trích đoạn bằng chứng `E-xx` và tương quan rủi ro liên nguồn (`I-xx`); '
-            '(2) ánh xạ CWE sang `OWASP Top 10:2025` theo bảng chuẩn khóa cứng; '
-            '(3) truy xuất lai (Hybrid Search: `Multilingual-E5` Dense Cosine kết hợp `Okapi BM25` nhận biết tiêu đề mục theo `Reciprocal Rank Fusion - RRF`) trên kho `OWASP Cheat Sheet Series` chuyên biệt CSDL; '
-            '(4) tổng hợp phân tích & tự động kiểm chứng chéo trích dẫn để loại bỏ suy diễn không có bằng chứng.'
-            if is_ai_mode
-            else 'Phân tích tất định dựa trên quy tắc chuẩn hóa dữ liệu đầu vào kết hợp đối chiếu trực tiếp `OWASP Top 10:2025` và thẻ tri thức `OWASP` đã phê duyệt (chế độ không gọi mô hình ngôn ngữ lớn).'
+            'Đọc hiểu trực tiếp đầu vào bằng AI cục bộ kết hợp kiểm chứng trích dẫn nguyên văn (`I-xx` → `E-xx`), '
+            'ánh xạ `OWASP Top 10:2025` khóa cứng và truy xuất lai (`Multilingual-E5` + `BM25` `RRF`) trên kho `OWASP Cheat Sheet Series` CSDL.'
+            if (is_ai_mode and is_compact)
+            else (
+                'Phân tích kết hợp hai tầng (AI-First Direct Input Reading + Hybrid Extractive OWASP RAG + Deterministic Verification): '
+                '(1) mô hình ngôn ngữ cục bộ đọc trực tiếp tệp kết quả kiểm thử / báo cáo đầu vào, đối khớp nguyên văn từng trích đoạn bằng chứng `E-xx` và tương quan rủi ro liên nguồn (`I-xx`); '
+                '(2) ánh xạ CWE sang `OWASP Top 10:2025` theo bảng chuẩn khóa cứng; '
+                '(3) truy xuất lai (Hybrid Search: `Multilingual-E5` Dense Cosine kết hợp `Okapi BM25` nhận biết tiêu đề mục theo `Reciprocal Rank Fusion - RRF`) trên kho `OWASP Cheat Sheet Series` chuyên biệt CSDL; '
+                '(4) tổng hợp phân tích & tự động kiểm chứng chéo trích dẫn để loại bỏ suy diễn không có bằng chứng.'
+                if is_ai_mode
+                else 'Phân tích tất định chuẩn hóa dữ liệu đầu vào kết hợp đối chiếu trực tiếp `OWASP Top 10:2025` và thẻ tri thức `OWASP` đã phê duyệt.'
+            )
         ),
         'tools': (
-            f"Công cụ tạo dữ liệu đầu vào: `{tools_str}`; Tầng truy xuất lai: `intfloat/multilingual-e5-small` + `Okapi BM25` (`RRF`); "
-            + (f"Mô hình ngôn ngữ cục bộ: `{model_raw}`." if is_ai_mode else 'Chế độ Demo cục bộ (`--demo`, không gọi LLM).')
+            f"Công cụ đầu vào: `{tools_str}` | Truy xuất lai: `multilingual-e5-small` + `BM25` (`RRF`) | "
+            + (f"LLM cục bộ: `{model_raw}`." if is_ai_mode else 'Chế độ Demo cục bộ (`--demo`).')
         ),
         'references': (
-            f"OWASP Top 10:2025 (Web Application Security Risks) và {cs_count_phrase}"
-            f"OWASP Cheat Sheet Series chuyên biệt bảo mật CSDL (CC BY-SA 4.0).{matched_doc_clause}"
+            f"OWASP Top 10:2025 và {cs_count_phrase}OWASP Cheat Sheet Series chuyên biệt CSDL (CC BY-SA 4.0).{matched_doc_clause}"
         ),
         'criteria': (
-            'Trạng thái phát hiện gồm 4 mức: `Đã xác nhận` (có bằng chứng phản hồi/thực thi kỹ thuật trực tiếp), '
-            '`Có dấu hiệu` (cảnh báo dò sơ bộ heuristic hoặc quan sát thụ động cần xác minh thêm), '
-            '`Chưa đủ dữ liệu` (thiếu trích đoạn bằng chứng kỹ thuật), và `Không xác nhận được` (kiểm chứng âm tính). '
-            'Mức độ nghiêm trọng giữ nguyên tuyệt đối theo dữ liệu đầu vào (`Critical`, `High`, `Medium`, `Low`, `Informational`, hoặc `Chưa xác định` khi công cụ gốc không cung cấp — tuyệt đối không tự tạo số liệu).'
+            '4 trạng thái xác minh (`Đã xác nhận`, `Có dấu hiệu`, `Chưa đủ dữ liệu`, `Không xác nhận được`); '
+            'mức độ nghiêm trọng giữ nguyên từ đầu vào (`Chưa xác định` khi công cụ gốc không cung cấp).'
         ),
     }
 
@@ -1089,44 +1247,58 @@ def prepare_dbsec_report(report: dict) -> dict:
 
     ai_sum = work.get('ai_summary') or {}
     ai_sum_claims = (ai_sum.get('claims') or {}) if ai_sum.get('status') == 'ai_reviewed' else {}
-    overview_paras: list[str] = [
-        (
-            f"Từ {len(input_sources)} nguồn dữ liệu đầu vào (`{', '.join(s['id'] for s in input_sources)}`), "
-            f"báo cáo ghi nhận tổng cộng **{len(findings_out)}** phát hiện: **{len(confirmed_list)}** phát hiện ở trạng thái `{STATE_CONFIRMED}`, "
-            f"**{len(tentative_list)}** phát hiện ở trạng thái `{STATE_TENTATIVE}` và **{len(insufficient_list)}** phát hiện ở trạng thái `{STATE_INSUFFICIENT}`."
+    if is_compact:
+        summary_lead = (
+            f"Từ {len(input_sources)} nguồn đầu vào (`{', '.join(s['id'] for s in input_sources)}`), "
+            f"ghi nhận **{len(findings_out)}** mục: **{len(confirmed_list)}** `{STATE_CONFIRMED}`, "
+            f"**{len(tentative_list)}** `{STATE_TENTATIVE}` và **{len(insufficient_list)}** `{STATE_INSUFFICIENT}`."
         )
-    ]
-    for s_obs in (ai_sum_claims.get('observations') or [])[:2]:
-        txt = clean_internal_jargon(s_obs.get('text_vi') or '')
-        if txt:
-            overview_paras.append(txt)
-    if confirmed_list:
-        top_desc = '; '.join(f"`{f['id']}` ({f['title']} tại {f['component']})" for f in confirmed_list[:3])
-        overview_paras.append(
-            f"Các điểm yếu đã được xác nhận bằng bằng chứng kỹ thuật trực tiếp gồm: {top_desc}."
-        )
-    if tentative_list or insufficient_list:
-        pend_desc = ', '.join(f"`{f['id']}` (`{f['state']}`)" for f in (tentative_list + insufficient_list)[:4])
-        overview_paras.append(
-            f"Các ghi nhận chưa đủ điều kiện kết luận xác nhận ({pend_desc}) được tách bạch rõ ràng để xác minh thủ công, không gộp chung vào nhóm lỗ hổng đã xác nhận."
-        )
-
-    # --- Section 8 Limitations, Verification Checklist & Reliability ---
-    limits_bullets = [
-        quality_assessment['analytic_limits'],
-        'Hệ thống không truy cập trực tiếp mã nguồn ứng dụng, không can thiệp cơ sở dữ liệu đích và không tự động thực thi sửa đổi trên máy chủ kiểm thử.',
-        'Các trích đoạn khuyến nghị từ `OWASP Cheat Sheet Series` được đối chiếu theo mã CWE và ngữ cảnh kỹ thuật; đội ngũ phát triển cần kiểm tra tính tương thích với kiến trúc ứng dụng trước khi triển khai.',
-    ]
-    for eol in scan_ctx.get('eol_notes') or []:
-        cleaned_eol = clean_internal_jargon(sanitize(eol))
-        if cleaned_eol:
-            limits_bullets.append(
-                f"Ghi nhận thụ động từ tiêu đề môi trường: `{cleaned_eol}` — chỉ phản ánh thông tin phiên bản phần mềm nền tảng, không tự suy diễn thành lỗ hổng khai thác được nếu thiếu bằng chứng kiểm chứng."
+        if confirmed_list:
+            top_desc = '; '.join(f"`{f['id']}` ({f['title']})" for f in confirmed_list[:3])
+            summary_lead += f" Trọng tâm cần xử lý ngay: {top_desc}."
+        if tentative_list or insufficient_list:
+            pend_desc = ', '.join(f"`{f['id']}` (`{f['state']}`)" for f in (tentative_list + insufficient_list)[:4])
+            summary_lead += f" Ghi nhận tách riêng chờ xác minh thủ công: {pend_desc}."
+        overview_paras = [summary_lead]
+    else:
+        overview_paras = [
+            (
+                f"Từ {len(input_sources)} nguồn dữ liệu đầu vào (`{', '.join(s['id'] for s in input_sources)}`), "
+                f"báo cáo ghi nhận tổng cộng **{len(findings_out)}** phát hiện: **{len(confirmed_list)}** phát hiện ở trạng thái `{STATE_CONFIRMED}`, "
+                f"**{len(tentative_list)}** phát hiện ở trạng thái `{STATE_TENTATIVE}` và **{len(insufficient_list)}** phát hiện ở trạng thái `{STATE_INSUFFICIENT}`."
             )
-    for s_lim in (ai_sum_claims.get('limitations') or [])[:2]:
-        txt = clean_internal_jargon(s_lim.get('text_vi') or '')
-        if txt and txt not in limits_bullets:
-            limits_bullets.append(txt)
+        ]
+        for s_obs in (ai_sum_claims.get('observations') or [])[:2]:
+            txt = clean_internal_jargon(s_obs.get('text_vi') or '')
+            if txt:
+                overview_paras.append(txt)
+        if confirmed_list:
+            top_desc = '; '.join(f"`{f['id']}` ({f['title']} tại {f['component']})" for f in confirmed_list[:3])
+            overview_paras.append(f"Các điểm yếu đã được xác nhận bằng bằng chứng kỹ thuật trực tiếp gồm: {top_desc}.")
+        if tentative_list or insufficient_list:
+            pend_desc = ', '.join(f"`{f['id']}` (`{f['state']}`)" for f in (tentative_list + insufficient_list)[:4])
+            overview_paras.append(
+                f"Các ghi nhận chưa đủ điều kiện kết luận xác nhận ({pend_desc}) được tách bạch rõ ràng để xác minh thủ công, không gộp chung vào nhóm lỗ hổng đã xác nhận."
+            )
+
+    # --- Section 8 Consolidated Limitations, Verification Checklist & Reliability ---
+    limits_bullets = [
+        'Kiểm thử hộp đen từ dữ liệu đầu vào: không truy cập mã nguồn ứng dụng, tệp cấu hình máy chủ đích hay can thiệp trực tiếp CSDL; nguyên nhân tại Mục 6.6 là giả thuyết kỹ thuật cần đối chiếu mã nguồn.',
+    ]
+    if scan_ctx.get('eol_notes'):
+        merged_eol = '; '.join(clean_internal_jargon(sanitize(e)) for e in scan_ctx['eol_notes'] if clean_internal_jargon(sanitize(e)))
+        if merged_eol:
+            limits_bullets.append(
+                f"Ghi nhận thụ động từ banner môi trường: {merged_eol} (chỉ mang tính cảnh báo vòng đời nền tảng, không gộp thành lỗ hổng CSDL)."
+            )
+    if not is_compact:
+        limits_bullets.append(
+            'Các trích đoạn khuyến nghị từ `OWASP Cheat Sheet Series` cần được kiểm tra tính tương thích kiến trúc trước khi triển khai.'
+        )
+        for s_lim in (ai_sum_claims.get('limitations') or [])[:2]:
+            txt = clean_internal_jargon(s_lim.get('text_vi') or '')
+            if txt and txt not in limits_bullets:
+                limits_bullets.append(txt)
 
     verify_items: list[str] = []
     for f in findings_out:
@@ -1166,56 +1338,52 @@ def prepare_dbsec_report(report: dict) -> dict:
     confirmed_ev_ids = [eid for f in confirmed_list for eid in f['evidence_ids']]
     reliability_paras = [
         (
-            f"Độ tin cậy của từng kết luận được phân tầng chặt chẽ theo chất lượng bằng chứng đầu vào: "
+            "Độ tin cậy phân tầng theo bằng chứng: "
             + (
-                f"nhóm `{STATE_CONFIRMED}` ({', '.join(f['id'] for f in confirmed_list)}) có độ tin cậy cao trong phạm vi kiểm thử do đi kèm bằng chứng phản hồi kỹ thuật trực tiếp (`{', '.join(confirmed_ev_ids[:5])}`); "
+                f"nhóm `{STATE_CONFIRMED}` ({', '.join(f['id'] for f in confirmed_list)}) có độ tin cậy cao nhờ bằng chứng phản hồi trực tiếp (`{', '.join(confirmed_ev_ids[:5])}`); "
                 if confirmed_list
-                else 'hiện chưa có phát hiện nào đạt ngưỡng bằng chứng trực tiếp ở trạng thái `Đã xác nhận`; '
+                else 'chưa có phát hiện đạt ngưỡng `Đã xác nhận`; '
             )
             + (
-                f"nhóm `{STATE_TENTATIVE}` / `{STATE_INSUFFICIENT}` ({', '.join(f['id'] for f in tentative_list + insufficient_list)}) có độ tin cậy sơ bộ thấp, chỉ dùng làm định hướng kiểm tra bổ sung."
+                f"nhóm `{STATE_TENTATIVE}` / `{STATE_INSUFFICIENT}` ({', '.join(f['id'] for f in tentative_list + insufficient_list)}) chỉ mang tính định hướng xác minh thủ công."
                 if (tentative_list or insufficient_list)
-                else 'toàn bộ bản ghi hiện có đều đi kèm dữ liệu bằng chứng tương ứng.'
+                else 'mọi nhận định ngoài dữ liệu đầu vào đều gắn nhãn giả thuyết hoặc `Chưa xác định`.'
             )
-        ),
-        (
-            'Nguyên tắc đánh giá xuyên suốt báo cáo: chỉ số độ tin cậy chỉ phản ánh mức độ đầy đủ và nhất quán của bằng chứng có trong tệp đầu vào tại thời điểm phân tích; '
-            'mọi suy luận vượt quá dữ liệu đầu vào đều được gắn nhãn giả thuyết hoặc `Chưa xác định`, không thay thế cho bằng chứng thực nghiệm độc lập.'
-        ),
+        )
     ]
+    if not is_compact:
+        reliability_paras.append(
+            'Nguyên tắc xuyên suốt: mọi suy luận vượt quá dữ liệu đầu vào đều được gắn nhãn giả thuyết hoặc `Chưa xác định`, không thay thế cho kiểm chứng độc lập.'
+        )
 
     # --- Section 9 Conclusion ---
     conclusion_paras: list[str] = []
     if confirmed_list:
         conclusion_paras.append(
-            f"Kết quả phân tích trên đối tượng `{target_object}` xác nhận **{len(confirmed_list)}** điểm yếu bảo mật có bằng chứng kỹ thuật rõ ràng "
+            f"Trên `{target_object}`, kết quả kiểm thử xác nhận **{len(confirmed_list)}** lỗ hổng có bằng chứng trực tiếp "
             f"({', '.join(f['id'] + ': ' + f['title'] for f in confirmed_list[:4])})"
             + (
-                f", bên cạnh **{len(tentative_list) + len(insufficient_list)}** ghi nhận cần xác minh bổ sung ({', '.join(f['id'] for f in (tentative_list + insufficient_list)[:4])})."
+                f" và **{len(tentative_list) + len(insufficient_list)}** mục cần xác minh bổ sung ({', '.join(f['id'] for f in (tentative_list + insufficient_list)[:4])}); "
                 if (tentative_list or insufficient_list)
-                else '.'
+                else '; '
             )
+            + 'các biện pháp khắc phục tại Mục 7 được đối chiếu trực tiếp từ `OWASP Top 10:2025` và `OWASP Cheat Sheet Series`.'
         )
     else:
         conclusion_paras.append(
-            f"Dữ liệu đầu vào trên đối tượng `{target_object}` hiện ghi nhận **{len(findings_out)}** mục, trong đó chưa có phát hiện nào đủ bằng chứng ở trạng thái `{STATE_CONFIRMED}`."
+            f"Trên `{target_object}`, dữ liệu đầu vào ghi nhận **{len(findings_out)}** mục và chưa có phát hiện nào ở trạng thái `{STATE_CONFIRMED}`."
         )
-    conclusion_paras.append(
-        'Các đề xuất khắc phục tại Mục 7 đã được đối chiếu trực tiếp với tài liệu chính thức của `OWASP Top 10:2025` và `OWASP Cheat Sheet Series` '
-        'nhằm xử lý tận gốc nguyên nhân kỹ thuật theo thứ tự ưu tiên rủi ro.'
-    )
     if retest_status_meta == 'Chưa thực hiện':
         conclusion_paras.append(
-            'Do hiện tại chưa có kết quả và bằng chứng kiểm tra lại (retest) sau khi triển khai các biện pháp remediation, '
-            'báo cáo không khẳng định hệ thống đã an toàn và không kết luận các lỗ hổng đã được khắc phục hoàn toàn.'
+            'Do chưa có kết quả kiểm tra lại (retest) sau khắc phục, báo cáo không khẳng định hệ thống đã an toàn và không kết luận lỗ hổng đã được xử lý hoàn toàn.'
         )
     else:
         conclusion_paras.append(
-            f"Trạng thái kiểm tra lại được ghi nhận là `{retest_status_meta}` (bằng chứng kèm theo: `{retest_evidence_meta}`); "
-            f"kết luận chỉ có hiệu lực trong đúng phạm vi các mục tiêu và kịch bản đã kiểm chứng lại."
+            f"Trạng thái kiểm tra lại: `{retest_status_meta}` (`{retest_evidence_meta}`), chỉ có hiệu lực trong phạm vi mục tiêu đã kiểm chứng lại."
         )
 
     return {
+        'profile': resolved_profile,
         'title': REPORT_TITLE,
         'subtitle': REPORT_SUBTITLE,
         'section_titles': SECTION_TITLES,
@@ -1250,9 +1418,9 @@ def _md_cell(val: str) -> str:
     return str(val or '').replace('|', '\\|').replace('\n', ' ').strip()
 
 
-def render_dbsec_markdown(report: dict) -> str:
+def render_dbsec_markdown(report: dict, *, profile: str | None = None) -> str:
     """Render complete 10-section Markdown strictly conforming to the official coursework template."""
-    m = prepare_dbsec_report(report)
+    m = prepare_dbsec_report(report, profile=profile)
     out: list[str] = [
         f"# {m['title']}",
         '',

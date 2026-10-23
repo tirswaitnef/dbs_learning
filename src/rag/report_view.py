@@ -9,7 +9,7 @@ META_FIELDS={
     'dbms_override':180,'prepared_by':180,'assessment_period':180,'allowed_scope':1000,
     'excluded_areas':1000,'retest_status':80,'retest_evidence':500,'classification':80,
     'roles':1000,'xss_decision':32,'xss_poc':1000,'mask_public_ips':16,'target_alias':120,
-    'report_lang':16,'cvss_mode':16,'force_fresh_ai':16,'note':1000,
+    'report_lang':16,'cvss_mode':16,'force_fresh_ai':16,'report_profile':24,'note':1000,
 }
 MISSING='Không được cung cấp trong đầu vào.'
 SEVERITIES=[('critical','Nghiêm trọng'),('high','Cao'),('medium','Trung bình'),('low','Thấp'),('informational','Thông tin'),('unknown','Chưa xác định')]
@@ -151,22 +151,57 @@ def evidence_profile(row):
             'note_vi':'Chỉ có tên cảnh báo từ đầu vào, chưa có trích đoạn phản hồi đi kèm.'}
 
 
+def _clean_tool_label(raw_tool: str) -> str:
+    t = str(raw_tool or '').strip()
+    if t.lower() in {'', 'ai-extracted', 'ai', 'unknown', 'none', 'n/a'}:
+        return ''
+    return t
+
+
+def _normalize_ts_token(raw_ts: str) -> str:
+    s = str(raw_ts or '').strip()
+    # Normalize sqlmap header pattern "11:21:57 /2026-10-22/ to 11:28:12 /2026-10-22/" -> "2026-10-22 11:21:57 – 2026-10-22 11:28:12"
+    m_range = re.fullmatch(
+        r'(\d{2}:\d{2}:\d{2})\s*/(\d{4}-\d{2}-\d{2})/\s*(?:to|-|–)\s*(\d{2}:\d{2}:\d{2})\s*/(\d{4}-\d{2}-\d{2})/',
+        s,
+        re.I,
+    )
+    if m_range:
+        return f'{m_range.group(2)} {m_range.group(1)} – {m_range.group(4)} {m_range.group(3)}'
+    m_one = re.fullmatch(r'(\d{2}:\d{2}:\d{2})\s*/(\d{4}-\d{2}-\d{2})/', s)
+    if m_one:
+        return f'{m_one.group(2)} {m_one.group(1)}'
+    return s
+
+
 def extract_scan_context(report, scan_path=None, format_=None):
     rows=report.get('findings') or []
     ctx={'lab':detect_lab_indicator(rows),'eol_notes':detect_eol_banners(rows),'telemetry_lines':[],'repro_gaps':[]}
     seen_tel=set()
     scan_windows=[]
+    real_tools=[_clean_tool_label(r.get('tool')) for r in rows if _clean_tool_label(r.get('tool'))]
+    fallback_tool=real_tools[0] if real_tools else ''
     for r in rows:
         d=r.get('details') if isinstance(r.get('details'),dict) else {}
         tel=d.get('scan_telemetry') if isinstance(d.get('scan_telemetry'),dict) else {}
         if not tel:continue
+        t_lbl=_clean_tool_label(r.get('tool')) or fallback_tool
         if tel.get('scan_start'):
-            win=(f"{tel['scan_start']} – {tel['scan_end']} (ghi trong log {r.get('tool','')})"
-                 if tel.get('scan_end') else f"{tel['scan_start']} (ghi trong log {r.get('tool','')})")
-            if win not in scan_windows:
+            st_norm=_normalize_ts_token(tel['scan_start'])
+            en_norm=_normalize_ts_token(tel.get('scan_end') or '')
+            suffix=f" (ghi trong log {t_lbl})" if t_lbl else ''
+            win=(f"{st_norm} – {en_norm}{suffix}"
+                 if (en_norm and en_norm not in st_norm) else f"{st_norm}{suffix}")
+            # Skip looser duplicate timestamps when an ISO YYYY-MM-DD HH:MM:SS window already covers the same HH:MM:SS
+            hhmm=re.findall(r'\b\d{2}:\d{2}:\d{2}\b',win)
+            if hhmm and any(all(h in prev for h in hhmm) for prev in scan_windows):
+                pass
+            elif win not in scan_windows:
+                if hhmm:
+                    scan_windows=[prev for prev in scan_windows if not all(h in win for h in re.findall(r'\b\d{2}:\d{2}:\d{2}\b',prev) or ['__none__'])]
                 scan_windows.append(win)
         parts=[]
-        if tel.get('tool_version'):parts.append(f"{r.get('tool','tool')} {tel['tool_version']}")
+        if tel.get('tool_version'):parts.append(f"{t_lbl or 'tool'} {tel['tool_version']}")
         if tel.get('target_site'):parts.append(f"mục tiêu {tel['target_site']}")
         if tel.get('plugin_family'):parts.append(f"nhóm plugin: {tel['plugin_family']}")
         if tel.get('protocol'):parts.append(f"giao thức: {tel['protocol']}")
@@ -190,8 +225,14 @@ def extract_scan_context(report, scan_path=None, format_=None):
         if tel.get('scope_rule') and not ctx.get('scope_rule'):
             ctx['scope_rule']=tel['scope_rule']
         if tel.get('unmatched_http_ids'):
-            note=(f"Bản ghi HTTP đính kèm {', '.join(tel['unmatched_http_ids'])} trong phụ lục đang thử payload trên tham số khác "
-                  f"(tham số '{d.get('parameter','')}' giữ nguyên giá trị gốc); nên trích lại đúng gói tin chèn vào '{d.get('parameter','')}' từ file traffic.txt.")
+            p_name=str(d.get('parameter') or '').strip()
+            if not p_name:
+                m_p=re.search(r"(?:parameter=([^,)]+)|Parameter:\s*([A-Za-z0-9_.-]+)\s*\(|parameter\s+'([^']+)')",
+                              f"{r.get('location','')} {r.get('title','')}",re.I)
+                if m_p:p_name=(m_p.group(1) or m_p.group(2) or m_p.group(3) or '').strip()
+            p_disp=f"tham số '{p_name}'" if p_name else 'tham số mục tiêu'
+            note=(f"Bản ghi HTTP đính kèm {', '.join(tel['unmatched_http_ids'])} trong phụ lục đang thử payload trên tham số phụ "
+                  f"({p_disp} giữ nguyên giá trị gốc).")
             if note not in ctx['repro_gaps']:
                 ctx['repro_gaps'].append(note)
         if any(k in tel for k in ('current_user','current_db','is_dba')) and not ctx.get('db_identity'):
