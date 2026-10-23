@@ -652,10 +652,11 @@ class JobManager:
             rows = report['findings']
             xss_dec_j = str((report.get('report_metadata') or {}).get('xss_decision') or '').strip().lower()
             eval_rows = [r for r in rows if not (xss_dec_j == 'drop' and r.get('kind') == 'observation')]
-            from .report_view import is_passive_service_observation
+            from .report_view import is_nonfinding_intake_record, is_passive_service_observation
             ai_required = [
                 r for r in eval_rows
                 if not is_passive_service_observation(r)
+                and not is_nonfinding_intake_record(r)
                 and not (xss_dec_j == 'drop' and r.get('kind') == 'observation')
             ]
             analyses = [r.get('ai_analysis', {}).get('status') for r in ai_required]

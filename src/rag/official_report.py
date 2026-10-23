@@ -317,7 +317,7 @@ def guidance_from_source(source, cwe):
 
 
 def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None, progress=None, drop_unverified_observations=False):
-    from .report_view import is_passive_service_observation
+    from .report_view import is_nonfinding_intake_record, is_passive_service_observation, is_scan_limitation
 
     provider=settings.resolved_provider
     prefix='ollama' if provider=='ollama' else 'gemini'
@@ -329,10 +329,19 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
         passive_service=is_passive_service_observation(finding)
+        intake_only=is_nonfinding_intake_record(finding)
         skip_obs=bool(drop_unverified_observations and getattr(finding,'kind','')=='observation')
-        if passive_service:
-            row['status']='passive_observation'
-            row['guidance_reason']='Quan sát thụ động về dịch vụ/banner; không tra cứu biện pháp OWASP như thể đó là lỗ hổng đã xác nhận.'
+        if intake_only or passive_service:
+            bucket=str((finding.details or {}).get('intake_bucket') or '')
+            if is_scan_limitation(finding):
+                row['status']='scan_limitation'
+                row['guidance_reason']='Giới hạn phạm vi quét; không phải lỗ hổng và không áp dụng truy xuất khắc phục OWASP.'
+            elif bucket=='negative_checks':
+                row['status']='negative_check'
+                row['guidance_reason']='Kết quả âm tính được chuyển vào Mục 4; không phải lỗ hổng để truy xuất hướng dẫn khắc phục.'
+            else:
+                row['status']='passive_observation'
+                row['guidance_reason']='Quan sát thụ động về dịch vụ/banner; không tra cứu biện pháp OWASP như thể đó là lỗ hổng đã xác nhận.'
         elif scope['status']=='in_scope' and finding.evidence and not skip_obs:
             pct_start=20+int(20*(idx_f-1)/total_f)
             pct_done=20+int(20*idx_f/total_f)

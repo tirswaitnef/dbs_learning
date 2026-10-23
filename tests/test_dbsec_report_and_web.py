@@ -676,6 +676,7 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                     txt = data["input_text"]
                     if "Oracle Database 19c" in txt:
                         return json.dumps({
+                            "command_line": "", "passive_observations": [], "negative_checks": [], "limitations": [],
                             "metadata": {
                                 "tool_name": "sqlmap (custom JSON session)",
                                 "project_name": "",
@@ -705,6 +706,7 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                         }, ensure_ascii=False)
                     if "PostgreSQL DB 16.2" in txt:
                         return json.dumps({
+                            "command_line": "", "passive_observations": [], "negative_checks": [], "limitations": [],
                             "metadata": {
                                 "tool_name": "Nmap -oN",
                                 "project_name": "",
@@ -724,6 +726,7 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                             }],
                         }, ensure_ascii=False)
                     return json.dumps({
+                        "command_line": "", "passive_observations": [], "negative_checks": [], "limitations": [],
                         "metadata": {
                             "tool_name": "internal-graphql-sec-check-v3",
                             "project_name": "",
@@ -1339,6 +1342,82 @@ class CourseworkReportAndWebTests(unittest.TestCase):
             self.assertNotIn("không chấp nhận tài khoản rỗng", nmap_md)
             self.assertNotIn("nmap, Nmap", nmap_md)
             mgr.close()
+
+    def test_free_text_ai_intake_separates_five_buckets_and_renders_command_limitations(self):
+        from dataclasses import asdict
+        from rag.ai_ingest import extract_findings_from_report_with_ai
+        from rag.compact_pentest_template import render_compact_pentest_markdown
+        from rag.config import Settings
+
+        command_raw = r"nmap -sV --script mysql-empty-password -oX C:\Users\Alice\Downloads\scan.xml 192.0.2.12"
+        command = "nmap -sV --script mysql-empty-password -oX [REDACTED_LOCAL_PATH] 192.0.2.12"
+        raw_text = (
+            f"Command: {command_raw}\n"
+            "192.0.2.12:3306/tcp open mysql MariaDB 10.4 unauthorized\n"
+            "No passwordless account found by this check.\n"
+            "NSE script output was truncated.\n"
+        )
+
+        class _FiveBucketLLM:
+            def generate(self, prompt, *, system="", schema=None):
+                return json.dumps({
+                    "command_line": command,
+                    "metadata": {
+                        "tool_name": "Nmap", "project_name": "", "target_object": "192.0.2.12",
+                        "dbms_override": "MariaDB 10.4", "assessment_period": "", "allowed_scope": "",
+                        "databases": [], "db_user": "",
+                    },
+                    "findings": [],
+                    "passive_observations": [{
+                        "title": "MySQL service banner", "location": "192.0.2.12:3306/tcp",
+                        "tool": "Nmap", "service_name": "mysql", "service_product": "MariaDB",
+                        "service_version": "10.4", "protocol": "tcp",
+                        "evidence_quotes": ["192.0.2.12:3306/tcp open mysql MariaDB 10.4 unauthorized"],
+                    }],
+                    "negative_checks": [{
+                        "title": "Không tìm thấy tài khoản không mật khẩu",
+                        "location": "192.0.2.12:3306/tcp", "tool": "Nmap",
+                        "evidence_quotes": ["No passwordless account found by this check."],
+                    }],
+                    "limitations": [{
+                        "title": "Kết quả script NSE không đầy đủ",
+                        "location": "192.0.2.12:3306/tcp", "tool": "Nmap",
+                        "evidence_quotes": ["NSE script output was truncated."],
+                    }],
+                }, ensure_ascii=False)
+
+        settings = Settings(llm_provider="ollama", ollama_model="qwen2.5:7b")
+        findings, meta = extract_findings_from_report_with_ai(
+            raw_text, "unknown_scan.txt", settings, llm=_FiveBucketLLM(),
+        )
+        self.assertEqual({(f.details or {}).get("intake_bucket") for f in findings}, {
+            "passive_observations", "negative_checks", "limitations",
+        })
+        self.assertIn("-oX [REDACTED_LOCAL_PATH]", meta["_scan_command_line"])
+        self.assertIn("192.0.2.12", meta["_scan_command_line"])
+        self.assertNotIn("Alice", meta["_scan_command_line"])
+
+        report = {
+            "schema_version": 1,
+            "generated_at": "2026-10-24T00:00:00+00:00",
+            "scan_sha256": "a" * 64,
+            "input_format": "pentest-report",
+            "input_filename": "unknown_scan.txt",
+            "scan_command_line": meta["_scan_command_line"],
+            "findings": [asdict(f) for f in findings],
+            "report_metadata": {},
+        }
+        markdown = render_compact_pentest_markdown(report)
+        sections = markdown.split("## 3. Quan sát (chưa phải lỗ hổng)", 1)[1]
+        sec3 = sections.split("## 4. Kết quả âm tính", 1)[0]
+        sec4 = sections.split("## 4. Kết quả âm tính", 1)[1].split("## 5. Giới hạn & việc cần xác minh", 1)[0]
+        sec5 = sections.split("## 5. Giới hạn & việc cần xác minh", 1)[1].split("## 6. Phụ lục", 1)[0]
+        self.assertIn("MariaDB 10.4", sec3)
+        self.assertNotIn("CWE-", sec3)
+        self.assertIn("No passwordless account found by this check.", sec4)
+        self.assertIn("NSE script output was truncated.", sec5)
+        self.assertIn("[REDACTED_LOCAL_PATH]", markdown)
+        self.assertNotIn("Alice", markdown)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,8 @@ from .report_view import (
     cwe_text,
     evidence_profile,
     extract_scan_context,
+    is_nonfinding_intake_record,
+    is_passive_service_observation,
 )
 from .top10 import enforce, finding_cwes, mapping
 
@@ -603,9 +605,18 @@ def prepare_dbsec_report(report: dict, *, profile: str | None = None) -> dict:
     raw_findings = list(work.get('findings') or [])
 
     if xss_dec == 'drop':
-        active_findings = [r for r in raw_findings if str(r.get('kind') or '') != 'observation']
+        active_findings = [
+            r for r in raw_findings
+            if str(r.get('kind') or '') != 'observation'
+            and not is_nonfinding_intake_record(r)
+            and not is_passive_service_observation(r)
+        ]
     else:
-        active_findings = raw_findings
+        active_findings = [
+            r for r in raw_findings
+            if not is_nonfinding_intake_record(r)
+            and not is_passive_service_observation(r)
+        ]
 
     scan_ctx = extract_scan_context(work)
 

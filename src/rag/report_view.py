@@ -16,11 +16,27 @@ SEVERITIES=[('critical','Nghiêm trọng'),('high','Cao'),('medium','Trung bình
 STATUS_LABELS={'ai_reviewed':'Có diễn giải AI đã qua kiểm tra tự động','rejected_output':'Diễn giải AI chưa đạt kiểm tra','api_error':'Lỗi gọi AI','not_requested':'Không gọi AI'}
 
 
+def _row_intake_bucket(row):
+    details = row.get('details') if isinstance(row, dict) else getattr(row, 'details', None)
+    return str((details or {}).get('intake_bucket') or '').strip().lower() if isinstance(details, dict) else ''
+
+
 def is_passive_service_observation(row):
     """True for Nmap-like passive service/banner records, not active heuristic/test observations."""
     kind = row.get('kind') if isinstance(row, dict) else getattr(row, 'kind', '')
     title = row.get('title') if isinstance(row, dict) else getattr(row, 'title', '')
-    return str(kind or '').strip().lower() == 'observation' and str(title or '').strip().lower().startswith('service observation:')
+    return str(kind or '').strip().lower() == 'observation' and (
+        str(title or '').strip().lower().startswith('service observation:')
+        or _row_intake_bucket(row) == 'passive_observations'
+    )
+
+
+def is_scan_limitation(row):
+    return _row_intake_bucket(row) == 'limitations'
+
+
+def is_nonfinding_intake_record(row):
+    return _row_intake_bucket(row) in {'passive_observations', 'negative_checks', 'limitations'}
 
 
 def clean_metadata(value):
@@ -407,9 +423,13 @@ def defense_layer_label(card):
 
 
 def attach_context(report,scan_path,format_,metadata=None,display_filename=None):
+    meta_in=dict(metadata or {})
+    internal_cli=str(meta_in.pop('_scan_command_line','') or '').strip()
+    if internal_cli:
+        report['scan_command_line']=internal_cli[:1200]
     base={}
     if format_=='normalized':base=clean_metadata(json.loads(Path(scan_path).read_text(encoding='utf-8-sig')).get('report_metadata'))
-    report['report_metadata']={**base,**clean_metadata(metadata)}
+    report['report_metadata']={**base,**clean_metadata(meta_in)}
     report['input_filename']=display_filename or Path(scan_path).name
     report['input_format']=format_
     report['scan_context']=extract_scan_context(report,scan_path,format_)

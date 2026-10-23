@@ -9,7 +9,7 @@ import re
 from collections import Counter
 from .db_scope import ai_source, attach_db_scope, scope_lines, scope_summary
 from .llm import GeminiLLM, OllamaLLM, trace_step, wrap_llm_for_trace
-from .report_view import cwe_origin, cwe_text, is_passive_service_observation
+from .report_view import cwe_origin, cwe_text, is_nonfinding_intake_record, is_passive_service_observation
 from .top10 import cwe_label
 
 SECTIONS = ('observations', 'potential_impacts', 'limitations')
@@ -416,10 +416,17 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unveri
     model=llm or (OllamaLLM(settings) if provider=='ollama' else GeminiLLM(settings))
     total_rows=len(rows)
     for index,row in enumerate(rows,1):
-        if is_passive_service_observation(row):
+        if is_passive_service_observation(row) or is_nonfinding_intake_record(row):
+            bucket=str((row.get('details') or {}).get('intake_bucket') or '')
+            reason=(
+                'Giới hạn của phép kiểm thử được trình bày tại Mục 5, không phải phát hiện lỗ hổng.'
+                if bucket=='limitations' else
+                'Kết quả âm tính được trình bày tại Mục 4, không phải phát hiện lỗ hổng.'
+                if bucket=='negative_checks' else
+                'Quan sát dịch vụ/banner thụ động được trình bày tại Mục 3, không cần AI diễn giải như lỗ hổng.'
+            )
             row['ai_analysis']={
-                'status':'skipped_observation','claims':{},'sources':{},'calls':0,
-                'reason':'Quan sát dịch vụ/banner thụ động được trình bày tại Mục 3; không cần AI diễn giải như lỗ hổng.',
+                'status':'skipped_observation','claims':{},'sources':{},'calls':0,'reason':reason,
             }
             continue
         if drop_unverified_observations and row.get('kind')=='observation':
@@ -491,6 +498,7 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unveri
     summary_eligible_rows=[
         r for r in rows
         if not is_passive_service_observation(r)
+        and not is_nonfinding_intake_record(r)
         and not (drop_unverified_observations and r.get('kind')=='observation')
     ]
     if not summary_eligible_rows:

@@ -66,6 +66,7 @@ def mock_ollama_server(*, installed_models=("qwen2.5:7b",), reject_think_once=Fa
                 reply = {"source_ids": [cands[0]["source_id"]] if cands else []}
             elif "findings" in props and "metadata" in props:
                 reply = {
+                    "command_line": "",
                     "metadata": {
                         "project_name": "",
                         "target_object": "",
@@ -74,6 +75,9 @@ def mock_ollama_server(*, installed_models=("qwen2.5:7b",), reject_think_once=Fa
                         "allowed_scope": "",
                     },
                     "findings": [],
+                    "passive_observations": [],
+                    "negative_checks": [],
+                    "limitations": [],
                 }
             elif "classifications" in props:
                 reply = {"classifications": []}
