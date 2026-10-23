@@ -328,6 +328,106 @@ class HybridRetrievalAndEvaluationTests(unittest.TestCase):
         )
         self.assertIn("BÁO CÁO THỰC NGHIỆM ĐỊNH LƯỢNG HỆ THỐNG AI & HYBRID RAG", proc.stdout)
 
+    def test_web_debug_route_overview_playground_and_clean_normal_mode(self):
+        import threading
+        import urllib.error
+        import urllib.request
+        from rag.web_server import JobManager, LocalServer
+
+        app_js = (ROOT / "src/rag/web/app.js").read_text(encoding="utf-8")
+        index_html = (ROOT / "src/rag/web/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="debug-mode-bar" hidden', index_html)
+        self.assertIn('id="debug-console"', index_html)
+        self.assertIn('class="debug-only" hidden', index_html)
+        self.assertEqual(app_js.count("if (IS_DEBUG) process.appendChild(buildTracePanel(job));"), 1)
+        self.assertEqual(app_js.count("if (IS_DEBUG) body.appendChild(buildTracePanel(job));"), 2)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = JobManager(Path(tmp), demo=True)
+            srv = LocalServer(("127.0.0.1", 0), mgr)
+            port = srv.server_address[1]
+            t = threading.Thread(target=srv.serve_forever, daemon=True)
+            t.start()
+            try:
+                base = f"http://127.0.0.1:{port}"
+                # 1. Local Windows 127.0.0.1 mode: fresh browser visit directly to /debug issues HttpOnly cookie
+                with urllib.request.urlopen(base + "/debug") as resp_local:
+                    self.assertEqual(resp_local.status, 200)
+                    self.assertIn(f"rag_local={srv.token}", resp_local.headers.get("Set-Cookie", ""))
+
+                # 2. Preview mode: /debug and /debug/ also inject <meta name="app-token">
+                srv.allow_preview = True
+                for route in ("/debug", "/debug/"):
+                    with urllib.request.urlopen(base + route) as resp:
+                        self.assertEqual(resp.status, 200)
+                        set_cookie = resp.headers.get("Set-Cookie", "")
+                        self.assertIn(f"rag_local={srv.token}", set_cookie)
+                        body_html = resp.read().decode("utf-8")
+                        self.assertIn(f'<meta name="app-token" content="{srv.token}">', body_html)
+
+                # Unauthenticated /api/debug/overview must reject with 401
+                with self.assertRaises(urllib.error.HTTPError) as ctx401:
+                    urllib.request.urlopen(base + "/api/debug/overview")
+                self.assertEqual(ctx401.exception.code, 401)
+                ctx401.exception.close()
+
+                headers = {"Cookie": f"rag_local={srv.token}"}
+                req1 = urllib.request.Request(base + "/api/debug/overview", headers=headers)
+                with urllib.request.urlopen(req1) as r1:
+                    ov1 = json.loads(r1.read().decode("utf-8"))
+                self.assertFalse(ov1["cached"])
+                self.assertEqual(ov1["evaluation"]["guardrails"]["f1"], 1.0)
+                self.assertEqual(ov1["evaluation"]["guardrails"]["hallucination_block_rate"], 1.0)
+                self.assertEqual(ov1["evaluation"]["pruning_comparison"]["full_corpus"]["document_count"], 137)
+
+                req2 = urllib.request.Request(base + "/api/debug/overview", headers=headers)
+                with urllib.request.urlopen(req2) as r2:
+                    ov2 = json.loads(r2.read().decode("utf-8"))
+                self.assertTrue(ov2["cached"])
+
+                req3 = urllib.request.Request(base + "/api/debug/overview?refresh=1", headers=headers)
+                with urllib.request.urlopen(req3) as r3:
+                    ov3 = json.loads(r3.read().decode("utf-8"))
+                self.assertFalse(ov3["cached"])
+
+                # POST /api/debug/query requires X-App-Token (403 without token)
+                q_body = json.dumps({
+                    "query": "PDO prepare ATTR_EMULATE_PREPARES false SQL injection",
+                    "cwe": "CWE-89",
+                    "stack_hint": "PHP / MySQL",
+                }).encode("utf-8")
+                req_no_csrf = urllib.request.Request(
+                    base + "/api/debug/query",
+                    data=q_body,
+                    headers={**headers, "Content-Type": "application/json"},
+                    method="POST",
+                )
+                with self.assertRaises(urllib.error.HTTPError) as ctx403:
+                    urllib.request.urlopen(req_no_csrf)
+                self.assertEqual(ctx403.exception.code, 403)
+                ctx403.exception.close()
+
+                req_ok = urllib.request.Request(
+                    base + "/api/debug/query",
+                    data=q_body,
+                    headers={
+                        **headers,
+                        "Content-Type": "application/json",
+                        "X-App-Token": srv.token,
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req_ok) as rq:
+                    play = json.loads(rq.read().decode("utf-8"))
+                self.assertGreaterEqual(len(play["expanded_queries"]), 2)
+                self.assertTrue(any(
+                    "SQL_Injection_Prevention" in h["source"] or "Query_Parameterization" in h["source"]
+                    for h in play["results"][:3]
+                ))
+            finally:
+                srv.shutdown()
+                srv.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

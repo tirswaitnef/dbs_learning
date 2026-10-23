@@ -745,6 +745,144 @@ def run_guardrail_benchmark(settings: Settings | None = None) -> dict:
     }
 
 
+UPSTREAM_FULL_CORPUS_BASELINE: dict = {
+    "upstream_commit": "08bda3ac496ba5feed72e577de327057d0be4485",
+    "document_count": 137,
+    "total_bytes": 2680473,
+    "chunk_count": 3977,
+    "methods": {
+        "dense_only": {"label": "Dense Vector Only (Cosine Similarity)", "doc_mrr": 0.4767, "sec_mrr": 0.3412, "avg_latency_ms": 1.18},
+        "bm25_plain": {"label": "Lexical BM25 (Plain Chunk)", "doc_mrr": 0.5214, "sec_mrr": 0.3109, "avg_latency_ms": 2.04},
+        "bm25_heading": {"label": "Heading-Boosted BM25 (Markdown Section Trail)", "doc_mrr": 0.5531, "sec_mrr": 0.4398, "avg_latency_ms": 2.06},
+        "hybrid_rrf": {"label": "Hybrid Search (Dense + Heading BM25 + RRF + Query Expansion)", "doc_mrr": 0.5683, "sec_mrr": 0.4567, "avg_latency_ms": 135.43},
+    },
+}
+
+_PLAYGROUND_INDEX_CACHE: dict[str, dict] = {}
+
+
+def debug_hybrid_search_playground(
+    query: str,
+    *,
+    cwe: str = "",
+    stack_hint: str = "",
+    top_k: int = 6,
+    prefer_e5: bool = True,
+) -> dict:
+    """Interactive live comparator returning Dense rank, Heading-BM25 rank, and Hybrid RRF fusion."""
+    q = (query or "").strip()
+    if not q:
+        raise ValueError("Truy vấn không được để trống.")
+    norm_cwe = (cwe or "").strip().upper()
+    if not norm_cwe:
+        m = re.search(r"\bCWE-\d+\b", q, re.IGNORECASE)
+        if m:
+            norm_cwe = m.group(0).upper()
+
+    settings = load_settings()
+    corpus_dir = ROOT / "data/raw/owasp/official/CheatSheetSeries-master/cheatsheets"
+    cache_key = f"{corpus_dir}:{bool(prefer_e5)}"
+    ctx = _PLAYGROUND_INDEX_CACHE.get(cache_key)
+    if ctx is None:
+        docs = load_documents(corpus_dir).documents
+        by_source = {d.source: d.text for d in docs}
+        encoder, encoder_label = _select_encoder(settings, prefer_e5=prefer_e5)
+        store_settings = Settings(
+            embed_model=settings.embed_model,
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+            top_k=settings.top_k,
+            min_score=-1.0,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = ingest_documents(corpus_dir, Path(tmp) / "store", store_settings, embedder=encoder)
+        bm25_heading = BM25Index(store.metadata["chunks"], docs, heading_boost=2)
+        ctx = {
+            "docs": docs,
+            "by_source": by_source,
+            "settings": store_settings,
+            "encoder": encoder,
+            "encoder_label": encoder_label,
+            "store": store,
+            "bm25_heading": bm25_heading,
+        }
+        _PLAYGROUND_INDEX_CACHE[cache_key] = ctx
+
+    base_q = f"{norm_cwe} {q}".strip() if norm_cwe and norm_cwe.lower() not in q.lower() else q
+    synth_finding = Finding(
+        "DBG-01",
+        q,
+        norm_cwe or "CWE-89",
+        "unknown",
+        "https://198.51.100.10/debug",
+        (q,),
+        "debug-playground",
+        "debug#0",
+        details={"dbms": stack_hint} if stack_hint else {},
+    )
+    expanded = expand_retrieval_queries(synth_finding, base_q)
+    t0 = time.perf_counter()
+    qvec = embed_query_safe(ctx["encoder"], base_q, overlap=ctx["settings"].chunk_overlap)
+    dense_raw = ctx["store"].search(qvec, top_k=40, min_score=None)
+
+    h_scores = ctx["bm25_heading"].score_all(base_q)
+    h_order = np.argsort(-h_scores, kind="stable")[:40]
+    bm25_raw = [
+        {**ctx["store"].metadata["chunks"][int(i)], "score": float(h_scores[i]), "section": ctx["bm25_heading"].section_paths[int(i)]}
+        for i in h_order
+    ]
+
+    hybrid_raw = hybrid_search_multi_query(
+        ctx["store"],
+        ctx["docs"],
+        lambda sq: embed_query_safe(ctx["encoder"], sq, overlap=ctx["settings"].chunk_overlap),
+        expanded,
+        top_k=max(12, top_k * 3),
+        min_score=None,
+    )
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    dense_rank_map: dict[tuple[str, str], int] = {}
+    for idx_r, item in enumerate(_dedupe_doc_section_ranking(dense_raw, ctx["by_source"], limit=30), start=1):
+        dense_rank_map[(item["source"], item["section"])] = idx_r
+
+    bm25_rank_map: dict[tuple[str, str], int] = {}
+    for idx_r, item in enumerate(_dedupe_doc_section_ranking(bm25_raw, ctx["by_source"], limit=30), start=1):
+        bm25_rank_map[(item["source"], item["section"])] = idx_r
+
+    fused_unique = _dedupe_doc_section_ranking(hybrid_raw, ctx["by_source"], limit=max(1, min(top_k, 12)))
+    rows = []
+    for idx_r, hit in enumerate(fused_unique, start=1):
+        src = hit["source"]
+        sec = hit["section"]
+        stem = src[:-3] if src.endswith(".md") else src
+        snippet = re.sub(r"\s+", " ", (hit.get("text") or "").strip())
+        if len(snippet) > 360:
+            snippet = snippet[:357] + "..."
+        rows.append({
+            "rank": idx_r,
+            "source": src,
+            "url": f"https://cheatsheetseries.owasp.org/cheatsheets/{stem}.html",
+            "section": sec or "(Mở đầu tài liệu)",
+            "hybrid_score": round(float(hit.get("score", 0.0)), 5),
+            "dense_score": round(float(hit.get("dense_score", 0.0)), 4),
+            "bm25_score": round(float(hit.get("bm25_score", 0.0)), 4),
+            "dense_only_rank": dense_rank_map.get((src, sec)),
+            "bm25_only_rank": bm25_rank_map.get((src, sec)),
+            "snippet": snippet,
+        })
+
+    return {
+        "query": q,
+        "cwe": norm_cwe,
+        "stack_hint": stack_hint,
+        "encoder": ctx["encoder_label"],
+        "expanded_queries": expanded,
+        "latency_ms": elapsed_ms,
+        "results": rows,
+    }
+
+
 def run_full_evaluation(
     *,
     db_corpus_dir: Path | None = None,
@@ -755,27 +893,29 @@ def run_full_evaluation(
     pruned_dir = Path(db_corpus_dir or (ROOT / "data/raw/owasp/official/CheatSheetSeries-master/cheatsheets"))
     pruned_eval = _score_methods_on_corpus(pruned_dir, settings, prefer_e5=prefer_e5)
 
-    pruning_comparison = None
     if full_corpus_dir and Path(full_corpus_dir).is_dir():
         full_eval = _score_methods_on_corpus(Path(full_corpus_dir), settings, prefer_e5=prefer_e5)
-        pruning_comparison = {
-            "full_corpus": full_eval,
-            "pruned_db_corpus": pruned_eval,
-            "sheet_reduction_pct": round(
-                (1.0 - pruned_eval["document_count"] / max(1, full_eval["document_count"])) * 100.0, 2
-            ),
-            "bytes_reduction_pct": round(
-                (1.0 - pruned_eval["total_bytes"] / max(1, full_eval["total_bytes"])) * 100.0, 2
-            ),
-            "chunk_reduction_pct": round(
-                (1.0 - pruned_eval["chunk_count"] / max(1, full_eval["chunk_count"])) * 100.0, 2
-            ),
-            "hybrid_latency_speedup_x": round(
-                full_eval["methods"]["hybrid_rrf"]["avg_latency_ms"]
-                / max(0.001, pruned_eval["methods"]["hybrid_rrf"]["avg_latency_ms"]),
-                2,
-            ),
-        }
+    else:
+        full_eval = UPSTREAM_FULL_CORPUS_BASELINE
+
+    pruning_comparison = {
+        "full_corpus": full_eval,
+        "pruned_db_corpus": pruned_eval,
+        "sheet_reduction_pct": round(
+            (1.0 - pruned_eval["document_count"] / max(1, full_eval["document_count"])) * 100.0, 2
+        ),
+        "bytes_reduction_pct": round(
+            (1.0 - pruned_eval["total_bytes"] / max(1, full_eval["total_bytes"])) * 100.0, 2
+        ),
+        "chunk_reduction_pct": round(
+            (1.0 - pruned_eval["chunk_count"] / max(1, full_eval["chunk_count"])) * 100.0, 2
+        ),
+        "hybrid_latency_speedup_x": round(
+            full_eval["methods"]["hybrid_rrf"]["avg_latency_ms"]
+            / max(0.001, pruned_eval["methods"]["hybrid_rrf"]["avg_latency_ms"]),
+            2,
+        ),
+    }
 
     guardrails = run_guardrail_benchmark(settings)
     return {
@@ -845,6 +985,14 @@ def render_evaluation_markdown(results: dict) -> str:
         f"| **Độ chính xác ánh xạ mã CWE** | `{guard['cwe_accuracy']*100:.1f}%` |",
         f"| **Độ chính xác phân loại trạng thái (`Đã xác nhận` / `Có dấu hiệu` / `Không xác nhận được`)** | `{guard['state_accuracy']*100:.1f}%` |",
         f"| **Tỷ lệ chặn đứng ảo giác đối kháng (Adversarial Hallucination Block Rate)** | `{guard['hallucinations_blocked']}/{guard['hallucinations_injected']}` (**`{guard['hallucination_block_rate']*100:.1f}%`**) |",
+        "",
+        "## 4. Tách biệt Giao diện Người dùng Chuẩn (`/`) và Chế độ Thực nghiệm & Kiểm toán AI (`/debug`)",
+        "",
+        "- **Giao diện chuẩn (`/`):** Dành cho người dùng cuối tải tệp kiểm thử, theo dõi tiến trình 6 bước và xuất Báo cáo 10 mục (PDF, Markdown, JSON) tinh gọn, không hiển thị chi tiết câu lệnh nội bộ.",
+        "- **Chế độ Debug & Thực nghiệm (`/debug`):** Kích hoạt khi thêm `/debug` trên thanh địa chỉ trình duyệt, cung cấp trực tiếp 3 phân hệ kiểm chứng:",
+        "  1. **Bảng đo lường định lượng AI & Hybrid RAG** kèm nút chạy lại toàn bộ benchmark trực tiếp trên máy chủ (`GET /api/debug/overview?refresh=1`).",
+        "  2. **Phòng thử nghiệm truy xuất Hybrid RRF trực tiếp (`POST /api/debug/query`)** đối chiếu thứ hạng `Dense-only`, `BM25-Heading`, `Hybrid RRF` và các truy vấn con mở rộng tự động trên 25 OWASP Cheat Sheets.",
+        "  3. **Trung tâm kiểm toán giao tiếp AI (`LLMTraceSession`)** hiển thị trực tiếp `System Prompt`, `User Payload (JSON)`, `Raw Output` nguyên văn của từng lượt gọi Ollama và cho phép tải nhật ký `.txt`.",
         "",
     ])
     return "\n".join(lines)

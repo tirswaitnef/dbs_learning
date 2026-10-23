@@ -2,6 +2,8 @@
 
 const TERMINAL = new Set(['completed', 'partial', 'failed']);
 const STORAGE_KEY = 'dbsec-selected-job';
+const IS_DEBUG = /^\/debug(?:\/|$)/i.test(window.location.pathname || '')
+  || new URLSearchParams(window.location.search || '').get('debug') === '1';
 const META_KEYS = [
   'report_id',
   'project_name',
@@ -33,6 +35,10 @@ const state = {
   toastTimer: null,
   traceCache: {},
   submitting: false,
+  debugTab: 'eval',
+  debugOverview: null,
+  debugJobId: null,
+  debugCommsSig: '',
 };
 
 const el = (id) => document.getElementById(id);
@@ -274,12 +280,12 @@ async function fetchJobTrace(jobId, force = false) {
   }
 }
 
-function buildTracePanel(job) {
+function buildTracePanel(job, opts = {}) {
   const details = create('details', 'event-panel trace-panel');
   const cached = state.traceCache[job.id];
   const entries = (cached && cached.data && cached.data.entries) || [];
   const fromCache = Boolean(cached && cached.data && cached.data.from_cache);
-  if (job.status === 'running' || entries.length > 0) details.open = !TERMINAL.has(job.status);
+  if (opts.alwaysOpen || job.status === 'running' || entries.length > 0) details.open = true;
 
   const countLabel = cached && cached.data
     ? (fromCache
@@ -411,7 +417,7 @@ function buildLiveProgressCard(job) {
     logBox.append(logHead, renderEventList(job.events));
     process.appendChild(logBox);
   }
-  process.appendChild(buildTracePanel(job));
+  if (IS_DEBUG) process.appendChild(buildTracePanel(job));
   return process;
 }
 
@@ -548,7 +554,7 @@ function renderMessageForJob(job) {
       details.appendChild(renderEventList(job.events));
       body.appendChild(details);
     }
-    body.appendChild(buildTracePanel(job));
+    if (IS_DEBUG) body.appendChild(buildTracePanel(job));
     const retry = create('button', 'again', 'Tải tệp khác để tạo báo cáo mới');
     retry.type = 'button';
     retry.addEventListener('click', showNewReport);
@@ -571,7 +577,7 @@ function renderMessageForJob(job) {
       details.appendChild(renderEventList(job.events));
       body.appendChild(details);
     }
-    body.appendChild(buildTracePanel(job));
+    if (IS_DEBUG) body.appendChild(buildTracePanel(job));
 
     const again = create('button', 'again', '＋ Phân tích & tạo báo cáo mới');
     again.type = 'button';
@@ -604,6 +610,7 @@ function renderWorkspace() {
   messages.replaceChildren();
   if (job) messages.appendChild(renderMessageForJob(job));
   renderHistory();
+  if (IS_DEBUG) renderDebugComms(false);
 }
 
 function showNewReport() {
@@ -615,6 +622,7 @@ function showNewReport() {
 
 function selectJob(id) {
   state.selectedId = id;
+  if (IS_DEBUG) state.debugJobId = id;
   localStorage.setItem(STORAGE_KEY, id);
   closeSidebar();
   renderWorkspace();
@@ -624,10 +632,13 @@ async function refreshJobs() {
   try {
     state.jobs = await api('/api/jobs');
     if (state.selectedId && !state.jobs.some((j) => j.id === state.selectedId)) state.selectedId = null;
-    if (state.selectedId) {
-      const sel = state.jobs.find((j) => j.id === state.selectedId);
-      if (sel && !TERMINAL.has(sel.status)) fetchJobTrace(sel.id, true);
-      else if (sel && (!state.traceCache[sel.id] || !state.traceCache[sel.id].done)) fetchJobTrace(sel.id, true);
+    if (IS_DEBUG) {
+      const targetId = state.selectedId || state.debugJobId || (state.jobs[0] && state.jobs[0].id) || null;
+      if (targetId) {
+        const sel = state.jobs.find((j) => j.id === targetId);
+        if (sel && !TERMINAL.has(sel.status)) fetchJobTrace(sel.id, true);
+        else if (sel && (!state.traceCache[sel.id] || !state.traceCache[sel.id].done)) fetchJobTrace(sel.id, true);
+      }
     }
     renderWorkspace();
     schedulePoll();
@@ -658,7 +669,7 @@ function resetForm() {
   for (const key of META_KEYS) {
     const input = el(`meta-${key}`);
     if (!input) continue;
-    input.value = '';
+    input.value = (IS_DEBUG && key === 'force_fresh_ai') ? '1' : '';
   }
   updateSelectedFiles([], false);
 }
@@ -786,13 +797,343 @@ function wireEvents() {
   state.clockTimer = setInterval(syncElapsedClock, 1000);
 }
 
+function pctText(v) {
+  return `${(Number(v || 0) * 100).toFixed(1)}%`;
+}
+
+function buildDebugTable(headers, rows) {
+  const wrap = create('div', 'debug-table-wrap');
+  const table = create('table', 'debug-table');
+  const thead = create('thead');
+  const trHead = create('tr');
+  for (const h of headers) trHead.appendChild(create('th', '', h));
+  thead.appendChild(trHead);
+  table.appendChild(thead);
+
+  const tbody = create('tbody');
+  for (const row of rows) {
+    const tr = create('tr', row.highlight ? 'highlight-row' : '');
+    for (const cell of row.cells) {
+      const td = create('td');
+      if (cell instanceof Node) td.appendChild(cell);
+      else td.textContent = String(cell ?? '');
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+function renderDebugEvaluation(payload) {
+  const host = el('debug-eval-content');
+  if (!host || !payload || !payload.evaluation) return;
+  host.replaceChildren();
+
+  const ev = payload.evaluation;
+  const pruned = ev.pruned_db_corpus || {};
+  const methods = pruned.methods || {};
+  const hyb = methods.hybrid_rrf || {};
+  const den = methods.dense_only || {};
+  const comp = ev.pruning_comparison || null;
+  const guard = ev.guardrails || {};
+  const rt = payload.runtime || {};
+
+  const rtLabel = el('debug-runtime-label');
+  if (rtLabel) {
+    const llmDesc = rt.demo ? 'Chế độ Demo cục bộ' : `${rt.provider || 'ollama'} · ${rt.model || 'qwen2.5'}`;
+    rtLabel.textContent = `LLM: ${llmDesc} · Vector: ${pruned.encoder || rt.embed_model || 'E5'} · Kho OWASP CSDL: ${pruned.document_count || 25} tệp (${pruned.chunk_count || 0} chunks)`;
+  }
+
+  const metaLine = create('div', 'debug-meta-line');
+  metaLine.appendChild(create('span', '',
+    `Bộ kiểm chuẩn: ${ev.benchmark_query_count || 24} kịch bản CSDL & Web-to-DB thực tế · Đo lúc ${formatTime(payload.computed_at)} (${payload.wall_ms} ms trên máy chủ)`));
+  metaLine.appendChild(create('span', '', payload.cached ? 'Nguồn: Cache phiên máy chủ' : 'Nguồn: Vừa đo trực tiếp trên máy chủ'));
+  host.appendChild(metaLine);
+
+  const kpis = create('div', 'debug-kpi-grid');
+  const mrrGain = ((Number(hyb.doc_mrr || 0) - Number(den.doc_mrr || 0)) * 100).toFixed(2);
+  const kpiItems = [
+    [
+      pctText(hyb.doc_hit_at_1),
+      `Hybrid Doc Hit@1 (MRR ${Number(hyb.doc_mrr || 0).toFixed(4)})`,
+      `Tăng +${mrrGain} điểm % MRR so với Dense thuần`,
+    ],
+    [
+      comp ? `-${Number(comp.sheet_reduction_pct || 0).toFixed(1)}%` : '25 tệp',
+      'Thu gọn nhiễu Kho OWASP CSDL',
+      comp ? `137 tệp gốc → ${pruned.document_count} tệp CSDL (${comp.hybrid_latency_speedup_x}x nhanh hơn)` : `${pruned.chunk_count} chunks chuyên biệt`,
+    ],
+    [
+      pctText(guard.f1),
+      'F1-Score Trích xuất & Ánh xạ CWE',
+      `Precision ${pctText(guard.precision)} · Recall ${pctText(guard.recall)} · CWE ${pctText(guard.cwe_accuracy)}`,
+    ],
+    [
+      `${guard.hallucinations_blocked || 0}/${guard.hallucinations_injected || 0} (${pctText(guard.hallucination_block_rate)})`,
+      'Chặn Ảo giác Đối kháng AI',
+      'Tự động hạ mức độ bịa về Chưa xác định & lọc trích dẫn giả',
+    ],
+  ];
+  for (const [val, title, sub] of kpiItems) {
+    const box = create('div', 'debug-kpi');
+    box.appendChild(create('strong', '', val));
+    box.appendChild(create('span', '', title));
+    box.appendChild(create('small', '', sub));
+    kpis.appendChild(box);
+  }
+  host.appendChild(kpis);
+
+  host.appendChild(create('div', 'debug-section-title',
+    'Bảng 1 — Thực nghiệm Ablation 4 kiến trúc truy xuất trên kho 25 OWASP Cheat Sheets CSDL'));
+  const order = ['dense_only', 'bm25_plain', 'bm25_heading', 'hybrid_rrf'];
+  const ablationRows = order.filter((k) => methods[k]).map((k) => {
+    const m = methods[k];
+    return {
+      highlight: k === 'hybrid_rrf',
+      cells: [
+        m.label,
+        pctText(m.doc_hit_at_1),
+        pctText(m.doc_hit_at_3),
+        pctText(m.doc_hit_at_5),
+        Number(m.doc_mrr || 0).toFixed(4),
+        pctText(m.sec_hit_at_1),
+        pctText(m.sec_hit_at_3),
+        Number(m.sec_mrr || 0).toFixed(4),
+        `${Number(m.avg_latency_ms || 0).toFixed(2)} ms`,
+      ],
+    };
+  });
+  host.appendChild(buildDebugTable(
+    ['Phương pháp truy xuất', 'Doc Hit@1', 'Doc Hit@3', 'Doc Hit@5', 'Doc MRR', 'Sec Hit@1', 'Sec Hit@3', 'Sec MRR', 'Độ trễ TB'],
+    ablationRows,
+  ));
+
+  if (comp && comp.full_corpus) {
+    const full = comp.full_corpus;
+    const fDen = (full.methods && full.methods.dense_only) || {};
+    const fHyb = (full.methods && full.methods.hybrid_rrf) || {};
+    host.appendChild(create('div', 'debug-section-title',
+      'Bảng 2 — Hiệu quả thu gọn kho tri thức OWASP chuyên biệt CSDL (137 tệp đầy đủ vs 25 tệp CSDL)'));
+    host.appendChild(buildDebugTable(
+      ['Chỉ số đo lường', `Kho OWASP Đầy đủ (${full.document_count} tệp)`, `Kho OWASP CSDL (${pruned.document_count} tệp)`, 'Mức cải thiện thực nghiệm'],
+      [
+        { cells: ['Số lượng tệp Cheat Sheet (.md)', `${full.document_count} tệp`, `${pruned.document_count} tệp`, `Giảm ${comp.sheet_reduction_pct}% tài liệu ngoài phạm vi CSDL`] },
+        { cells: ['Dung lượng văn bản nạp chỉ mục', formatBytes(full.total_bytes || 0), formatBytes(pruned.total_bytes || 0), `Giảm ${comp.bytes_reduction_pct}% dung lượng`] },
+        { cells: ['Tổng số Chunks vector hóa', `${full.chunk_count} chunks`, `${pruned.chunk_count} chunks`, `Giảm ${comp.chunk_reduction_pct}% không gian tìm kiếm`] },
+        { cells: ['Dense Cosine Doc MRR', Number(fDen.doc_mrr || 0).toFixed(4), Number(den.doc_mrr || 0).toFixed(4), `${((den.doc_mrr - fDen.doc_mrr) * 100 >= 0 ? '+' : '') + ((den.doc_mrr - fDen.doc_mrr) * 100).toFixed(2)} điểm %`] },
+        { highlight: true, cells: ['Hybrid RRF Doc MRR', Number(fHyb.doc_mrr || 0).toFixed(4), Number(hyb.doc_mrr || 0).toFixed(4), `+${((hyb.doc_mrr - fHyb.doc_mrr) * 100).toFixed(2)} điểm % · Nhanh hơn ${comp.hybrid_latency_speedup_x}x`] },
+      ],
+    ));
+  }
+
+  host.appendChild(create('div', 'debug-section-title',
+    'Bảng 3 — Kiểm chứng độ chính xác trích xuất AI, tương quan đa nguồn (Nmap + ZAP) & chống ảo giác'));
+  host.appendChild(buildDebugTable(
+    ['Hạng mục kiểm chứng bảo vệ tính trung thực báo cáo', 'Kết quả đo lường'],
+    [
+      { cells: ['Precision / Recall / F1-Score trích xuất phát hiện kiểm thử', `${pctText(guard.precision)} / ${pctText(guard.recall)} / ${pctText(guard.f1)} (TP=${guard.true_positives}, FP=${guard.false_positives}, FN=${guard.false_negatives})`] },
+      { cells: ['Độ chính xác phân loại mã CWE & trạng thái xác minh (Đã xác nhận / Có dấu hiệu / Không xác nhận được)', `CWE: ${pctText(guard.cwe_accuracy)} · Trạng thái: ${pctText(guard.state_accuracy)}`] },
+      { highlight: true, cells: ['Tỷ lệ chặn đứng ảo giác đối kháng (Severity tự bịa + Trích dẫn không có trong tệp gốc)', `${guard.hallucinations_blocked}/${guard.hallucinations_injected} (${pctText(guard.hallucination_block_rate)})`] },
+    ],
+  ));
+}
+
+async function loadDebugOverview(forceRefresh = false) {
+  if (!IS_DEBUG) return;
+  const btn = el('debug-run-eval');
+  if (btn) btn.disabled = true;
+  try {
+    const q = forceRefresh ? '?refresh=1' : '';
+    const data = await api(`/api/debug/overview${q}`);
+    state.debugOverview = data;
+    renderDebugEvaluation(data);
+    if (forceRefresh) {
+      showToast(`Đã chạy lại toàn bộ thực nghiệm định lượng trên máy chủ trong ${data.wall_ms} ms.`);
+    }
+  } catch (err) {
+    const host = el('debug-eval-content');
+    if (host) host.textContent = `Không tải được số liệu debug: ${err.message || err}`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function runDebugPlaygroundQuery(event) {
+  if (event) event.preventDefault();
+  if (!IS_DEBUG) return;
+  const out = el('debug-query-results');
+  if (!out) return;
+  const query = (el('debug-q-input')?.value || '').trim();
+  const cwe = (el('debug-cwe-input')?.value || '').trim();
+  const stackHint = (el('debug-stack-input')?.value || '').trim();
+  if (!query) return;
+
+  out.replaceChildren(create('div', 'debug-loading', 'Đang chạy đối chiếu Dense vs Heading-BM25 vs Hybrid RRF...'));
+  try {
+    const res = await api('/api/debug/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, cwe, stack_hint: stackHint, top_k: 6 }),
+    });
+    out.replaceChildren();
+    const expBox = create('div', 'expanded-box');
+    expBox.appendChild(create('strong', '',
+      `Mở rộng truy vấn tự động (${(res.expanded_queries || []).length} sub-queries · Độ trễ ${res.latency_ms} ms · Encoder: ${res.encoder}):`));
+    const ul = create('ul');
+    for (const sq of (res.expanded_queries || [])) ul.appendChild(create('li', '', sq));
+    expBox.appendChild(ul);
+    out.appendChild(expBox);
+
+    const rows = (res.results || []).map((r) => {
+      const titleCell = create('div');
+      const link = create('a', 'json-link', r.source);
+      link.href = r.url;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      titleCell.appendChild(link);
+      titleCell.appendChild(create('div', 'hit-snippet', `Mục: ${r.section}`));
+      titleCell.appendChild(create('div', 'hit-snippet', r.snippet));
+
+      const rankBadge = create('span', r.rank === 1 ? 'rank-pill top' : 'rank-pill', `#${r.rank}`);
+      return {
+        highlight: r.rank === 1,
+        cells: [
+          rankBadge,
+          titleCell,
+          r.dense_only_rank ? `#${r.dense_only_rank} (${r.dense_score})` : `Ngoài Top 30 (${r.dense_score})`,
+          r.bm25_only_rank ? `#${r.bm25_only_rank} (${r.bm25_score})` : `Ngoài Top 30 (${r.bm25_score})`,
+          String(r.hybrid_score),
+        ],
+      };
+    });
+    out.appendChild(buildDebugTable(
+      ['Hạng RRF', 'Tài liệu OWASP & Đoạn trích đối chiếu', 'Hạng Dense-only', 'Hạng BM25-Heading', 'Điểm Hybrid RRF'],
+      rows,
+    ));
+  } catch (err) {
+    out.replaceChildren(create('p', 'failure', err.message || 'Không thực hiện được truy vấn thử.'));
+  }
+}
+
+function renderDebugComms(force = false) {
+  if (!IS_DEBUG) return;
+  const select = el('debug-job-select');
+  const host = el('debug-comms-body');
+  if (!select || !host) return;
+
+  if (!state.jobs.length) {
+    select.replaceChildren(create('option', '', 'Chưa có phiên phân tích nào'));
+    state.debugCommsSig = 'empty';
+    host.replaceChildren(create('div', 'debug-loading',
+      'Chưa có phiên gọi AI nào. Hãy tải một tệp báo cáo Pentest hoặc kết quả quét bên dưới (chế độ /debug đã tự bật "Luôn gọi trực tiếp Ollama mới") để xem trực tiếp toàn bộ System Prompt, User Payload và phản hồi nguyên văn từ AI theo thời gian thực.'));
+    return;
+  }
+
+  const wantedId = (state.debugJobId && state.jobs.some((j) => j.id === state.debugJobId))
+    ? state.debugJobId
+    : (state.selectedId || state.jobs[0].id);
+  state.debugJobId = wantedId;
+
+  const optsSig = state.jobs.map((j) => `${j.id}:${j.status}`).join('|');
+  if (select.dataset.sig !== optsSig) {
+    select.dataset.sig = optsSig;
+    select.replaceChildren();
+    for (const j of state.jobs) {
+      const opt = create('option', '', `${j.filename} — ${statusText(j)} (${formatTime(j.created_at)})`);
+      opt.value = j.id;
+      if (j.id === wantedId) opt.selected = true;
+      select.appendChild(opt);
+    }
+  } else if (select.value !== wantedId) {
+    select.value = wantedId;
+  }
+
+  const targetJob = state.jobs.find((j) => j.id === wantedId) || state.jobs[0];
+  const cached = state.traceCache[targetJob.id];
+  const entriesLen = (cached && cached.data && cached.data.entries) ? cached.data.entries.length : -1;
+  const renderSig = `${targetJob.id}:${targetJob.status}:${entriesLen}:${Boolean(cached && cached.loading)}`;
+  if (!force && state.debugCommsSig === renderSig) return;
+  state.debugCommsSig = renderSig;
+
+  host.replaceChildren(buildTracePanel(targetJob, { alwaysOpen: true }));
+}
+
+function setDebugTab(tabName) {
+  state.debugTab = tabName;
+  document.querySelectorAll('.debug-tab').forEach((btn) => {
+    const active = btn.dataset.tab === tabName;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  el('debug-panel-eval').hidden = tabName !== 'eval';
+  el('debug-panel-playground').hidden = tabName !== 'playground';
+  el('debug-panel-comms').hidden = tabName !== 'comms';
+  if (tabName === 'playground' && !el('debug-query-results').children.length) {
+    runDebugPlaygroundQuery();
+  }
+  if (tabName === 'comms') {
+    if (state.debugJobId) fetchJobTrace(state.debugJobId, true);
+    renderDebugComms(true);
+  }
+}
+
+function initDebugMode() {
+  if (!IS_DEBUG) return;
+  document.title = '[DEBUG] DBSec OWASP — Thực nghiệm AI, Hybrid RAG & Giao tiếp Mô hình';
+  el('debug-mode-bar').hidden = false;
+  el('debug-console').hidden = false;
+  document.querySelectorAll('.debug-only').forEach((node) => { node.hidden = false; });
+
+  const freshSelect = el('meta-force_fresh_ai');
+  if (freshSelect) freshSelect.value = '1';
+  const reportOpts = el('report-options');
+  if (reportOpts) reportOpts.open = true;
+
+  document.querySelectorAll('.debug-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setDebugTab(btn.dataset.tab));
+  });
+  el('debug-run-eval').addEventListener('click', () => loadDebugOverview(true));
+  el('debug-query-form').addEventListener('submit', runDebugPlaygroundQuery);
+  document.querySelectorAll('.preset-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      el('debug-q-input').value = chip.dataset.q || '';
+      el('debug-cwe-input').value = chip.dataset.cwe || '';
+      el('debug-stack-input').value = chip.dataset.stack || '';
+      runDebugPlaygroundQuery();
+    });
+  });
+  el('debug-job-select').addEventListener('change', (e) => {
+    state.debugJobId = e.target.value;
+    state.debugCommsSig = '';
+    fetchJobTrace(state.debugJobId, true);
+    renderDebugComms(true);
+  });
+  el('debug-refresh-trace').addEventListener('click', () => {
+    if (state.debugJobId) {
+      state.debugCommsSig = '';
+      fetchJobTrace(state.debugJobId, true);
+    }
+    refreshJobs();
+  });
+}
+
 async function boot() {
   wireEvents();
+  initDebugMode();
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved) state.selectedId = saved;
   try {
     await loadConfig();
+    if (IS_DEBUG && state.token) {
+      const exitLink = el('debug-exit-link');
+      if (exitLink && document.querySelector('meta[name="app-token"]')) {
+        exitLink.href = '/';
+      }
+    }
     await refreshJobs();
+    if (IS_DEBUG) await loadDebugOverview(false);
   } catch (_) {
     setFormError('Chưa kết nối được máy chủ Web cục bộ. Hãy kiểm tra cửa sổ chạy start-web.bat.');
   }

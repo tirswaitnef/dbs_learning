@@ -7,7 +7,9 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.cookies import SimpleCookie
@@ -594,17 +596,75 @@ class Handler(BaseHTTPRequestHandler):
             return
         parsed_url = urlsplit(self.path)
         path = parsed_url.path
-        assets = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}
-        if path in assets:
-            ext = {'/': 'text/html; charset=utf-8', '/app.js': 'text/javascript; charset=utf-8', '/style.css': 'text/css; charset=utf-8'}
+        html_routes = {'/', '/debug', '/debug/'}
+        assets = {'/app.js': 'app.js', '/style.css': 'style.css'}
+        if path in html_routes or path in assets:
+            if path in html_routes:
+                raw_asset = (Path(__file__).parent / 'web' / 'index.html').read_bytes()
+                if self.server.allow_preview:
+                    raw_asset = raw_asset.replace(b'</head>', f'<meta name="app-token" content="{self.server.token}"></head>'.encode('utf-8'), 1)
+                cookie_flags = 'SameSite=None; Secure; Path=/' if self.server.allow_preview else 'HttpOnly; SameSite=Strict; Path=/'
+                headers = {'Set-Cookie': f'rag_local={self.server.token}; {cookie_flags}'}
+                return self.send_data(200, raw_asset, 'text/html; charset=utf-8', headers)
+            ext = {'/app.js': 'text/javascript; charset=utf-8', '/style.css': 'text/css; charset=utf-8'}
             raw_asset = (Path(__file__).parent / 'web' / assets[path]).read_bytes()
-            if path == '/' and self.server.allow_preview:
-                raw_asset = raw_asset.replace(b'</head>', f'<meta name="app-token" content="{self.server.token}"></head>'.encode('utf-8'), 1)
-            cookie_flags = 'SameSite=None; Secure; Path=/' if self.server.allow_preview else 'HttpOnly; SameSite=Strict; Path=/'
-            headers = {'Set-Cookie': f'rag_local={self.server.token}; {cookie_flags}'} if path == '/' else {}
-            return self.send_data(200, raw_asset, ext[path], headers)
+            return self.send_data(200, raw_asset, ext[path], {})
         if not self.trusted(auth=True):
             return
+        if path == '/api/debug/overview':
+            force_refresh = parse_qs(parsed_url.query).get('refresh', ['0'])[0] == '1'
+            cache_box = getattr(self.server, '_debug_eval_cache', None)
+            if cache_box is None or force_refresh:
+                from .eval_benchmark import run_full_evaluation
+                t0 = time.perf_counter()
+                eval_res = run_full_evaluation(prefer_e5=True)
+                wall_ms = round((time.perf_counter() - t0) * 1000.0, 1)
+                cache_box = {
+                    'evaluation': eval_res,
+                    'computed_at': now(),
+                    'wall_ms': wall_ms,
+                }
+                self.server._debug_eval_cache = cache_box
+                was_cached = False
+            else:
+                was_cached = True
+            meta_file = ROOT / 'data/processed/owasp-official/vector_store.meta.json'
+            store_meta = {}
+            if meta_file.is_file():
+                try:
+                    store_meta = json.loads(meta_file.read_text(encoding='utf-8'))
+                except Exception:
+                    store_meta = {}
+            provider = 'demo'
+            model = ''
+            embed_model = 'intfloat/multilingual-e5-small'
+            ollama_status = {'ok': False, 'error': ''}
+            if not self.server.manager.demo:
+                try:
+                    settings = self.server.manager.settings_loader()
+                    provider = settings.resolved_provider
+                    model = settings.active_model
+                    embed_model = settings.embed_model
+                    if provider == 'ollama':
+                        ollama_status = check_ollama(settings)
+                except Exception as exc:
+                    ollama_status = {'ok': False, 'error': str(exc)}
+            return self.send_data(200, {
+                'cached': was_cached,
+                'computed_at': cache_box['computed_at'],
+                'wall_ms': cache_box['wall_ms'],
+                'runtime': {
+                    'python': sys.version.split()[0],
+                    'demo': self.server.manager.demo,
+                    'provider': provider,
+                    'model': model,
+                    'embed_model': embed_model,
+                    'ollama': ollama_status,
+                    'vector_store': store_meta,
+                },
+                'evaluation': cache_box['evaluation'],
+                'jobs': self.server.manager.list(),
+            })
         if path == '/api/config':
             issues = []
             model = ''
@@ -698,6 +758,31 @@ class Handler(BaseHTTPRequestHandler):
         if not self.trusted(auth=True, write=True):
             return
         query = urlsplit(self.path)
+        if query.path == '/api/debug/query':
+            if self.headers.get('Transfer-Encoding'):
+                return self.send_data(400, {'error': 'Không hỗ trợ kiểu truyền dữ liệu này.'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+            except ValueError:
+                return self.send_data(400, {'error': 'Kích thước dữ liệu không hợp lệ.'})
+            if not 0 < length <= 16384:
+                return self.send_data(413, {'error': 'Truy vấn không hợp lệ hoặc quá dài.'})
+            try:
+                raw_body = self.rfile.read(length)
+                payload = json.loads(raw_body.decode('utf-8'))
+                from .eval_benchmark import debug_hybrid_search_playground
+                result = debug_hybrid_search_playground(
+                    str(payload.get('query', '')),
+                    cwe=str(payload.get('cwe', '')),
+                    stack_hint=str(payload.get('stack_hint', '')),
+                    top_k=int(payload.get('top_k', 6)),
+                    prefer_e5=True,
+                )
+                return self.send_data(200, result)
+            except ValueError as exc:
+                return self.send_data(400, {'error': str(exc)})
+            except Exception as exc:
+                return self.send_data(500, {'error': f'Lỗi chạy truy xuất thử: {exc}'})
         if query.path != '/api/jobs':
             return self.send_data(404, {'error': 'Không tìm thấy đường dẫn.'})
         if self.headers.get('Transfer-Encoding'):

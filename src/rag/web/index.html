@@ -54,7 +54,64 @@
 
       <div class="banner" id="banner" role="status" hidden></div>
 
+      <div class="debug-mode-bar" id="debug-mode-bar" hidden>
+        <div class="debug-bar-left">
+          <span class="debug-pill">CHẾ ĐỘ DEBUG · /debug</span>
+          <span class="debug-runtime-label" id="debug-runtime-label">Bảng điều khiển Thực nghiệm AI, Hybrid RAG &amp; Nhật ký Giao tiếp Mô hình</span>
+        </div>
+        <div class="debug-bar-actions">
+          <button class="debug-btn" id="debug-run-eval" type="button">Chạy đo lường trực tiếp</button>
+          <a class="debug-exit-link" id="debug-exit-link" href="/">← Giao diện chuẩn (/)</a>
+        </div>
+      </div>
+
       <section class="workspace" id="workspace">
+        <section class="debug-console" id="debug-console" aria-label="Bảng điều khiển Debug AI và Hybrid RAG" hidden>
+          <div class="debug-tabs" role="tablist">
+            <button class="debug-tab active" data-tab="eval" type="button" role="tab" aria-selected="true">
+              1. Thực nghiệm Định lượng AI &amp; Hybrid RAG
+            </button>
+            <button class="debug-tab" data-tab="playground" type="button" role="tab" aria-selected="false">
+              2. Thử nghiệm Truy xuất Hybrid RRF Trực tiếp
+            </button>
+            <button class="debug-tab" data-tab="comms" type="button" role="tab" aria-selected="false">
+              3. Giao tiếp AI (Prompt &amp; Phản hồi Nguyên văn)
+            </button>
+          </div>
+
+          <div class="debug-tab-body" id="debug-panel-eval">
+            <div class="debug-loading" id="debug-eval-content">Đang nạp số liệu thực nghiệm định lượng AI &amp; Hybrid RAG từ máy chủ...</div>
+          </div>
+
+          <div class="debug-tab-body" id="debug-panel-playground" hidden>
+            <div class="debug-play-intro">
+              Nhập câu truy vấn kỹ thuật bảo mật CSDL (hoặc chọn kịch bản mẫu) để kiểm tra trực tiếp cách <strong>Hybrid Search (Dense E5 + Heading BM25 + RRF + Query Expansion)</strong> hợp nhất thứ hạng trên <strong>25 tài liệu OWASP Cheat Sheet Series CSDL</strong>:
+            </div>
+            <div class="debug-presets" id="debug-presets">
+              <button type="button" class="preset-chip" data-q="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" data-cwe="CWE-89" data-stack="PHP / MySQL">CWE-89 · PHP PDO MySQL</button>
+              <button type="button" class="preset-chip" data-q="MySQL root empty default password authentication hardening" data-cwe="CWE-1393" data-stack="MySQL 8.0">CWE-1393 · MySQL Root Rỗng</button>
+              <button type="button" class="preset-chip" data-q="database connection cleartext TLS encryption in transit" data-cwe="CWE-319" data-stack="PostgreSQL / MySQL">CWE-319 · Mã hóa TLS CSDL</button>
+              <button type="button" class="preset-chip" data-q="stored procedure dynamic SQL EXECUTE sp_executesql parameterization" data-cwe="CWE-89" data-stack="SQL Server">CWE-89 · Stored Procedure</button>
+            </div>
+            <form class="debug-query-form" id="debug-query-form">
+              <input id="debug-q-input" type="text" maxlength="300" value="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" placeholder="Nhập từ khóa kỹ thuật / API / cấu hình CSDL...">
+              <input id="debug-cwe-input" type="text" maxlength="30" value="CWE-89" placeholder="Mã CWE (VD: CWE-89)">
+              <input id="debug-stack-input" type="text" maxlength="60" value="PHP / MySQL" placeholder="Ngăn xếp (VD: PHP / MySQL)">
+              <button class="debug-btn primary" type="submit">Truy xuất thử</button>
+            </form>
+            <div id="debug-query-results" class="debug-query-results"></div>
+          </div>
+
+          <div class="debug-tab-body" id="debug-panel-comms" hidden>
+            <div class="debug-comms-toolbar">
+              <label for="debug-job-select">Phiên phân tích:</label>
+              <select id="debug-job-select"></select>
+              <button class="debug-btn" id="debug-refresh-trace" type="button">Làm mới nhật ký AI</button>
+            </div>
+            <div id="debug-comms-body"></div>
+          </div>
+        </section>
+
         <div class="empty-state" id="empty-state">
           <div class="eyebrow"><span></span>KIỂM THỬ BẢO MẬT CSDL · CHUẨN OWASP TOP 10:2025 &amp; CHEAT SHEET</div>
           <div class="hero-mark" aria-hidden="true">
@@ -156,7 +213,7 @@
                 <label>Bằng chứng kiểm tra lại (Mục 7.5 &amp; 10.4)
                   <input id="meta-retest_evidence" maxlength="500" placeholder="Để trống nếu chưa thực hiện kiểm tra lại">
                 </label>
-                <label>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm
+                <label class="debug-only" hidden>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm
                   <select id="meta-force_fresh_ai">
                     <option value="" selected>Dùng lại Cache SHA-256 nếu trùng tệp (Nhanh)</option>
                     <option value="1">Luôn gọi trực tiếp Ollama mới (Xem mọi lệnh gửi AI)</option>
