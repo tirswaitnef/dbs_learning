@@ -7,6 +7,8 @@ from pathlib import Path
 from _bootstrap import ROOT
 from rag.parsers import SUPPORTED_FORMATS, load_findings
 from rag.report_builder import md_text
+from rag.report_view import cwe_text
+from rag.top10 import finding_cwes
 
 
 if __name__ == "__main__":
@@ -34,10 +36,12 @@ if __name__ == "__main__":
                  "Không có bản ghi không đồng nghĩa hệ thống an toàn. Giữ file gốc để đối chiếu.", "",
                  "| ID | Tên | Loại | Mức độ từ tool | CWE | Số mục bằng chứng |", "|---|---|---|---|---|---|"]
         for f in findings:
-            lines.append(f"| {md_text(f.id)} | {md_text(f.title)} | {md_text(f.kind)} | {md_text(f.severity)} | {md_text(f.cwe)} | {len(f.evidence)} |")
+            lines.append(f"| {md_text(f.id)} | {md_text(f.title)} | {md_text(f.kind)} | {md_text(f.severity)} | {md_text(cwe_text(asdict(f)))} | {len(f.evidence)} |")
         lines += ["", "## Trường cần kiểm tra", "",
                   f"- Thiếu bằng chứng đính kèm: {sum(not f.evidence for f in findings)}",
-                  f"- CWE chưa xác định/không duy nhất: {sum(f.cwe == 'unknown' for f in findings)}",
+                  f"- Không có CWE: {sum(not finding_cwes(f) for f in findings)}",
+                  f"- Công cụ gắn nhiều CWE (chỉ được gợi ý khi mọi CWE cùng một nhóm Top 10): {sum(len(finding_cwes(f)) > 1 for f in findings)}",
+                  f"- CWE gán theo quy tắc của dự án vì công cụ không ghi CWE: {sum(bool(f.details.get('cwe_mapping')) for f in findings)}",
                   f"- Quan sát, không tự xem là lỗ hổng: {sum(f.kind == 'observation' for f in findings)}",
                   "- Số mục bằng chứng chỉ là số trường đã lấy được, không đo độ mạnh bằng chứng.",
                   "- details giữ confidence, payload/request và lời khuyên của tool nếu có; chúng không tự trở thành nguồn OWASP.",

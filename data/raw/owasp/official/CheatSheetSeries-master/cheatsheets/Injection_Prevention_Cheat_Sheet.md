@@ -170,7 +170,7 @@ LDAP distinguished names and LDAP search filters require different escaping rule
 
 #### XPath Injection
 
-TODO
+See the [XPath Injection Prevention Cheat Sheet](XPath_Injection_Prevention_Cheat_Sheet.md) for defenses and a parameterized query example.
 
 ### Scripting languages
 
@@ -216,14 +216,14 @@ If it is considered unavoidable the call to a system command incorporated with u
 ##### Incorrect Usage
 
 ```java
-ProcessBuilder b = new ProcessBuilder("C:\DoStuff.exe -arg1 -arg2");
+ProcessBuilder b = new ProcessBuilder("C:\\DoStuff.exe -arg1 -arg2");
 ```
 
-In this example, the command together with the arguments are passed as a one string, making easy to manipulate that expression and inject malicious strings.
+This creates a builder with one command-list element, not a program followed by two arguments. [`ProcessBuilder`](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ProcessBuilder.html) represents the executable and its arguments as a list. The snippet does not start a process or demonstrate shell-command injection.
 
 ##### Correct Usage
 
-Here is an example that starts a process with a modified working directory. The command and each of the arguments are passed separately. This make it easy to validated each term and reduces the risk to insert malicious strings.
+This illustrative example starts a process with a modified working directory and passes the executable and each argument separately. Keep the executable and working directory trusted, and validate any untrusted arguments for the invoked program. Argument separation does not replace [argument validation](OS_Command_Injection_Defense_Cheat_Sheet.md#layer-2).
 
 ```java
 ProcessBuilder pb = new ProcessBuilder("TrustedCmd", "TrustedArg1", "TrustedArg2");
@@ -259,3 +259,9 @@ If a parameterized API is not available, you should carefully escape special cha
 [LDAP Injection Prevention Cheat Sheet](LDAP_Injection_Prevention_Cheat_Sheet.md)
 
 [Injection Prevention Cheat Sheet in Java](Injection_Prevention_in_Java_Cheat_Sheet.md)
+
+## References
+
+- [RFC 4514: LDAP Distinguished Names](https://datatracker.ietf.org/doc/html/rfc4514)
+- [RFC 4515: LDAP Search Filters](https://datatracker.ietf.org/doc/html/rfc4515)
+- [Oracle JDBC: Using Prepared Statements](https://docs.oracle.com/javase/tutorial/jdbc/basics/prepared.html)

@@ -1,0 +1,310 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-10-15",
+  "policy": "Hand-written CWE rules for scanner checks whose output carries no CWE. Keyed only by stable tool identifiers: Nessus pluginID, or Nmap NSE script id plus a fixed output pattern taken from the script source. Never matched against titles or free-text descriptions. Applied only when the input itself supplies no CWE; a CWE supplied by the tool always wins. Every finding that receives a CWE from this file records the rule id in details.scanner_rule.",
+  "rules": [
+    {
+      "id": "nessus-10481",
+      "tool": "nessus",
+      "plugin_id": "10481",
+      "plugin_name": "MySQL Unpassworded Account Check",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1393",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Nessus đăng nhập được MySQL bằng tài khoản không có mật khẩu. Tài khoản root/anonymous không mật khẩu là trạng thái mặc định khi cài MySQL (Tenable dẫn tới tài liệu default privileges của MySQL), nên chọn CWE-1393 Use of Default Password. A07:2025 nêu rõ việc cho phép mật khẩu mặc định.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/10481",
+        "https://dev.mysql.com/doc/refman/8.0/en/default-privileges.html",
+        "https://cwe.mitre.org/data/definitions/1393.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-10483",
+      "tool": "nessus",
+      "plugin_id": "10483",
+      "plugin_name": "PostgreSQL Default Unpassworded Account",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1393",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Nessus đăng nhập được PostgreSQL bằng tài khoản mặc định không có mật khẩu: đúng mô tả của CWE-1393 Use of Default Password.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/10483",
+        "https://cwe.mitre.org/data/definitions/1393.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-10673",
+      "tool": "nessus",
+      "plugin_id": "10673",
+      "plugin_name": "Microsoft SQL Server sa Account Default Blank Password",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1393",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Tài khoản mặc định 'sa' của SQL Server được bật và không có mật khẩu: đúng mô tả của CWE-1393 Use of Default Password.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/10673",
+        "https://cwe.mitre.org/data/definitions/1393.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-81777",
+      "tool": "nessus",
+      "plugin_id": "81777",
+      "plugin_name": "MongoDB Service Without Authentication Detection",
+      "plugin_family": "Databases",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md", "NoSQL_Security_Cheat_Sheet.md"],
+      "rationale_vi": "MongoDB cho phép kết nối không cần xác thực: CWE-306 Missing Authentication for Critical Function. Lưu ý của Tenable: với MongoDB 5.0 trở lên cần tự xác nhận lại vì opcode dùng để kiểm tra đã bị loại bỏ.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/81777",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-100634",
+      "tool": "nessus",
+      "plugin_id": "100634",
+      "plugin_name": "Redis Server Unprotected by Password Authentication",
+      "plugin_family": "Misc.",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Redis trả lời lệnh INFO khi chưa xác thực, tức không yêu cầu mật khẩu: CWE-306 Missing Authentication for Critical Function. Plugin thuộc họ Misc. của Nessus, không thuộc họ Databases.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/100634",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-57558",
+      "tool": "nessus",
+      "plugin_id": "57558",
+      "plugin_name": "MySQL Unsupported Version Detection",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1104",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Phiên bản MySQL đã hết hỗ trợ, không còn bản vá bảo mật: CWE-1104 Use of Unmaintained Third Party Components. A03:2025 ghi rõ phần mềm 'unsupported, or out of date' gồm cả hệ quản trị CSDL (DBMS).",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/57558",
+        "https://cwe.mitre.org/data/definitions/1104.html",
+        "https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-63347",
+      "tool": "nessus",
+      "plugin_id": "63347",
+      "plugin_name": "PostgreSQL Unsupported Version Detection",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1104",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Phiên bản PostgreSQL đã hết hỗ trợ: CWE-1104. A03:2025 tính cả DBMS hết hỗ trợ.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/63347",
+        "https://cwe.mitre.org/data/definitions/1104.html",
+        "https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-55786",
+      "tool": "nessus",
+      "plugin_id": "55786",
+      "plugin_name": "Oracle Database Unsupported Version Detection",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1104",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Phiên bản Oracle Database đã hết hỗ trợ: CWE-1104. A03:2025 tính cả DBMS hết hỗ trợ.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/55786",
+        "https://cwe.mitre.org/data/definitions/1104.html",
+        "https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-64784",
+      "tool": "nessus",
+      "plugin_id": "64784",
+      "plugin_name": "Microsoft SQL Server Unsupported Version Detection",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1104",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Phiên bản SQL Server đã hết hỗ trợ (kiểm tra cục bộ, cần thông tin đăng nhập): CWE-1104. A03:2025 tính cả DBMS hết hỗ trợ.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/64784",
+        "https://cwe.mitre.org/data/definitions/1104.html",
+        "https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/"
+      ]
+    },
+    {
+      "id": "nessus-73756",
+      "tool": "nessus",
+      "plugin_id": "73756",
+      "plugin_name": "Microsoft SQL Server Unsupported Version Detection (remote check)",
+      "plugin_family": "Databases",
+      "cwe": "CWE-1104",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Phiên bản SQL Server đã hết hỗ trợ (kiểm tra từ xa): CWE-1104. A03:2025 tính cả DBMS hết hỗ trợ.",
+      "sources": [
+        "https://www.tenable.com/plugins/nessus/73756",
+        "https://cwe.mitre.org/data/definitions/1104.html",
+        "https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mysql-empty-password",
+      "tool": "nmap",
+      "script_id": "mysql-empty-password",
+      "output_pattern": "(?m)^\\s*\\S+ account has empty password\\s*$",
+      "title": "MySQL account with empty password",
+      "cwe": "CWE-1393",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Script thử đăng nhập root và anonymous (các tài khoản mặc định của MySQL) với mật khẩu rỗng và chỉ in dòng '<tài khoản> account has empty password' khi đăng nhập thành công: CWE-1393.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mysql-empty-password.html",
+        "https://github.com/nmap/nmap/blob/39915551a492241e9d4e23c9a1bc9a4b58c7f3b2/scripts/mysql-empty-password.nse",
+        "https://cwe.mitre.org/data/definitions/1393.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-ms-sql-empty-password",
+      "tool": "nmap",
+      "script_id": "ms-sql-empty-password",
+      "output_pattern": "(?m)^\\s*sa:<empty> => ",
+      "title": "SQL Server 'sa' account with empty password",
+      "cwe": "CWE-1393",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "Script chỉ thử tài khoản mặc định 'sa' với mật khẩu rỗng. Dòng 'sa:<empty> => ...' chỉ được in khi mật khẩu rỗng được chấp nhận (đăng nhập thành công, hoặc mật khẩu hết hạn/phải đổi): CWE-1393.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/ms-sql-empty-password.html",
+        "https://github.com/nmap/nmap/blob/c3d54f1faca48414798ba0ebb642f7491e545046/scripts/ms-sql-empty-password.nse",
+        "https://cwe.mitre.org/data/definitions/1393.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mysql-brute",
+      "tool": "nmap",
+      "script_id": "mysql-brute",
+      "output_pattern": "Valid credentials",
+      "title": "MySQL weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mysql-brute đăng nhập thành công bằng từ điển mật khẩu yếu/phổ biến và in khối 'Valid credentials': CWE-521 Weak Password Requirements.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mysql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-pgsql-brute",
+      "tool": "nmap",
+      "script_id": "pgsql-brute",
+      "output_pattern": "Valid credentials",
+      "title": "PostgreSQL weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE pgsql-brute đăng nhập thành công bằng mật khẩu từ điển yếu và báo 'Valid credentials': CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/pgsql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-ms-sql-brute",
+      "tool": "nmap",
+      "script_id": "ms-sql-brute",
+      "output_pattern": "Valid credentials|Login Success",
+      "title": "SQL Server weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE ms-sql-brute xác nhận đăng nhập thành công bằng mật khẩu yếu/phổ biến: CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/ms-sql-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mongodb-brute",
+      "tool": "nmap",
+      "script_id": "mongodb-brute",
+      "output_pattern": "Valid credentials",
+      "title": "MongoDB weak or guessable credentials",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md", "NoSQL_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mongodb-brute xác nhận đăng nhập MongoDB thành công bằng mật khẩu yếu: CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mongodb-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-redis-brute",
+      "tool": "nmap",
+      "script_id": "redis-brute",
+      "output_pattern": "Valid credentials",
+      "title": "Redis weak or guessable password",
+      "cwe": "CWE-521",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE redis-brute dò trúng mật khẩu AUTH yếu của Redis và in 'Valid credentials': CWE-521.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/redis-brute.html",
+        "https://cwe.mitre.org/data/definitions/521.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mongodb-unauth",
+      "tool": "nmap",
+      "script_id": "mongodb-databases",
+      "output_pattern": "totalSize|databases",
+      "title": "MongoDB database enumeration without authentication",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md", "NoSQL_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mongodb-databases liệt kê danh sách cơ sở dữ liệu trực tiếp qua mạng mà không cần xác thực: CWE-306.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mongodb-databases.html",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-redis-unauth",
+      "tool": "nmap",
+      "script_id": "redis-info",
+      "output_pattern": "Version:|redis_version",
+      "title": "Redis server exposed without authentication",
+      "cwe": "CWE-306",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE redis-info thực thi lệnh INFO thành công mà không cần xác thực mật khẩu: CWE-306.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/redis-info.html",
+        "https://cwe.mitre.org/data/definitions/306.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    },
+    {
+      "id": "nmap-mysql-auth-bypass",
+      "tool": "nmap",
+      "script_id": "mysql-vuln-cve2012-2122",
+      "output_pattern": "VULNERABLE:",
+      "title": "MySQL/MariaDB authentication bypass (CVE-2012-2122)",
+      "cwe": "CWE-287",
+      "cheatsheets": ["Database_Security_Cheat_Sheet.md"],
+      "rationale_vi": "NSE mysql-vuln-cve2012-2122 xác nhận lỗi vượt xác thực đăng nhập trên MySQL/MariaDB ('State: VULNERABLE'): CWE-287.",
+      "sources": [
+        "https://nmap.org/nsedoc/scripts/mysql-vuln-cve2012-2122.html",
+        "https://cwe.mitre.org/data/definitions/287.html",
+        "https://top10.owasp.org/2025/A07_2025-Authentication_Failures/"
+      ]
+    }
+  ]
+}

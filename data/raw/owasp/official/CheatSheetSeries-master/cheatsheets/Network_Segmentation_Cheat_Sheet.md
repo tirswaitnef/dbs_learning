@@ -45,9 +45,9 @@ Further, the schemes do not contain firewall icons so as not to overload the sch
 
 By default, developed information systems should consist of at least three components (**security zones**):
 
-1. [FRONTEND](Network_Segmentation_Cheat_Sheet.md#FRONTEND);
-2. [MIDDLEWARE](Network_Segmentation_Cheat_Sheet.md#MIDDLEWARE);
-3. [BACKEND](Network_Segmentation_Cheat_Sheet.md#BACKEND).
+1. [FRONTEND](Network_Segmentation_Cheat_Sheet.md#frontend);
+2. [MIDDLEWARE](Network_Segmentation_Cheat_Sheet.md#middleware);
+3. [BACKEND](Network_Segmentation_Cheat_Sheet.md#backend).
 
 ### FRONTEND
 
@@ -164,3 +164,8 @@ Suppose a company uses Zabbix as an IT monitoring system. In this case, the poli
 ## Useful links
 
 - Full network segmentation cheat sheet by [sergiomarotco](https://github.com/sergiomarotco): [link](https://github.com/sergiomarotco/Network-segmentation-cheat-sheet).
+
+## References
+
+- [NIST SP 800-41 Rev. 1: Guidelines on Firewalls and Firewall Policy](https://csrc.nist.gov/pubs/sp/800/41/r1/final)
+- [NIST SP 800-215: Guide to a Secure Enterprise Network Landscape](https://csrc.nist.gov/pubs/sp/800/215/final)

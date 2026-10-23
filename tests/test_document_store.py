@@ -143,6 +143,53 @@ class DocumentStoreTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 encoder.embed_query("")
 
+    def test_oversized_subword_chunks_and_queries_split_without_truncation(self):
+        class SubwordFakeModel:
+            max_seq_length = 512
+            def __init__(self, name, **kwargs):
+                pass
+            def tokenizer(self, text, **kwargs):
+                # 1 char = 1 token + prefix tokens -> every 800-char chunk exceeds 512 tokens.
+                return {"input_ids": list(range(len(text)))}
+            def encode(self, inputs, **kwargs):
+                for item in inputs:
+                    assert len(item) <= self.max_seq_length
+                return np.array([[1.0, float(i + 1), 0.5] for i, _ in enumerate(inputs)], dtype=np.float32)
+
+        dense_xss = "\n".join(f"- `&#00{i};` `<input/onmouseover=alert({i})>`" for i in range(45))
+        (self.raw / "XSS_Filter_Evasion_Cheat_Sheet.md").write_text(dense_xss, encoding="utf-8")
+        fake_module = types.ModuleType("sentence_transformers")
+        fake_module.SentenceTransformer = SubwordFakeModel
+        with patch.dict(sys.modules, {"sentence_transformers": fake_module}):
+            store = ingest_documents(self.raw, self.output, self.settings)
+            xss_chunks = [c for c in store.metadata["chunks"] if c["source"] == "XSS_Filter_Evasion_Cheat_Sheet.md"]
+            self.assertGreater(len(xss_chunks), 2)
+            covered = [False] * len(dense_xss)
+            for idx, c in enumerate(xss_chunks):
+                self.assertEqual(c["index"], idx)
+                self.assertEqual(c["text"], dense_xss[c["start"]:c["end"]])
+                self.assertLessEqual(len("passage: " + c["text"]), 512)
+                for pos in range(c["start"], c["end"]):
+                    covered[pos] = True
+            self.assertTrue(all(covered))
+            hits = retrieve_documents("SELECT * FROM users WHERE " + ("x = 1 AND " * 90),
+                                      self.output, self.raw, self.settings, top_k=2)
+            self.assertEqual(len(hits), 2)
+
+    def test_e5_falls_back_to_cached_local_files_when_offline(self):
+        attempts = []
+        class OfflineThenCachedModel:
+            max_seq_length = 512
+            def __init__(self, name, **kwargs):
+                attempts.append(kwargs["local_files_only"])
+                if not kwargs["local_files_only"]:
+                    raise OSError("Hugging Face Hub unreachable")
+        fake_module = types.ModuleType("sentence_transformers")
+        fake_module.SentenceTransformer = OfflineThenCachedModel
+        with patch.dict(sys.modules, {"sentence_transformers": fake_module}):
+            E5Embedding("intfloat/multilingual-e5-small")
+        self.assertEqual(attempts, [False, True])
+
 
 if __name__ == "__main__":
     unittest.main()

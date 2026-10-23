@@ -1,11 +1,13 @@
 """Explicit format adapters. Scanner observations are not independent verification."""
 import base64
+import html
 import json
 import re
 from urllib.parse import urljoin
 from xml.etree import ElementTree as ET
 from xml.parsers import expat
 
+from ..scanner_rules import nessus_rule, nmap_rule, rule_details
 from ..schemas import Finding
 from . import normalize_cwe
 
@@ -83,6 +85,11 @@ def decode_message(node):
 
 def parse_burp(content, source):
     root = safe_xml(content, "issues")
+    burp_meta = {}
+    if root.get("burpVersion"):
+        burp_meta["tool_version"] = root.get("burpVersion").strip()
+    if root.get("exportTime"):
+        burp_meta["scan_start"] = root.get("exportTime").strip()
     findings = []
     for i, issue in enumerate(root.findall("issue")):
         name = text(issue, "name")
@@ -108,6 +115,7 @@ def parse_burp(content, source):
                                          "rule_id": text(issue, "type"), "serial_number": text(issue, "serialNumber"),
                                          "insertion_point": text(issue, "location"), "cwes": cw,
                                          "scanner_solution": text(issue, "remediationDetail") or text(issue, "remediationBackground"),
+                                         **({"scan_telemetry": burp_meta} if burp_meta else {}),
                                          "http_messages": messages, "raw_xml": ET.tostring(issue, encoding="unicode")}))
     return findings
 
@@ -135,6 +143,13 @@ def parse_nuclei(content, source):
         if not isinstance(extracted, list):
             raise ValueError("Nuclei extracted-results must be an array")
         evidence.extend("extracted-result: " + str(value) for value in extracted if str(value).strip())
+        nuc_tel = {}
+        if row.get("timestamp"):
+            nuc_tel["scan_start"] = str(row["timestamp"]).strip()
+        if row.get("type"):
+            nuc_tel["protocol"] = str(row["type"]).strip()
+        if row.get("matcher-name"):
+            nuc_tel["matcher"] = str(row["matcher-name"]).strip()
         findings.append(Finding(f"NUCLEI-L{line_number}", info.get("name") or str(row["template-id"]),
                                 primary_cwe(cw), info.get("severity") or "unknown",
                                 row.get("matched-at") or row.get("url") or row.get("host") or "unknown",
@@ -142,7 +157,9 @@ def parse_nuclei(content, source):
                                 details={"rule_id": row["template-id"], "cwes": cw,
                                          "cves": classification.get("cve-id", []),
                                          "cvss_score": classification.get("cvss-score"),
+                                         "cvss_vector": classification.get("cvss-metrics"),
                                          "scanner_solution": info.get("remediation", ""),
+                                         **({"scan_telemetry": nuc_tel} if nuc_tel else {}),
                                          "raw_result": row}))
     return findings
 
@@ -155,29 +172,114 @@ def parse_nessus(content, source):
     findings = []
     severity = {"0": "informational", "1": "low", "2": "medium", "3": "high", "4": "critical"}
     for hi, host in enumerate(report.findall("ReportHost")):
+        host_tel = {}
+        for tag_node in host.findall("HostProperties/tag"):
+            tname = tag_node.get("name", "")
+            if tname == "HOST_START" and tag_node.text:
+                host_tel["scan_start"] = tag_node.text.strip()
+            elif tname == "HOST_END" and tag_node.text:
+                host_tel["scan_end"] = tag_node.text.strip()
+            elif tname == "operating-system" and tag_node.text:
+                host_tel["os_banner"] = tag_node.text.strip()
         for ri, item in enumerate(host.findall("ReportItem")):
             cw = cwes([n.text or "" for n in item.findall("cwe")])
             outputs = ["".join(n.itertext()).strip() for n in item.findall("plugin_output")]
+            plugin_id = item.get("pluginID", "")
+            # A CWE supplied by Nessus always wins; the project rule only fills a missing one.
+            rule = None if cw else nessus_rule(plugin_id)
+            item_tel = {**host_tel}
+            if item.get("pluginFamily"):
+                item_tel["plugin_family"] = item.get("pluginFamily").strip()
+            details = {"rule_id": plugin_id, "cwes": cw,
+                       "cves": [n.text for n in item.findall("cve") if n.text],
+                       "cvss_score": text(item, "cvss3_base_score") or text(item, "cvss_base_score"),
+                       "cvss_vector": text(item, "cvss3_vector") or text(item, "cvss_vector"),
+                       "scanner_solution": text(item, "solution"),
+                       "description": text(item, "description"),
+                       **({"scan_telemetry": item_tel} if item_tel else {}),
+                       "raw_xml": ET.tostring(item, encoding="unicode")}
+            if rule:
+                details.update(rule_details(rule, f"Nessus pluginID {plugin_id}"))
             findings.append(Finding(f"NESSUS-{hi}-{ri}", item.get("pluginName") or text(item, "plugin_name") or "Unnamed plugin",
-                                    primary_cwe(cw), severity.get(item.get("severity"), "unknown"),
+                                    rule["cwe"] if rule else primary_cwe(cw), severity.get(item.get("severity"), "unknown"),
                                     f"{host.get('name', 'unknown')}:{item.get('port', '0')}/{item.get('protocol', 'unknown')}",
                                     tuple(value for value in outputs if value), "Nessus",
                                     f"{source}#/Report/ReportHost[{hi}]/ReportItem[{ri}]",
                                     kind="observation" if item.get("severity") == "0" else "scanner_alert",
-                                    details={"rule_id": item.get("pluginID", ""), "cwes": cw,
-                                             "cves": [n.text for n in item.findall("cve") if n.text],
-                                             "cvss_score": text(item, "cvss3_base_score") or text(item, "cvss_base_score"),
-                                             "scanner_solution": text(item, "solution"),
-                                             "description": text(item, "description"),
-                                             "raw_xml": ET.tostring(item, encoding="unicode")}))
+                                    details=details))
     return findings
+
+
+def nse_finding(rule, script, finding_id, location, source_ref, extra):
+    """Finding for an NSE script whose output matches a project rule. Nmap gives no severity."""
+    output = _nmap_script_full_output(script).strip()
+    return Finding(finding_id, f"{rule['title']} (Nmap {rule['script_id']})", rule["cwe"], "unknown", location,
+                   (f"NSE {rule['script_id']}: {output}",), "Nmap", source_ref,
+                   details={"rule_id": rule["script_id"], **extra,
+                            **rule_details(rule, f"Nmap NSE {rule['script_id']} output"),
+                            "evidence_type": "NSE script output reported by Nmap; not independently verified",
+                            "raw_xml": ET.tostring(script, encoding="unicode")})
+
+
+def _sanitize_cli(text_value):
+    """Redact complete local home paths, including XML-escaped and doubled Windows separators."""
+    s = html.unescape(str(text_value or ""))
+    # Quoted Windows paths may contain spaces; keep quote marks but hide the entire path.
+    s = re.sub(
+        r'(?i)(["\'])([A-Z]:\\+Users\\+[^"\']+)(["\'])',
+        lambda m: m.group(1) + '[REDACTED_LOCAL_PATH]' + m.group(3),
+        s,
+    )
+    s = re.sub(
+        r'(?i)(?<![\w:])([A-Z]:\\+Users\\+[^\\/\s"\'<>]+(?:\\+[^\\/\s"\'<>]+)*)',
+        '[REDACTED_LOCAL_PATH]',
+        s,
+    )
+    s = re.sub(
+        r'(?i)(?<![\w/])/(?:home|Users)/[^/\s"\'<>]+(?:/[^/\s"\'<>]+)*',
+        '/[REDACTED_LOCAL_PATH]',
+        s,
+    )
+    return s
+
+
+def _nmap_script_full_output(script_el):
+    out = script_el.get("output", "") or ""
+    if out.strip():
+        return out
+    parts = []
+    for el in script_el.iter():
+        if el.tag == "elem" and el.text and el.text.strip():
+            key = el.get("key")
+            parts.append(f"{key}: {el.text.strip()}" if key else el.text.strip())
+    return "\n".join(parts)
 
 
 def parse_nmap(content, source):
     root = safe_xml(content, "nmaprun")
+    nmap_meta = {}
+    if root.get("version"):
+        nmap_meta["tool_version"] = root.get("version").strip()
+    if root.get("startstr"):
+        nmap_meta["scan_start"] = root.get("startstr").strip()
+    finished_el = root.find("runstats/finished")
+    if finished_el is not None and finished_el.get("timestr"):
+        nmap_meta["scan_end"] = finished_el.get("timestr").strip()
+    if root.get("args"):
+        raw_args = root.get("args").strip()
+        nmap_meta["cli_hint"] = _sanitize_cli(raw_args)[:300]
+        m_scr = re.search(r'--script(?:=|\s+)(?:"([^"]+)"|\'([^\']+)\'|([^\s]+))', raw_args)
+        if m_scr:
+            req_list = [x.strip() for x in (m_scr.group(1) or m_scr.group(2) or m_scr.group(3) or "").split(",") if x.strip()]
+            if req_list:
+                nmap_meta["requested_scripts"] = req_list
     findings = []
     for hi, host in enumerate(root.findall("host")):
         address = next((a.get("addr") for a in host.findall("address") if a.get("addrtype") in {"ipv4", "ipv6"}), "unknown")
+        host_err_scripts = [
+            hs.get("id") for hs in host.findall("hostscript/script")
+            if hs.get("id") and _nmap_script_full_output(hs).strip().upper().startswith("ERROR:")
+        ]
         for pi, port in enumerate(host.findall("ports/port")):
             state_node, service = port.find("state"), port.find("service")
             state = state_node.get("state", "unknown") if state_node is not None else "unknown"
@@ -185,27 +287,285 @@ def parse_nmap(content, source):
                 continue
             service_details = dict(service.attrib) if service is not None else {}
             observation = f"port_state={state}; service={json.dumps(service_details, ensure_ascii=False)}"
-            scripts = [{"id": s.get("id"), "output": s.get("output", ""),
-                        "raw_xml": ET.tostring(s, encoding="unicode")} for s in port.findall("script")]
+            scripts = []
+            port_dbs = []
+            port_users = []
+            err_scripts = list(host_err_scripts)
+            for s in port.findall("script"):
+                sid = s.get("id")
+                sout = _nmap_script_full_output(s)
+                scripts.append({"id": sid, "output": sout, "raw_xml": ET.tostring(s, encoding="unicode")})
+                if sid and sout.strip().upper().startswith("ERROR:"):
+                    if sid not in err_scripts:
+                        err_scripts.append(sid)
+                elif sid == "mysql-databases" and sout:
+                    port_dbs.extend([ln.strip() for ln in sout.splitlines() if ln.strip() and not ln.strip().lower().startswith("error")])
+                elif sid == "mysql-users" and sout:
+                    port_users.extend([ln.strip() for ln in sout.splitlines() if ln.strip() and not ln.strip().lower().startswith("error")])
+            port_meta = dict(nmap_meta)
+            if err_scripts:
+                port_meta["nse_script_errors"] = err_scripts
+            if port_dbs:
+                port_meta["databases"] = port_dbs[:30]
+            if port_users:
+                port_meta["current_user"] = ", ".join(port_users[:8])
+            location = f"{address}:{port.get('portid')}/{port.get('protocol')}"
+            obs_details = {"state": state, "service": service_details, "scripts": scripts,
+                           **({"scan_telemetry": port_meta} if port_meta else {}),
+                           "raw_xml": ET.tostring(port, encoding="unicode")}
+            # Error-only NSE rows are limitations, not vulnerability evidence; preserve them in telemetry for Section 5.
+            script_evidence = tuple(dict.fromkeys(
+                "NSE: " + s["output"] for s in scripts
+                if s["output"] and not s["output"].strip().upper().startswith("ERROR:")
+            ))
             findings.append(Finding(f"NMAP-{hi}-{pi}", f"Service observation: {service_details.get('name', 'unknown')}",
-                                    "unknown", "informational", f"{address}:{port.get('portid')}/{port.get('protocol')}",
-                                    (observation,) + tuple("NSE: " + s["output"] for s in scripts if s["output"]),
+                                    "unknown", "informational", location,
+                                    (observation,) + script_evidence,
                                     "Nmap", f"{source}#/host[{hi}]/ports/port[{pi}]", kind="observation",
-                                    details={"state": state, "service": service_details, "scripts": scripts,
-                                             "raw_xml": ET.tostring(port, encoding="unicode")}))
+                                    details=obs_details))
+            # The port record stays an observation; a script result that matches a rule is a finding of its own.
+            for si, script in enumerate(port.findall("script")):
+                sout = _nmap_script_full_output(script)
+                rule = nmap_rule(script.get("id"), sout)
+                if rule:
+                    extra = {"state": state, "service": service_details,
+                             **({"scan_telemetry": port_meta} if port_meta else {})}
+                    findings.append(nse_finding(rule, script, f"NMAP-{hi}-{pi}-S{si}", location,
+                                                f"{source}#/host[{hi}]/ports/port[{pi}]/script[{si}]",
+                                                extra))
         for si, script in enumerate(host.findall("hostscript/script")):
             output = script.get("output", "")
+            ref = f"{source}#/host[{hi}]/hostscript/script[{si}]"
+            extra_meta = {"scan_telemetry": nmap_meta} if nmap_meta else {}
+            rule = nmap_rule(script.get("id"), output)
+            if rule:
+                findings.append(nse_finding(rule, script, f"NMAP-H{hi}-S{si}", address, ref, extra_meta))
+                continue
             findings.append(Finding(f"NMAP-H{hi}-S{si}", f"NSE observation: {script.get('id', 'unknown')}",
                                     "unknown", "unknown", address, (output,) if output else (), "Nmap",
-                                    f"{source}#/host[{hi}]/hostscript/script[{si}]", kind="observation",
-                                    details={"raw_xml": ET.tostring(script, encoding="unicode")}))
+                                    ref, kind="observation",
+                                    details={**extra_meta, "raw_xml": ET.tostring(script, encoding="unicode")}))
     return findings
 
 
+def _sqlmap_telemetry(clean):
+    telemetry = {}
+    ver = re.search(r"\{(\d+\.\d+[A-Za-z0-9.#_-]*)\}", clean)
+    if ver:
+        telemetry["tool_version"] = ver.group(1)
+    start_m = re.search(r"\[\*\]\s*starting\s*@\s*([0-9:]+)\s*/(\d{4}-\d{2}-\d{2})/", clean)
+    end_m = re.search(r"\[\*\]\s*ending\s*@\s*([0-9:]+)\s*/(\d{4}-\d{2}-\d{2})/", clean)
+    if start_m:
+        telemetry["scan_start"] = f"{start_m.group(2)} {start_m.group(1)}"
+    if end_m:
+        telemetry["scan_end"] = f"{end_m.group(2)} {end_m.group(1)}"
+    req_m = re.search(r"with a total of (\d+) HTTP\(s\) requests", clean, re.I)
+    if req_m:
+        telemetry["request_count"] = int(req_m.group(1))
+    lvl_m = re.search(r"level \((\d+)\) and risk \((\d+)\) values\?\s*\[Y/n\]\s*([YyNn])", clean)
+    if lvl_m:
+        telemetry["level"] = int(lvl_m.group(1))
+        telemetry["risk"] = int(lvl_m.group(2))
+        telemetry["extended_dbms_tests"] = lvl_m.group(3).upper() == "Y"
+    if re.search(r"checking if the target is protected by some kind of WAF/IPS", clean, re.I):
+        waf_warn = re.search(r"(?im)^.*\[(?:WARNING|CRITICAL)\].*\b(?:WAF|IPS)\b.*$", clean)
+        telemetry["waf_status"] = waf_warn.group(0).strip() if waf_warn else "checked; no WAF/IPS warning reported"
+    non_dyn = [f"{m.group(1)} '{m.group(2)}'" for m in re.finditer(
+        r"(?im)\[WARNING\]\s+(\S+)\s+parameter\s+'([^']+)'\s+does not appear to be dynamic", clean)]
+    if non_dyn:
+        telemetry["non_dynamic_parameters"] = non_dyn
+    if re.search(r"reflective value\(s\) found and filtering out", clean, re.I):
+        telemetry["reflection_filtered"] = True
+    not_str = re.search(r'\(with --not-string="([^"]+)"\)', clean)
+    if not_str:
+        telemetry["not_string"] = not_str.group(1)
+    if re.search(r"is vulnerable\. Do you want to keep testing the others \(if any\)\?\s*\[y/N\]\s*N", clean):
+        telemetry["stopped_after_first_vulnerable_param"] = True
+    elif re.search(r"is vulnerable\. Do you want to keep testing the others \(if any\)\?\s*\[y/N\]\s*Y", clean, re.I):
+        telemetry["tested_all_parameters"] = True
+    os_m = re.search(r"(?im)^\s*web server operating system:\s*(.+?)\s*$", clean)
+    if os_m:
+        telemetry["os_banner"] = os_m.group(1).strip()
+    tech_m = re.search(r"(?im)^\s*web application technology:\s*(.+?)\s*$", clean)
+    if tech_m:
+        telemetry["web_tech"] = tech_m.group(1).strip()
+    auth_m = re.search(r"(?im)^\s*(?:#\s*)?Authentication\s+Context:\s*(.+?)\s*$", clean)
+    if auth_m:
+        telemetry["auth_context"] = _sanitize_cli(auth_m.group(1).strip())[:240]
+    scope_m = re.search(r"(?im)^\s*(?:#\s*)?(?:Pentest\s+Scope\s+Rule|Excluded\s+Areas?):\s*(.+?)\s*$", clean)
+    if scope_m:
+        telemetry["scope_rule"] = _sanitize_cli(scope_m.group(1).strip())[:300]
+    cli_m = re.search(r"(?im)^\s*(?:#\s*)?(?:Command|CLI\s+Command):\s*(.+?)\s*$", clean)
+    if cli_m:
+        telemetry["cli_hint"] = _sanitize_cli(cli_m.group(1).strip())[:300]
+        if "level" not in telemetry:
+            cl_lvl = re.search(r"--level[=\s]+(\d+)", telemetry["cli_hint"])
+            if cl_lvl:
+                telemetry["level"] = int(cl_lvl.group(1))
+        if "risk" not in telemetry:
+            cl_rsk = re.search(r"--risk[=\s]+(\d+)", telemetry["cli_hint"])
+            if cl_rsk:
+                telemetry["risk"] = int(cl_rsk.group(1))
+    cu_m = re.search(r"(?im)^\s*current user:\s*['\"]?([^'\"\r\n]+)['\"]?\s*$", clean)
+    if cu_m:
+        telemetry["current_user"] = cu_m.group(1).strip()
+    cdb_m = re.search(r"(?im)^\s*current database:\s*['\"]?([^'\"\r\n]+)['\"]?\s*$", clean)
+    if cdb_m:
+        telemetry["current_db"] = cdb_m.group(1).strip()
+    dba_m = re.search(r"(?im)^\s*current user is DBA:\s*(True|False)\s*$", clean)
+    if dba_m:
+        telemetry["is_dba"] = dba_m.group(1).lower() == "true"
+    dbs_m = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
+    if dbs_m:
+        telemetry["databases"] = [m.group(1).strip() for m in re.finditer(r"^\[\*\]\s+(.+?)\s*$", dbs_m.group(0), re.M)]
+    tables_by_db = {}
+    for tbl_m in re.finditer(
+        r"(?im)^Database:\s*(\S+)\s*\n\[\d+\s+tables?\]\s*\n\+[-+]+\+\n((?:\|[^\n]+\|\n)+)\+[-+]+\+",
+        clean,
+    ):
+        db_name = tbl_m.group(1).strip()
+        tbls = [r.strip(" |\t") for r in tbl_m.group(2).splitlines() if r.strip(" |\t")]
+        if tbls:
+            tables_by_db[db_name] = tbls
+    if tables_by_db:
+        telemetry["tables_by_db"] = tables_by_db
+    return telemetry
+
+
+def _request_targets_param(req_raw, param_name, target_url_str=""):
+    """Check whether raw HTTP request line / body injects into `param_name` rather than leaving baseline untouched."""
+    if not param_name:
+        return True
+    from urllib.parse import parse_qsl, unquote, urlsplit
+    base_vals = {}
+    if target_url_str:
+        base_vals = dict(parse_qsl(urlsplit(target_url_str).query, keep_blank_values=True))
+    first_line = req_raw.splitlines()[0] if req_raw else ""
+    parts = first_line.split()
+    req_target = parts[1] if len(parts) >= 2 else ""
+    body = req_raw.split("\n\n", 1)[1] if "\n\n" in req_raw else ""
+    for raw_part in (urlsplit(req_target).query, body):
+        for k, v in parse_qsl(raw_part, keep_blank_values=True):
+            if k == param_name:
+                if param_name in base_vals:
+                    return v != base_vals[param_name]
+                decoded = unquote(v)
+                return bool(re.search(r"['\"()=]|--|/\*|\b(?:SELECT|UNION|SLEEP|AND|OR|EXTRACTVALUE)\b", decoded, re.I))
+    return False
+
+
+def _sqlmap_http_traffic(clean, vuln_param="", target_url_str=""):
+    """Extract raw wire-level HTTP request/response pairs recorded via sqlmap -t traffic capture."""
+    pattern = re.compile(
+        r"HTTP request \[#(\d+)\]:\n(.*?)\n+HTTP response \[#\1\] \(([^\n)]*)\):\n(.*?)(?=\nHTTP request \[#\d+\]:|\n[=#]{20,}|\Z)",
+        re.S,
+    )
+    all_msgs = []
+    for m in pattern.finditer(clean):
+        req_id, req_raw, status_info, resp_raw = m.group(1), m.group(2).strip(), m.group(3).strip(), m.group(4).strip()
+        if not req_raw:
+            continue
+        resp_full = resp_raw if resp_raw.startswith("HTTP/") else f"HTTP/1.1 {status_info}\n{resp_raw}"
+        all_msgs.append({
+            "id": f"#{req_id}",
+            "request": req_raw[:2400],
+            "response": resp_full[:2400],
+            "targets_param": _request_targets_param(req_raw, vuln_param, target_url_str),
+        })
+    if len(all_msgs) <= 8:
+        return all_msgs
+    # Full raw `-t traffic.txt` log attached: select 1 representative exchange per technique targeting `vuln_param`.
+    pool = [m for m in all_msgs if m["targets_param"]] or all_msgs
+    picked, used_ids = [], set()
+    tech_matchers = [
+        re.compile(r"\b(?:OR\s+NOT|AND\s+\d+=\d+|OR\s+\d+=\d+|MAKE_SET|RLIKE)\b", re.I),
+        re.compile(r"\b(?:EXTRACTVALUE|UPDATEXML|GTID_SUBSET|FLOOR|JSON_KEYS)\b", re.I),
+        re.compile(r"\b(?:SLEEP|BENCHMARK|PG_SLEEP|WAITFOR\s+DELAY)\s*\(", re.I),
+        re.compile(r"\bUNION\s+(?:ALL\s+)?SELECT\b", re.I),
+    ]
+    for rx in tech_matchers:
+        for item in reversed(pool) if "UNION" in rx.pattern else pool:
+            if item["id"] not in used_ids and rx.search(unquote_safe := re.sub(r"%([0-9A-Fa-f]{2})", lambda h: chr(int(h.group(1), 16)), item["request"])):
+                picked.append(item)
+                used_ids.add(item["id"])
+                break
+    for item in pool:
+        if len(picked) >= 6:
+            break
+        if item["id"] not in used_ids:
+            picked.append(item)
+            used_ids.add(item["id"])
+    return picked[:8]
+
+
+def _sqlmap_cvss_header(clean):
+    """Parse explicit analyst-supplied CVSS v3.x score/vector header when present; never compute or guess."""
+    header = clean[:1500]
+    vec_m = re.search(r"(?im)^\s*(?:#\s*)?(?:Analyst\s+)?CVSS[^:\n]*:.*?((?:CVSS:3\.[01]/)?AV:[NALP]/AC:[LH]/PR:[NLH]/UI:[NR]/S:[UC]/C:[NLH]/I:[NLH]/A:[NLH])\b", header)
+    score_m = re.search(r"(?im)^\s*(?:#\s*)?(?:Analyst\s+)?CVSS[^:\n]*:\s*([0-9]+\.[0-9])\s*(?:\(([A-Za-z]+)\))?", header)
+    if not vec_m and not score_m:
+        return "unknown", "", ""
+    vec = vec_m.group(1).strip() if vec_m else ""
+    if vec and not vec.startswith("CVSS:"):
+        vec = "CVSS:3.1/" + vec
+    score = score_m.group(1).strip() if score_m else ""
+    sev = "unknown"
+    if score_m and score_m.group(2):
+        cand = score_m.group(2).strip().lower()
+        if cand in {"critical", "high", "medium", "low", "informational"}:
+            sev = cand
+    if sev == "unknown" and score:
+        val = float(score)
+        sev = "critical" if val >= 9.0 else "high" if val >= 7.0 else "medium" if val >= 4.0 else "low" if val > 0 else "informational"
+    return sev, score, vec
+
+
 def parse_sqlmap_log(content, source):
-    """Classic sqlmap confirmed injection-point blocks only; no heuristic parsing."""
-    clean = re.sub(r"\x1b\[[0-9;]*m", "", content)
+    """Confirmed sqlmap injection-point blocks, plus explicit heuristic XSS observations when present."""
+    clean = re.sub(r"\x1b\[[0-9;]*m", "", content).replace("\r\n", "\n").replace("\r", "\n")
     blocks = list(re.finditer(r"^Parameter:\s*(.+?)\s*\(([^\n]+)\)\s*$", clean, re.M))
+    # The documented "back-end DBMS:" line states the engine sqlmap fingerprinted.
+    # Kept as a recorded fact; no CWE, severity or target is derived from it.
+    dbms = re.search(r"(?im)^\s*back-end DBMS:\s*(.+?)\s*$", clean) or re.search(r"(?im)^\s*#\s*DBMS:\s*(.+?)\s*$", clean)
+    target_url = re.search(r"(?im)^\s*(?:#\s*)?(?:Target(?:\s+URL)?|URL):\s*(https?://\S+)\s*$", clean)
+    target_url_val = target_url.group(1) if target_url else ""
+    if not target_url_val:
+        req_m = re.search(r"(?m)^(GET|POST|PUT|DELETE|PATCH)\s+(/\S*)\s+HTTP/\d(?:\.\d)?\s*\n(?:[^\n]*\n){0,8}?Host:\s*([^\s\r\n]+)", clean)
+        if req_m:
+            target_url_val = f"http://{req_m.group(3).strip()}{req_m.group(2).strip()}"
+    output_host = re.search(r"sqlmap[/\\]output[/\\]([A-Za-z0-9._-]+)", clean, re.I)
+    telemetry = _sqlmap_telemetry(clean)
+    cvss_sev, cvss_score, cvss_vector = _sqlmap_cvss_header(clean)
+    meta_lines = []
+    for label_re in (
+        r"(?im)^\s*web server operating system:\s*.+$",
+        r"(?im)^\s*web application technology:\s*.+$",
+        r"(?im)^\s*back-end DBMS:\s*.+$",
+        r"(?im)^\s*current user:\s*.+$",
+        r"(?im)^\s*current database:\s*.+$",
+        r"(?im)^\s*current user is DBA:\s*.+$",
+    ):
+        found = re.search(label_re, clean)
+        if found:
+            meta_lines.append(found.group(0).strip())
+    dbs_match = re.search(r"(?im)^available databases \[\d+\]:\n(?:\[\*\] .+\n?)+", clean)
+    if dbs_match:
+        meta_lines.append(dbs_match.group(0).strip())
+    for tbl_block in re.finditer(
+        r"(?im)^Database:\s*\S+\s*\n\[\d+\s+tables?\]\s*\n\+[-+]+\+\n(?:\|[^\n]+\|\n)+\+[-+]+\+",
+        clean,
+    ):
+        meta_lines.append(tbl_block.group(0).strip())
+    has_post_enum = bool(dbs_match or any(k in telemetry for k in ("current_user", "current_db", "is_dba", "tables_by_db")))
+    post_text = "\n\n" + "\n".join(meta_lines) if has_post_enum else ""
+
+    def _location_for(param_name, place_name):
+        if target_url_val:
+            return f"{target_url_val} (parameter={param_name}, {place_name})"
+        if output_host:
+            return f"host={output_host.group(1)} (sqlmap output log); parameter={param_name} ({place_name})"
+        return f"parameter={param_name} ({place_name}); target URL not established by parser"
+
     findings = []
     for i, match in enumerate(blocks):
         end = blocks[i + 1].start() if i + 1 < len(blocks) else len(clean)
@@ -221,14 +581,68 @@ def parse_sqlmap_log(content, source):
         if any(re.search(r"LDAP|XPath|NoSQL|GraphQL", t, re.I) for t in re.findall(r"(?m)^\s+Title:\s*(.+)$", block)):
             raise ValueError("sqlmap-log adapter supports classic SQL injection only")
         line_number = clean[:match.start()].count("\n") + 1
-        findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", "unknown",
-                                f"parameter={match.group(1)} ({match.group(2)}); target URL not established by parser",
-                                (block.rstrip(),), "sqlmap", f"{source}#line={line_number}",
-                                details={"parameter": match.group(1), "place": match.group(2), "techniques": techniques,
+        place = match.group(2).strip()
+        param_name = match.group(1).strip()
+        location = _location_for(param_name, place)
+        http_method = place.upper() if place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
+        raw_http = _sqlmap_http_traffic(clean, vuln_param=param_name, target_url_str=target_url_val)
+        unmatched_ids = [m["id"] for m in raw_http if not m.get("targets_param", True)]
+        http_messages = [{k: v for k, v in m.items() if k != "targets_param"} for m in raw_http]
+        row_tel = dict(telemetry)
+        if unmatched_ids:
+            row_tel["unmatched_http_ids"] = unmatched_ids
+        findings.append(Finding(f"SQLMAP-{i}", "SQL Injection (sqlmap-reported)", "CWE-89", cvss_sev,
+                                location,
+                                (block.rstrip() + post_text,), "sqlmap", f"{source}#line={line_number}",
+                                details={"parameter": param_name, "place": place,
+                                         **({"method": http_method} if http_method else {}),
+                                         "techniques": techniques,
+                                         **({"dbms": dbms.group(1)} if dbms else {}),
+                                         **({"scan_telemetry": row_tel} if row_tel else {}),
+                                         **({"cvss_score": cvss_score} if cvss_score else {}),
+                                         **({"cvss_vector": cvss_vector} if cvss_vector else {}),
+                                         **({"http_messages": http_messages} if http_messages else {}),
                                          "cwe_mapping": "adapter rule: classic sqlmap injection-point block -> CWE-89",
-                                         "evidence_type": "scanner finding block, not independent raw HTTP confirmation"}))
-    if not findings:
-        if re.search(r"all tested parameters do not appear to be injectable", clean, re.I):
-            return []
+                                         "evidence_type": (
+                                             "scanner finding block corroborated by captured HTTP request/response traffic"
+                                             if http_messages
+                                             else "scanner finding block, not independent raw HTTP confirmation"
+                                         )}))
+    negative_end = bool(re.search(r"all tested parameters do not appear to be injectable", clean, re.I))
+    if not findings and not negative_end:
         raise ValueError("No recognized final sqlmap finding/negative result; heuristic messages are insufficient")
+
+    reflect_line = re.search(r"(?im)^.*reflective value\(s\) found and filtering out.*$", clean)
+    for j, xss_m in enumerate(re.finditer(
+        r"(?im)^.*heuristic \(XSS\) test shows that (\S+) parameter '([^']+)' might be vulnerable to cross-site scripting \(XSS\) attacks.*$",
+        clean,
+    )):
+        xss_place, xss_param = xss_m.group(1).strip(), xss_m.group(2).strip()
+        xss_line_no = clean[:xss_m.start()].count("\n") + 1
+        xss_method = xss_place.upper() if xss_place.upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"} else ""
+        ev_parts = [xss_m.group(0).strip()]
+        if reflect_line:
+            ev_parts.append(reflect_line.group(0).strip())
+        xss_tel = {k: telemetry[k] for k in ("tool_version", "scan_start", "scan_end", "reflection_filtered", "non_dynamic_parameters")
+                   if k in telemetry}
+        findings.append(Finding(
+            f"SQLMAP-OBS-{j}",
+            "Heuristic XSS indicator (sqlmap-reported, unconfirmed)",
+            "CWE-79",
+            "informational",
+            _location_for(xss_param, xss_place),
+            ("\n".join(ev_parts),),
+            "sqlmap",
+            f"{source}#line={xss_line_no}",
+            kind="observation",
+            details={
+                "parameter": xss_param,
+                "place": xss_place,
+                **({"method": xss_method} if xss_method else {}),
+                "confidence": "Heuristic (unconfirmed)",
+                **({"scan_telemetry": xss_tel} if xss_tel else {}),
+                "cwe_mapping": "adapter rule: sqlmap heuristic XSS notice -> CWE-79 observation",
+                "evidence_type": "heuristic reflection check only; requires manual XSS context verification",
+            },
+        ))
     return findings

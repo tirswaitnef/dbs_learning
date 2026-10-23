@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .chunker import chunk_documents
-from .embeddings import E5Embedding
+from .chunker import chunk_documents, fit_document_chunks
+from .embeddings import E5Embedding, embed_query_safe
 from .loader import load_documents
 from .schemas import digest
 
@@ -120,6 +120,9 @@ def ingest_documents(raw_directory, output_directory, settings, *, embedder=None
         raise ValueError("No nonempty supported documents to embed")
     encoder = embedder or E5Embedding(settings.embed_model, settings.embed_revision,
                                       local_files_only=offline)
+    chunks = fit_document_chunks(result.documents, chunks, encoder, settings.chunk_overlap)
+    if not chunks:
+        raise ValueError("No nonempty supported documents to embed")
     vectors = normalize_rows(encoder.embed_documents([c.text for c in chunks]))
     metadata = {"format": "document-v1", "model": settings.embed_model,
                 "revision": settings.embed_revision, "dimensions": vectors.shape[1],
@@ -144,6 +147,6 @@ def retrieve_documents(question, directory, raw_directory, settings, *, top_k=No
     store.verify_corpus(raw_directory)
     encoder = embedder or E5Embedding(settings.embed_model, settings.embed_revision,
                                       local_files_only=offline)
-    vector = encoder.embed_query(question)
+    vector = embed_query_safe(encoder, question, overlap=settings.chunk_overlap)
     return store.search(vector, top_k=settings.top_k if top_k is None else top_k,
                         min_score=min_score)
