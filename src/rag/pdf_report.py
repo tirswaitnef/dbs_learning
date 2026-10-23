@@ -1,569 +1,508 @@
-"""A4 PDF Exporter for the Official 10-Section Database Security & OWASP Remediation Report.
+"""Clean Unicode PDF renderer for Pentest Reports.
 
-Supports two presentation profiles:
-- `compact` (default — Executive / Presentation, 2–4 pages for 1 finding): single continuous flow,
-  zero duplicate General Info, crisp high-signal typography, inline clickable section index.
-- `full` (Audit Archive): dedicated TOC page + full unminified multi-packet & multi-chunk archive
-  (still strictly free of duplicate `Thông tin chung`).
+Default mode (`profile='compact'`) renders strictly according to `Template báo cáo pentest gọn.pdf`:
+  - Editorial serif headings (`DejaVuSerif` / `DejaVuSerif-Bold`), crisp sans body & tables (`DejaVuSans` / `DejaVuSans-Bold`),
+    and clean monospace evidence/code blocks (`DejaVuSansMono`).
+  - Exact warm neutral palette (`#1F1E1D` ink, `#52514E` muted labels, `#6B6B6B` running header/footer,
+    `#F5F3ED` table header/key fill, `#F3F1EC` code fill, `#E8E5DC` hairline grid).
+  - Exact 6-section structure (`1. Tóm tắt` -> `6. Phụ lục`) with `Page X of Y` footer via two-pass canvas
+    and `"Quy tắc điền"` omitted upon export.
+
+Secondary mode (`profile='full'`) renders the 10-section full audit archive (`render_full_audit_pdf`).
 """
 from __future__ import annotations
 
-import html
-import re
 from pathlib import Path
+import re
 
-from .dbsec_report import normalize_report_profile, prepare_dbsec_report
-from .top10 import enforce
+from reportlab import platypus
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfgen import canvas as rl_canvas
+from reportlab.platypus import (
+    KeepTogether,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
+from xml.sax.saxutils import escape as xml_escape
 
-_BOLD_RE = re.compile(r'\*\*(.+?)\*\*')
-_CODE_RE = re.compile(r'`([^`]+)`')
+from .compact_pentest_template import prepare_compact_pentest
+from .full_audit_pdf import render_full_audit_pdf
+
+# Exact warm editorial color palette extracted from `Template báo cáo pentest gọn.pdf`
+INK_PRIMARY = colors.HexColor('#1F1E1D')
+INK_LABEL = colors.HexColor('#52514E')
+INK_MUTED = colors.HexColor('#6B6B6B')
+FILL_TABLE_HEAD = colors.HexColor('#F5F3ED')
+FILL_CODE = colors.HexColor('#F3F1EC')
+BORDER_HAIRLINE = colors.HexColor('#E8E5DC')
+
+_FONT_REGISTERED = False
+FONT_REG = 'DejaVuSans'
+FONT_BOLD = 'DejaVuSans-Bold'
+FONT_SERIF = 'DejaVuSerif'
+FONT_SERIF_BOLD = 'DejaVuSerif-Bold'
+FONT_MONO = 'DejaVuSansMono'
 
 
-def _fmt_inline(val) -> str:
-    """Escape XML safely and render **bold** and `code` spans using full-Unicode RagText."""
-    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(val or ''))
-    escaped = html.escape(cleaned, quote=True)
-    escaped = _BOLD_RE.sub(r'<b>\1</b>', escaped)
-    escaped = _CODE_RE.sub(r'<font color="#1E3A5F">\1</font>', escaped)
-    return escaped.replace('\n', '<br/>')
+def _para(text: str, style):
+    """Lookup `platypus.Paragraph` dynamically so unit-test spies on `reportlab.platypus.Paragraph` work cleanly."""
+    return platypus.Paragraph(text, style)
 
 
-def _fmt_raw(val) -> str:
-    """Escape verbatim evidence / code snippets without markdown interpretation."""
-    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', str(val or ''))
-    return html.escape(cleaned, quote=True).replace('\n', '<br/>')
+def _register_unicode_fonts() -> tuple[str, str]:
+    global _FONT_REGISTERED, FONT_REG, FONT_BOLD, FONT_SERIF, FONT_SERIF_BOLD, FONT_MONO
+    if _FONT_REGISTERED:
+        return FONT_REG, FONT_BOLD
 
+    pkg_fonts = Path(__file__).resolve().parent / 'fonts'
+    sys_dejavu = Path('/usr/share/fonts/truetype/dejavu')
 
-def render_pdf(report, path, *, profile: str | None = None):
-    from reportlab.lib import colors
-    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.pdfbase import pdfmetrics
-    from reportlab.pdfbase.ttfonts import TTFont
-    from reportlab.platypus import (
-        BaseDocTemplate,
-        Flowable,
-        Frame,
-        PageBreak,
-        PageTemplate,
-        Paragraph,
-        Spacer,
-        Table,
-        TableStyle,
-    )
+    def _find_ttf(filename: str) -> Path | None:
+        for base in (pkg_fonts, sys_dejavu):
+            p = base / filename
+            if p.is_file():
+                return p
+        return None
 
-    enforce(report)
-    resolved_profile = normalize_report_profile(profile, (report.get('report_metadata') if isinstance(report, dict) else None))
-    is_compact = (resolved_profile == 'compact')
-    m = prepare_dbsec_report(report, profile=resolved_profile)
-
-    fonts_dir = Path(__file__).parent / 'fonts'
-    for fname, file_name in [('RagText', 'DejaVuSans.ttf'), ('RagBold', 'DejaVuSans-Bold.ttf')]:
-        fpath = fonts_dir / file_name
-        if fname not in pdfmetrics.getRegisteredFontNames() and fpath.is_file():
-            pdfmetrics.registerFont(TTFont(fname, str(fpath)))
-    pdfmetrics.registerFontFamily('RagText', normal='RagText', bold='RagBold', italic='RagText', boldItalic='RagBold')
-
-    col_black = colors.HexColor('#111827')
-    col_heading = colors.HexColor('#1E3A5F')
-    col_subhead = colors.HexColor('#1F2937')
-    col_body = colors.HexColor('#2D3748')
-    col_muted = colors.HexColor('#6B7280')
-    col_blue = colors.HexColor('#1E4E8C')
-    col_border = colors.HexColor('#CBD5E1')
-    col_zebra = colors.HexColor('#F8FAFC')
-    col_code_bg = colors.HexColor('#F1F5F9')
-
-    margin_x = 32.0 if is_compact else 46.0
-    margin_y = 21.0 if is_compact else 44.0
-    width = A4[0] - (2.0 * margin_x)
-
-    class ObliqueSubtitle(Flowable):
-        def __init__(self, text: str, avail_w: float, *, compact: bool = True):
-            super().__init__()
-            self.text = text
-            self.width = avail_w
-            self.compact = compact
-            self.height = 13.0 if compact else 18.0
-            self.spaceAfter = 5.0 if compact else 18.0
-
-        def wrap(self, availWidth, availHeight):
-            self.width = availWidth
-            return (availWidth, self.height)
-
-        def draw(self):
-            c = self.canv
-            c.saveState()
-            c.setFillColor(col_muted)
-            fsize = 8.6 if self.compact else 10.2
-            c.setFont('RagText', fsize)
-            tw = pdfmetrics.stringWidth(self.text, 'RagText', fsize)
-            c.transform(1.0, 0.0, 0.20, 1.0, max(0.0, (self.width - tw) / 2.0), 3.0)
-            c.drawString(0, 0, self.text)
-            c.restoreState()
-
-    cover_title_st = ParagraphStyle(
-        'cover_title', fontName='RagBold',
-        fontSize=(13.2 if is_compact else 17.5),
-        leading=(17.0 if is_compact else 23.5),
-        alignment=TA_CENTER,
-        textColor=col_heading,
-        spaceAfter=(3.0 if is_compact else 10.0),
-    )
-    toc_inline_st = ParagraphStyle(
-        'toc_inline', fontName='RagText', fontSize=7.4, leading=10.2, alignment=TA_CENTER,
-        textColor=col_blue, backColor=col_zebra, borderPadding=3.5, spaceAfter=6.0,
-    )
-    toc_title_st = ParagraphStyle(
-        'toc_title', fontName='RagBold', fontSize=15, leading=20, alignment=TA_LEFT,
-        textColor=col_heading, spaceAfter=10,
-    )
-    toc_item_st = ParagraphStyle(
-        'toc_item', fontName='RagText', fontSize=10.0, leading=15, alignment=TA_LEFT,
-        textColor=col_blue, spaceAfter=2,
-    )
-    sec_st = ParagraphStyle(
-        'sec_heading', fontName='RagBold',
-        fontSize=(10.2 if is_compact else 13.0),
-        leading=(12.8 if is_compact else 17.5),
-        alignment=TA_LEFT, textColor=col_heading,
-        spaceBefore=(5.0 if is_compact else 12.0),
-        spaceAfter=(2.0 if is_compact else 5.0),
-        keepWithNext=True,
-    )
-    sub_st = ParagraphStyle(
-        'sub_heading', fontName='RagBold',
-        fontSize=(8.8 if is_compact else 10.8),
-        leading=(11.2 if is_compact else 14.5),
-        alignment=TA_LEFT, textColor=col_subhead,
-        spaceBefore=(3.6 if is_compact else 8.0),
-        spaceAfter=(1.5 if is_compact else 3.5),
-        keepWithNext=True,
-    )
-    sub2_st = ParagraphStyle(
-        'sub2_heading', fontName='RagBold',
-        fontSize=(8.0 if is_compact else 9.6),
-        leading=(10.2 if is_compact else 13.0),
-        alignment=TA_LEFT, textColor=col_blue,
-        spaceBefore=(2.4 if is_compact else 5.5),
-        spaceAfter=(1.0 if is_compact else 2.2),
-        keepWithNext=True,
-    )
-    body_st = ParagraphStyle(
-        'body', fontName='RagText',
-        fontSize=(7.9 if is_compact else 9.2),
-        leading=(10.4 if is_compact else 13.2),
-        alignment=TA_LEFT, textColor=col_body,
-        spaceAfter=(1.8 if is_compact else 4.0),
-        splitLongWords=True,
-    )
-    bullet_st = ParagraphStyle(
-        'bullet', fontName='RagText',
-        fontSize=(7.8 if is_compact else 9.1),
-        leading=(10.2 if is_compact else 13.0),
-        alignment=TA_LEFT, textColor=col_body,
-        leftIndent=(7 if is_compact else 11),
-        spaceAfter=(1.2 if is_compact else 3.2),
-        splitLongWords=True,
-    )
-    note_st = ParagraphStyle(
-        'note', fontName='RagText',
-        fontSize=(7.4 if is_compact else 8.3),
-        leading=(9.8 if is_compact else 11.6),
-        alignment=TA_LEFT, textColor=col_muted,
-        spaceBefore=1.5, spaceAfter=(2.5 if is_compact else 4.5),
-        splitLongWords=True,
-    )
-    code_st = ParagraphStyle(
-        'code_block', fontName='RagText',
-        fontSize=(7.1 if is_compact else 7.6),
-        leading=(9.3 if is_compact else 10.4),
-        alignment=TA_LEFT, textColor=col_black, backColor=col_code_bg,
-        borderPadding=(3.2 if is_compact else 5.0),
-        leftIndent=(9 if is_compact else 12), rightIndent=2,
-        spaceAfter=(2.2 if is_compact else 4.2),
-        splitLongWords=True,
-    )
-    tbl_hdr_st = ParagraphStyle(
-        'tbl_hdr', fontName='RagBold', fontSize=(7.7 if is_compact else 8.3), leading=10.0, textColor=colors.white,
-    )
-    tbl_hdr_num_st = ParagraphStyle(
-        'tbl_hdr_num', fontName='RagBold', fontSize=(7.7 if is_compact else 8.3), leading=10.0, alignment=TA_RIGHT, textColor=colors.white,
-    )
-    tbl_cell_st = ParagraphStyle(
-        'tbl_cell', fontName='RagText', fontSize=(7.7 if is_compact else 8.2), leading=(10.0 if is_compact else 11.2), textColor=col_body, splitLongWords=True,
-    )
-    tbl_cell_bold_st = ParagraphStyle(
-        'tbl_cell_bold', fontName='RagBold', fontSize=(7.7 if is_compact else 8.2), leading=(10.0 if is_compact else 11.2), textColor=col_subhead, splitLongWords=True,
-    )
-    tbl_num_st = ParagraphStyle(
-        'tbl_num', fontName='RagText', fontSize=(7.8 if is_compact else 8.4), leading=10.0, alignment=TA_RIGHT, textColor=col_body,
-    )
-
-    pad_v = 2.4 if is_compact else 4.2
-    pad_h = 4.5 if is_compact else 6.0
-
-    def make_table(rows_data, col_widths, *, has_header=True):
-        t = Table(rows_data, colWidths=col_widths, repeatRows=(1 if has_header else 0), hAlign='LEFT')
-        styles = [
-            ('GRID', (0, 0), (-1, -1), 0.4, col_border),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('LEFTPADDING', (0, 0), (-1, -1), pad_h),
-            ('RIGHTPADDING', (0, 0), (-1, -1), pad_h),
-            ('TOPPADDING', (0, 0), (-1, -1), pad_v),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), pad_v),
-        ]
-        if has_header:
-            styles.append(('BACKGROUND', (0, 0), (-1, 0), col_blue))
-            start_r = 1
+    sans_pair = (_find_ttf('DejaVuSans.ttf'), _find_ttf('DejaVuSans-Bold.ttf'))
+    if sans_pair[0] and sans_pair[1]:
+        pdfmetrics.registerFont(TTFont('DejaVuSans', str(sans_pair[0])))
+        pdfmetrics.registerFont(TTFont('DejaVuSans-Bold', str(sans_pair[1])))
+        pdfmetrics.registerFontFamily('DejaVuSans', normal='DejaVuSans', bold='DejaVuSans-Bold')
+        FONT_REG, FONT_BOLD = 'DejaVuSans', 'DejaVuSans-Bold'
+    else:
+        win_fonts = Path('C:/Windows/Fonts')
+        if (win_fonts / 'arial.ttf').is_file() and (win_fonts / 'arialbd.ttf').is_file():
+            pdfmetrics.registerFont(TTFont('ArialUnicode', str(win_fonts / 'arial.ttf')))
+            pdfmetrics.registerFont(TTFont('ArialUnicode-Bold', str(win_fonts / 'arialbd.ttf')))
+            pdfmetrics.registerFontFamily('ArialUnicode', normal='ArialUnicode', bold='ArialUnicode-Bold')
+            FONT_REG, FONT_BOLD = 'ArialUnicode', 'ArialUnicode-Bold'
         else:
-            start_r = 0
-        for r_i in range(start_r, len(rows_data)):
-            if (r_i - start_r) % 2 == 1:
-                styles.append(('BACKGROUND', (0, r_i), (-1, r_i), col_zebra))
-        t.setStyle(TableStyle(styles))
-        return t
+            FONT_REG, FONT_BOLD = 'Helvetica', 'Helvetica-Bold'
 
-    story = []
-
-    def add_sec(idx: int):
-        st = ParagraphStyle(f'sec_{idx}', parent=sec_st, spaceBefore=(2 if idx == 1 else (7 if is_compact else 13)))
-        story.append(Paragraph(f'<a name="sec{idx}"/>{_fmt_raw(m["section_titles"][idx - 1])}', st))
-
-    def add_bullet(text: str):
-        story.append(Paragraph(f'• {_fmt_inline(text)}', bullet_st))
-
-    def add_snippet_block(text: str):
-        raw = str(text or '').strip()
-        if not raw:
-            return
-        for start in range(0, len(raw), 2200):
-            story.append(Paragraph(_fmt_raw(raw[start:start + 2200]), code_st))
-
-    # ==================== HEADER + NAVIGATION + SECTION 1 (PRINTED ONCE ONLY!) ====================
-    if is_compact:
-        story.append(Paragraph(
-            'BÁO CÁO KIỂM THỬ BẢO MẬT CSDL VÀ ĐỀ XUẤT REMEDIATION THEO OWASP',
-            cover_title_st,
-        ))
-        story.append(ObliqueSubtitle(m['subtitle'], width, compact=True))
-        toc_links = ' &nbsp;·&nbsp; '.join(
-            f'<a href="#sec{idx_s}" color="#1E4E8C">{_fmt_raw(title_s)}</a>'
-            for idx_s, title_s in enumerate(m['section_titles'], 1)
-        )
-        story.append(Paragraph(toc_links, toc_inline_st))
+    serif_pair = (_find_ttf('DejaVuSerif.ttf'), _find_ttf('DejaVuSerif-Bold.ttf'))
+    if serif_pair[0] and serif_pair[1]:
+        pdfmetrics.registerFont(TTFont('DejaVuSerif', str(serif_pair[0])))
+        pdfmetrics.registerFont(TTFont('DejaVuSerif-Bold', str(serif_pair[1])))
+        pdfmetrics.registerFontFamily('DejaVuSerif', normal='DejaVuSerif', bold='DejaVuSerif-Bold')
+        FONT_SERIF, FONT_SERIF_BOLD = 'DejaVuSerif', 'DejaVuSerif-Bold'
     else:
-        story.append(Spacer(1, 28))
-        story.append(Paragraph(
-            'BÁO CÁO KIỂM THỬ BẢO MẬT CSDL<br/>VÀ ĐỀ XUẤT REMEDIATION THEO OWASP',
-            cover_title_st,
-        ))
-        story.append(ObliqueSubtitle(m['subtitle'], width, compact=False))
-        story.append(Paragraph('Mục lục báo cáo (Hồ sơ kiểm toán đầy đủ)', toc_title_st))
-        for idx_s, title_s in enumerate(m['section_titles'], 1):
-            story.append(Paragraph(f'<a href="#sec{idx_s}" color="#1E4E8C">{_fmt_raw(title_s)}</a>', toc_item_st))
-        story.append(PageBreak())
+        FONT_SERIF, FONT_SERIF_BOLD = FONT_REG, FONT_BOLD
 
-    # 1. Thông tin chung (SINGLE AUTHORITATIVE APPEARANCE — NEVER DUPLICATED!)
-    add_sec(1)
-    sec1_rows = [
-        [Paragraph(_fmt_raw(k), tbl_cell_bold_st), Paragraph(_fmt_inline(v), tbl_cell_st)]
-        for k, v in m['general_info']
-    ]
-    story.extend([make_table(sec1_rows, [width * 0.27, width * 0.73], has_header=False), Spacer(1, 3 if is_compact else 6)])
-
-    # 2. Đánh giá dữ liệu đầu vào
-    add_sec(2)
-    story.append(Paragraph('2.1. Nguồn dữ liệu', sub_st))
-    src_tbl = [[
-        Paragraph('Mã', tbl_hdr_st),
-        Paragraph('Tên dữ liệu', tbl_hdr_st),
-        Paragraph('Nguồn', tbl_hdr_st),
-        Paragraph('Trạng thái', tbl_hdr_st),
-    ]]
-    for s in m['input_sources']:
-        src_tbl.append([
-            Paragraph(_fmt_raw(s['id']), tbl_cell_bold_st),
-            Paragraph(_fmt_raw(s['name']), tbl_cell_st),
-            Paragraph(_fmt_raw(s['source']), tbl_cell_st),
-            Paragraph(_fmt_raw(s['status']), tbl_cell_st),
-        ])
-    story.extend([make_table(src_tbl, [width * 0.09, width * 0.29, width * 0.31, width * 0.31]), Spacer(1, 3 if is_compact else 5)])
-
-    qa = m['quality_assessment']
-    story.append(Paragraph('2.2. Chất lượng dữ liệu', sub_st))
-    add_bullet(f"**Thông tin đã có:** {qa['present']}")
-    add_bullet(f"**Thông tin còn thiếu:** {qa['missing']}")
-    add_bullet(f"**Giới hạn phân tích:** {qa['analytic_limits']}")
-
-    # 3. Phương pháp phân tích
-    add_sec(3)
-    meth = m['methodology']
-    if is_compact:
-        add_bullet(f"**Phương pháp & Công cụ:** {meth['method']} ({meth['tools']})")
-        add_bullet(f"**Tài liệu & Tiêu chí:** {meth['references']} {meth['criteria']}")
+    mono_path = _find_ttf('DejaVuSansMono.ttf')
+    if mono_path:
+        pdfmetrics.registerFont(TTFont('DejaVuSansMono', str(mono_path)))
+        FONT_MONO = 'DejaVuSansMono'
     else:
-        add_bullet(f"**Phương pháp:** {meth['method']}")
-        add_bullet(f"**Công cụ hỗ trợ:** {meth['tools']}")
-        add_bullet(f"**Tài liệu đối chiếu:** {meth['references']}")
-        add_bullet(f"**Tiêu chí phân loại:** {meth['criteria']}")
+        FONT_MONO = FONT_REG
 
-    # 4. Tóm tắt kết quả
-    add_sec(4)
-    story.append(Paragraph('4.1. Tổng quan phát hiện', sub_st))
-    mat_tbl = [[
-        Paragraph('Mức độ', tbl_hdr_st),
-        Paragraph('Đã xác nhận', tbl_hdr_num_st),
-        Paragraph('Có dấu hiệu', tbl_hdr_num_st),
-        Paragraph('Chưa đủ dữ liệu', tbl_hdr_num_st),
-    ]]
-    rows_to_render = (
-        [r for r in m['matrix_rows'] if (r[1] or r[2] or r[3])]
-        if (is_compact and any(r[1] or r[2] or r[3] for r in m['matrix_rows']))
-        else m['matrix_rows']
+    _FONT_REGISTERED = True
+    return FONT_REG, FONT_BOLD
+
+
+def _mono_run(raw_text: str, mono_font: str, sans_font: str, size: str = '8.2') -> str:
+    """Render ASCII code runs in crisp `DejaVuSansMono` and non-ASCII Unicode runs in `DejaVuSans` cleanly."""
+    if not raw_text:
+        return ''
+    out: list[str] = []
+    i = 0
+    n = len(raw_text)
+    while i < n:
+        if ord(raw_text[i]) < 128:
+            j = i + 1
+            while j < n and ord(raw_text[j]) < 128:
+                j += 1
+            seg = xml_escape(raw_text[i:j]).replace('  ', '&nbsp;&nbsp;')
+            out.append(f'<font name="{mono_font}" size="{size}">{seg}</font>')
+            i = j
+        else:
+            j = i + 1
+            while j < n and ord(raw_text[j]) >= 128:
+                j += 1
+            seg = xml_escape(raw_text[i:j])
+            out.append(f'<font name="{sans_font}" size="{size}">{seg}</font>')
+            i = j
+    return ''.join(out)
+
+
+def _md_inline_to_rl(text: str, bold_font: str | None = None, code_font: str | None = None) -> str:
+    """Convert inline `**bold**` and `` `code` `` safely into ReportLab XML markup without losing Vietnamese glyphs."""
+    bf = bold_font or FONT_BOLD
+    cf = code_font or FONT_MONO
+    sf = FONT_REG
+    raw = str(text or '')
+    parts = re.split(r'(`[^`]+`)', raw)
+    rendered: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part.startswith('`') and part.endswith('`'):
+            rendered.append(_mono_run(part[1:-1], cf, sf, '8.3'))
+        else:
+            esc = xml_escape(part)
+            esc = re.sub(r'\*\*([^*]+)\*\*', rf'<font name="{bf}">\1</font>', esc)
+            rendered.append(esc)
+    return ''.join(rendered)
+
+
+def _make_numbered_canvas_factory(running_header: str, reg_font: str):
+    """Two-pass ReportLab canvas rendering running header (page >= 2) and exact 'Page X of Y' footer."""
+
+    class _TemplateNumberedCanvas(rl_canvas.Canvas):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._saved_page_states: list[dict] = []
+
+        def showPage(self):
+            self._saved_page_states.append(dict(self.__dict__))
+            self._startPage()
+
+        def save(self):
+            total_pages = len(self._saved_page_states)
+            for state in self._saved_page_states:
+                self.__dict__.update(state)
+                self._draw_chrome(total_pages)
+                super().showPage()
+            super().save()
+
+        def _draw_chrome(self, total_pages: int):
+            self.saveState()
+            page_w, page_h = A4
+            margin_x = 18 * mm
+            self.setFont(reg_font, 8.2)
+            self.setFillColor(INK_MUTED)
+            if self._pageNumber >= 2:
+                self.drawString(margin_x, page_h - 12.5 * mm, running_header[:92])
+            footer_txt = f"Page {self._pageNumber} of {total_pages}"
+            self.drawCentredString(page_w / 2.0, 10.5 * mm, footer_txt)
+            self.restoreState()
+
+    return _TemplateNumberedCanvas
+
+
+def _render_compact_template_pdf(report: dict, out_file: Path) -> Path:
+    """Render exact `Template báo cáo pentest gọn.pdf` layout (6 sections, 2–3 pages, warm editorial theme)."""
+    reg_font, bold_font = _register_unicode_fonts()
+    m = prepare_compact_pentest(report)
+
+    s_title = ParagraphStyle(
+        'CompactDocTitle',
+        fontName=FONT_SERIF,
+        fontSize=15.5,
+        leading=20.0,
+        textColor=INK_PRIMARY,
+        spaceBefore=0,
+        spaceAfter=9,
     )
-    for sev_lbl, c_conf, c_tent, c_insuf in rows_to_render:
-        mat_tbl.append([
-            Paragraph(_fmt_raw(sev_lbl), tbl_cell_bold_st),
-            Paragraph(str(c_conf), tbl_num_st),
-            Paragraph(str(c_tent), tbl_num_st),
-            Paragraph(str(c_insuf), tbl_num_st),
-        ])
-    story.append(make_table(mat_tbl, [width * 0.34, width * 0.22, width * 0.22, width * 0.22]))
-    story.append(Paragraph(
-        'Ghi chú: Chỉ thống kê các phát hiện thực tế từ dữ liệu đầu vào (các mức độ bằng 0 ẩn trên bảng tóm tắt tinh gọn; không tự gán mức độ nghiêm trọng khi công cụ gốc không cung cấp).',
-        note_st,
-    ))
-    story.append(Paragraph('4.2. Nhận xét tổng quan', sub_st))
-    for p_txt in m['overview_paras']:
-        story.append(Paragraph(_fmt_inline(p_txt), body_st))
+    s_h1 = ParagraphStyle(
+        'CompactH1',
+        fontName=FONT_SERIF,
+        fontSize=12.2,
+        leading=16.0,
+        textColor=INK_PRIMARY,
+        spaceBefore=11,
+        spaceAfter=5,
+        keepWithNext=True,
+    )
+    s_h2 = ParagraphStyle(
+        'CompactFindingH2',
+        fontName=FONT_SERIF,
+        fontSize=10.8,
+        leading=14.2,
+        textColor=INK_PRIMARY,
+        spaceBefore=8,
+        spaceAfter=4,
+        keepWithNext=True,
+    )
+    s_body = ParagraphStyle(
+        'CompactBody',
+        fontName=reg_font,
+        fontSize=9.2,
+        leading=13.4,
+        textColor=INK_PRIMARY,
+        spaceAfter=4,
+    )
+    s_label_line = ParagraphStyle(
+        'CompactLabelLine',
+        fontName=bold_font,
+        fontSize=9.2,
+        leading=13.0,
+        textColor=INK_PRIMARY,
+        spaceBefore=2,
+        spaceAfter=2.5,
+        keepWithNext=True,
+    )
+    s_bullet = ParagraphStyle(
+        'CompactBullet',
+        fontName=reg_font,
+        fontSize=9.0,
+        leading=13.0,
+        textColor=INK_PRIMARY,
+        leftIndent=10,
+        firstLineIndent=-7,
+        spaceAfter=2.5,
+    )
+    s_th = ParagraphStyle(
+        'CompactTH',
+        fontName=bold_font,
+        fontSize=8.4,
+        leading=11.2,
+        textColor=INK_LABEL,
+    )
+    s_key = ParagraphStyle(
+        'CompactKeyCell',
+        fontName=bold_font,
+        fontSize=8.4,
+        leading=11.4,
+        textColor=INK_LABEL,
+    )
+    s_td = ParagraphStyle(
+        'CompactTD',
+        fontName=reg_font,
+        fontSize=8.5,
+        leading=11.6,
+        textColor=INK_PRIMARY,
+        wordWrap='CJK',
+    )
+    s_code = ParagraphStyle(
+        'CompactMono',
+        fontName=FONT_MONO,
+        fontSize=7.7,
+        leading=10.4,
+        textColor=INK_PRIMARY,
+        wordWrap='CJK',
+    )
 
-    # 5. Danh sách phát hiện
-    add_sec(5)
-    f_tbl = [[
-        Paragraph('ID', tbl_hdr_st),
-        Paragraph('Phát hiện', tbl_hdr_st),
-        Paragraph('Thành phần', tbl_hdr_st),
-        Paragraph('OWASP', tbl_hdr_st),
-        Paragraph('Mức độ', tbl_hdr_st),
-        Paragraph('Trạng thái', tbl_hdr_st),
-    ]]
+    page_w = A4[0] - 36 * mm
+    doc = SimpleDocTemplate(
+        str(out_file),
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=17.5 * mm,
+        bottomMargin=16.5 * mm,
+        title=m['doc_title'],
+        author='Pentest Report Assistant',
+    )
+
+    story: list = []
+
+    # Title + 7-row Metadata Header Card (matches Page 1 top of `Template báo cáo pentest gọn.pdf`)
+    story.append(_para(xml_escape(m['doc_title']), s_title))
+
+    meta_rows = [
+        [_para(xml_escape(k), s_key), _para(_md_inline_to_rl(v, bold_font), s_td)]
+        for k, v in m['header_rows']
+    ]
+    meta_tbl = Table(meta_rows, colWidths=[38 * mm, page_w - 38 * mm])
+    meta_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (0, -1), FILL_TABLE_HEAD),
+        ('BACKGROUND', (1, 0), (1, -1), colors.white),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_HAIRLINE),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    story.append(meta_tbl)
+
+    # 1. Tóm tắt (3–5 line summary + 6-column table)
+    story.append(_para('1. Tóm tắt', s_h1))
+    story.append(_para(_md_inline_to_rl(m['summary_text'], bold_font), s_body))
+    story.append(Spacer(1, 1.5 * mm))
+
+    sum_header = [_para(h, s_th) for h in ('ID', 'Phát hiện', 'Thành phần', 'OWASP / CWE', 'Mức độ', 'Trạng thái')]
+    sum_rows = [sum_header]
     if not m['findings']:
-        f_tbl.append([
-            Paragraph('—', tbl_cell_st),
-            Paragraph('Không ghi nhận cảnh báo lỗ hổng trong dữ liệu đầu vào', tbl_cell_st),
-            Paragraph('—', tbl_cell_st),
-            Paragraph('Chưa xác định', tbl_cell_st),
-            Paragraph('Chưa xác định', tbl_cell_st),
-            Paragraph('Không xác nhận được', tbl_cell_st),
+        sum_rows.append([
+            _para('—', s_td),
+            _para('Không ghi nhận lỗ hổng trong phạm vi quét', s_td),
+            _para('—', s_td),
+            _para('Chưa xác định', s_td),
+            _para('Chưa xác định', s_td),
+            _para('Không xác nhận được', s_td),
         ])
     else:
         for f in m['findings']:
-            f_tbl.append([
-                Paragraph(_fmt_raw(f['id']), tbl_cell_bold_st),
-                Paragraph(_fmt_raw(f['title']), tbl_cell_st),
-                Paragraph(_fmt_inline(f['component']), tbl_cell_st),
-                Paragraph(_fmt_raw(f['owasp_category']), tbl_cell_st),
-                Paragraph(_fmt_raw(f['severity_label']), tbl_cell_st),
-                Paragraph(_fmt_raw(f['state']), tbl_cell_bold_st),
+            sum_rows.append([
+                _para(xml_escape(f['id']), s_td),
+                _para(_md_inline_to_rl(f['title'], bold_font), s_td),
+                _para(_md_inline_to_rl(f['component'], bold_font), s_td),
+                _para(xml_escape(f['owasp_cwe_short']), s_td),
+                _para(xml_escape(f['severity_label']), s_td),
+                _para(xml_escape(f['state']), s_td),
             ])
-    story.extend([
-        make_table(f_tbl, [width * 0.07, width * 0.22, width * 0.26, width * 0.17, width * 0.14, width * 0.14]),
-        Spacer(1, 3 if is_compact else 6),
-    ])
 
-    # 6. Phân tích chi tiết phát hiện
-    add_sec(6)
+    sum_col_w = [12 * mm, 41 * mm, 44 * mm, 29 * mm, 24 * mm, page_w - 150 * mm]
+    sum_tbl = Table(sum_rows, colWidths=sum_col_w, repeatRows=1)
+    sum_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), FILL_TABLE_HEAD),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_HAIRLINE),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4.5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4.5),
+    ]))
+    story.append(sum_tbl)
+
+    # 2. Chi tiết phát hiện
+    story.append(_para('2. Chi tiết phát hiện', s_h1))
     if not m['findings']:
-        story.append(Paragraph('Không có phát hiện nào trong dữ liệu đầu vào cần phân tích chi tiết.', body_st))
-    for f in m['findings']:
-        story.append(Paragraph(_fmt_raw(f"{f['id']}: {f['title']}"), sub_st))
-        if is_compact:
-            add_bullet(f"**6.1. Trạng thái:** {f['state_detail']} | **6.2. Vị trí:** {f['component']} (`{f['cwe_label']}`)")
-        else:
-            story.append(Paragraph('6.1. Trạng thái phát hiện', sub2_st))
-            add_bullet(f['state_detail'])
-            story.append(Paragraph('6.2. Vị trí và thành phần bị ảnh hưởng', sub2_st))
-            add_bullet(f"{f['component']} (`{f['cwe_label']}`)")
+        story.append(_para('Không có phát hiện lỗ hổng cần phân tích chi tiết trong dữ liệu đầu vào.', s_body))
 
-        story.append(Paragraph('6.3. Bằng chứng', sub2_st))
+    def _code_box(raw_code: str) -> Table:
+        html_lines: list[str] = []
+        for raw_ln in str(raw_code or '').splitlines()[:10]:
+            ln = raw_ln.rstrip()
+            html_lines.append(_mono_run(ln, FONT_MONO, reg_font, '7.7'))
+        box = Table([[_para('<br/>'.join(html_lines), s_code)]], colWidths=[page_w])
+        box.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), FILL_CODE),
+            ('BOX', (0, 0), (-1, -1), 0.5, BORDER_HAIRLINE),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        return box
+
+    for f in m['findings']:
+        f_head = _para(xml_escape(f"{f['id']}: {f['title']}"), s_h2)
+        f_meta_rows = [
+            [_para('Mức độ / CVSS', s_key), _para(_md_inline_to_rl(f['sev_cvss_display'], bold_font), s_td)],
+            [_para('OWASP / CWE', s_key), _para(_md_inline_to_rl(f['owasp_cwe_full'], bold_font), s_td)],
+            [_para('Thành phần', s_key), _para(_md_inline_to_rl(f['component'], bold_font), s_td)],
+            [_para('Trạng thái', s_key), _para(xml_escape(f['state']), s_td)],
+        ]
+        f_meta_tbl = Table(f_meta_rows, colWidths=[34 * mm, page_w - 34 * mm])
+        f_meta_tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), FILL_TABLE_HEAD),
+            ('BACKGROUND', (1, 0), (1, -1), colors.white),
+            ('GRID', (0, 0), (-1, -1), 0.5, BORDER_HAIRLINE),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 3.5),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3.5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 5.5),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 5.5),
+        ]))
+        story.append(KeepTogether([f_head, f_meta_tbl, Spacer(1, 1.5 * mm)]))
+
+        story.append(_para(
+            f'<font name="{bold_font}">Mô tả:</font> {_md_inline_to_rl(f["description"], bold_font)}',
+            s_body,
+        ))
+
+        story.append(_para('Bằng chứng (tối đa 2):', s_label_line))
         if not f['evidences']:
-            add_bullet(f"Không có trích đoạn bằng chứng phản hồi chi tiết trong nguồn `{f['source_id']}`.")
-        for ev in f['evidences']:
-            add_bullet(f"**`{ev['id']}`** (`{ev['source_id']}` — {ev['kind']}): {ev['explanation']}")
-            add_snippet_block(ev['snippet'])
-        if f['excluded_http_note']:
-            add_bullet(f"**Lưu ý lọc nhiễu bằng chứng:** {f['excluded_http_note']}")
-        for ai_n in f.get('ai_notes') or []:
-            add_bullet(f"**Diễn giải kỹ thuật từ dữ liệu đầu vào:** {ai_n}")
-
-        if is_compact:
-            add_bullet(
-                f"**6.4. Phân loại OWASP:** `{f['owasp_category']}` ({f['owasp_doc']} {f['owasp_version']} — {f['owasp_url']}) — {f['owasp_reason']}"
-            )
-            add_bullet(
-                f"**6.5. Mức độ nghiêm trọng:** **{f['severity_label']}** — {f['severity_basis']} *Chưa xác định:* {f['unknown_factors']}"
-            )
-            add_bullet(f"**6.6. Nguyên nhân:** {f['root_cause']}")
-            add_bullet(f"**6.7. Ảnh hưởng tiềm tàng:** {f['potential_impact']}")
+            story.append(_para('• Không có trích đoạn phản hồi trực tiếp trong dữ liệu đầu vào.', s_bullet))
         else:
-            story.append(Paragraph('6.4. Phân loại OWASP', sub2_st))
-            add_bullet(f"**Tài liệu:** {f['owasp_doc']} | **Phiên bản:** {f['owasp_version']}")
-            add_bullet(f"**Danh mục:** {f['owasp_category']}")
-            add_bullet(f"**Lý do phân loại:** {f['owasp_reason']}")
-            add_bullet(f"**Nguồn tham khảo:** {f['owasp_url']}")
+            for ev in f['evidences']:
+                story.append(_code_box(ev['code']))
+                story.append(Spacer(1, 1.5 * mm))
 
-            story.append(Paragraph('6.5. Đánh giá mức độ nghiêm trọng', sub2_st))
-            add_bullet(f"**Mức độ:** {f['severity_label']}")
-            add_bullet(f"**Cơ sở đánh giá:** {f['severity_basis']}")
-            add_bullet(f"**Các yếu tố chưa xác định:** {f['unknown_factors']}")
+        story.append(_para(
+            f'<font name="{bold_font}">Tác động:</font> {_md_inline_to_rl(f["impact"], bold_font)}',
+            s_body,
+        ))
+        story.append(_para(
+            f'<font name="{bold_font}">Khắc phục:</font> {_md_inline_to_rl(f["remediation"], bold_font)}',
+            s_body,
+        ))
+        if f['code_example']:
+            story.append(_code_box(f['code_example']))
+            story.append(Spacer(1, 1 * mm))
 
-            story.append(Paragraph('6.6. Nguyên nhân', sub2_st))
-            add_bullet(f['root_cause'])
+        story.append(_para(
+            f'<font name="{bold_font}">Nguồn:</font> {xml_escape(f["remediation_source_title"])} — '
+            f'<font name="{FONT_MONO}" size="7.8">{xml_escape(f["remediation_source_url"])}</font>',
+            s_body,
+        ))
+        story.append(_para(
+            f'<font name="{bold_font}">Retest:</font> {xml_escape(f["retest"])}',
+            s_body,
+        ))
 
-            story.append(Paragraph('6.7. Ảnh hưởng tiềm tàng', sub2_st))
-            add_bullet(f['potential_impact'])
-
-    # 7. Đề xuất remediation
-    add_sec(7)
-    if not m['findings']:
-        story.append(Paragraph('Không phát sinh đề xuất khắc phục bắt buộc do dữ liệu đầu vào không ghi nhận phát hiện lỗ hổng.', body_st))
-    for f in m['findings']:
-        ref_str = (
-            '; '.join(
-                f"{r['section']}" + (f" ({r['url']})" if r['url'] else '')
-                for r in f['rem_refs']
-            )
-            if f['rem_refs']
-            else f"{f['owasp_doc']} {f['owasp_version']} — {f['owasp_category']} ({f['owasp_url']})"
-        )
-        story.append(Paragraph(_fmt_raw(f"{f['id']}: {f['title']}"), sub_st))
-        if is_compact:
-            add_bullet(f"**7.1. Mục tiêu:** {f['rem_goal']}")
-            story.append(Paragraph('7.2. Biện pháp đề xuất (Top khuyến nghị OWASP)', sub2_st))
-            for st_line in f['rem_steps']:
-                add_bullet(st_line)
-            for code_ex in f['code_examples']:
-                add_bullet(f"**Ví dụ mã an toàn (`{code_ex['section']}`):**")
-                add_snippet_block(code_ex['code'])
-            add_bullet(
-                f"**7.3. Cơ sở OWASP:** Bằng chứng `{', '.join(f['evidence_ids']) or 'Chưa có'}` | Tham chiếu: {ref_str}"
-            )
-            add_bullet(f"**7.4. Ưu tiên:** {f['priority']}")
-            add_bullet(
-                f"**7.5. Kế hoạch kiểm tra lại:** {f['retest_check']} ({f['retest_method']}) — "
-                f"**Kết quả kiểm tra:** {f['retest_result']} | **Bằng chứng sau khắc phục:** {f['retest_evidence']}"
-            )
-        else:
-            story.append(Paragraph('7.1. Mục tiêu khắc phục', sub2_st))
-            add_bullet(f['rem_goal'])
-
-            story.append(Paragraph('7.2. Biện pháp đề xuất', sub2_st))
-            for st_line in f['rem_steps']:
-                add_bullet(st_line)
-            for code_ex in f['code_examples']:
-                add_bullet(f"**Ví dụ mã an toàn trích xuất từ `{code_ex['section']}`:**")
-                add_snippet_block(code_ex['code'])
-
-            story.append(Paragraph('7.3. Cơ sở của đề xuất', sub2_st))
-            add_bullet(f"**Phát hiện liên quan:** `{f['id']}` | **Bằng chứng liên quan:** {', '.join(f'`{eid}`' for eid in f['evidence_ids']) or 'Chưa có'}")
-            add_bullet(f"**Tài liệu tham khảo:** {ref_str}")
-            add_bullet(f"**Lý do lựa chọn:** {f['rem_reason']}")
-
-            story.append(Paragraph('7.4. Ưu tiên khắc phục', sub2_st))
-            add_bullet(f['priority'])
-
-            story.append(Paragraph('7.5. Kế hoạch kiểm tra lại', sub2_st))
-            add_bullet(f"**Nội dung cần kiểm tra:** {f['retest_check']}")
-            add_bullet(f"**Phương pháp xác minh:** {f['retest_method']}")
-            add_bullet(f"**Kết quả kiểm tra:** {f['retest_result']}")
-            add_bullet(f"**Bằng chứng sau khắc phục:** {f['retest_evidence']}")
-
-    # 8. Giới hạn và độ tin cậy của báo cáo
-    add_sec(8)
-    story.append(Paragraph('8.1. Giới hạn', sub_st))
-    for lb in m['limits_bullets']:
-        add_bullet(lb)
-    story.append(Paragraph('8.2. Những nội dung cần xác minh', sub_st))
-    for vi in m['verify_items']:
-        add_bullet(vi)
-    story.append(Paragraph('8.3. Độ tin cậy', sub_st))
-    for rp in m['reliability_paras']:
-        story.append(Paragraph(_fmt_inline(rp), body_st))
-
-    # 9. Kết luận
-    add_sec(9)
-    for cp in m['conclusion_paras']:
-        story.append(Paragraph(_fmt_inline(cp), body_st))
-
-    # 10. Phụ lục
-    add_sec(10)
-    if is_compact:
-        src_summary = '; '.join(
-            f"`{s['id']}` `{s['name']}`" + (f" (SHA-256: `{s['sha256'][:16]}…`)" if s['sha256'] else '')
-            for s in m['input_sources']
-        )
-        ev_summary = '; '.join(
-            f"`{ev['id']}`→`{ev['finding_id']}` ({ev['kind']})"
-            for ev in m['all_evidences']
-        ) or 'Chưa có'
-        owasp_summary = '; '.join(
-            f"{d['title']} ({d['url']})" for d in m['cited_owasp_docs']
-        ) or 'OWASP Top 10:2025 (https://owasp.org/Top10/2025/)'
-        add_bullet(f"**10.1. Nguồn đầu vào:** {src_summary}")
-        add_bullet(f"**10.2. Danh mục bằng chứng:** {ev_summary}")
-        add_bullet(f"**10.3. Tài liệu OWASP đối chiếu:** {owasp_summary}")
-        add_bullet(f"**10.4. Kiểm tra lại:** Trạng thái `{m['retest_status']}` — {m['retest_evidence']}")
+    # 3. Quan sát (chưa phải lỗ hổng)
+    story.append(_para('3. Quan sát (chưa phải lỗ hổng)', s_h1))
+    obs_header = [_para(h, s_th) for h in ('Dịch vụ', 'Vị trí', 'Quan sát', 'Ghi chú')]
+    obs_rows = [obs_header]
+    if not m['observations']:
+        obs_rows.append([
+            _para('—', s_td),
+            _para('—', s_td),
+            _para('Không ghi nhận banner/cổng mở thụ động riêng', s_td),
+            _para('—', s_td),
+        ])
     else:
-        story.append(Paragraph('10.1. Danh sách dữ liệu đầu vào', sub_st))
-        for s in m['input_sources']:
-            sha_bit = f" | SHA-256: `{s['sha256']}`" if s['sha256'] else ''
-            add_bullet(f"**`{s['id']}`** — `{s['name']}` ({s['source']}) — {s['status']}{sha_bit}")
+        for ob in m['observations']:
+            obs_rows.append([
+                _para(xml_escape(ob['service']), s_td),
+                _para(xml_escape(ob['location']), s_td),
+                _para(xml_escape(ob['observation']), s_td),
+                _para(xml_escape(ob['note']), s_td),
+            ])
+    obs_col_w = [22 * mm, 38 * mm, 52 * mm, page_w - 112 * mm]
+    obs_tbl = Table(obs_rows, colWidths=obs_col_w, repeatRows=1)
+    obs_tbl.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), FILL_TABLE_HEAD),
+        ('GRID', (0, 0), (-1, -1), 0.5, BORDER_HAIRLINE),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('LEFTPADDING', (0, 0), (-1, -1), 5),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+    ]))
+    story.append(obs_tbl)
 
-        story.append(Paragraph('10.2. Danh mục bằng chứng kiểm thử', sub_st))
-        if not m['all_evidences']:
-            add_bullet('Không có trích đoạn bằng chứng chi tiết trong dữ liệu đầu vào.')
-        else:
-            for ev in m['all_evidences']:
-                add_bullet(f"**`{ev['id']}`** (thuộc `{ev['finding_id']}`, nguồn `{ev['source_id']}`): {ev['kind']}")
+    # 4. Kết quả âm tính
+    story.append(_para('4. Kết quả âm tính', s_h1))
+    for neg in m['negative_results']:
+        story.append(_para(f'• {_md_inline_to_rl(neg, bold_font)}', s_bullet))
 
-        story.append(Paragraph('10.3. Tài liệu OWASP được đối chiếu', sub_st))
-        if not m['cited_owasp_docs']:
-            add_bullet('OWASP Top 10:2025 (https://owasp.org/Top10/2025/)')
-        else:
-            for doc in m['cited_owasp_docs']:
-                add_bullet(f"**{doc['type']}:** {doc['title']}" + (f" — {doc['url']}" if doc['url'] else ''))
-        if m['knowledge_sha256'] and m['knowledge_sha256'] != 'not_used':
-            add_bullet(f"**Mã băm toàn vẹn kho tri thức OWASP cục bộ (SHA-256):** `{m['knowledge_sha256']}`")
+    # 5. Giới hạn & việc cần xác minh
+    story.append(_para('5. Giới hạn & việc cần xác minh', s_h1))
+    for lim in m['limitations_and_verify']:
+        story.append(_para(f'• {_md_inline_to_rl(lim, bold_font)}', s_bullet))
 
-        story.append(Paragraph('10.4. Kết quả kiểm tra lại', sub_st))
-        add_bullet(f"**Trạng thái hiện tại:** {m['retest_status']}")
-        add_bullet(f"**Bằng chứng kiểm tra lại:** {m['retest_evidence']}")
+    # 6. Phụ lục
+    app = m['appendix']
+    story.append(_para('6. Phụ lục', s_h1))
+    story.append(_para(
+        f'• <font name="{bold_font}">Lệnh đã chạy:</font> {_mono_run(app["command"], FONT_MONO, reg_font, "8.2")}',
+        s_bullet,
+    ))
+    story.append(_para(
+        f'• <font name="{bold_font}">Dữ liệu đầu vào:</font> {_mono_run(app["input_data"], FONT_MONO, reg_font, "8.2")}',
+        s_bullet,
+    ))
+    story.append(_para(
+        f'• <font name="{bold_font}">Bằng chứng đầy đủ:</font> {_md_inline_to_rl(app["full_evidence"], bold_font)}',
+        s_bullet,
+    ))
 
-    def _draw_page(canvas, doc_obj):
-        pnum = canvas.getPageNumber()
-        canvas.saveState()
-        canvas.setFont('RagText', 7.6)
-        canvas.setFillColor(col_muted)
-        mode_lbl = 'Bản Tinh gọn (Trình bày)' if is_compact else 'Bản Hồ sơ Đầy đủ (Audit)'
-        canvas.drawString(margin_x, 16.0 if is_compact else 22.0, f'Báo cáo Kiểm thử Bảo mật CSDL & Đề xuất Remediation theo OWASP · {mode_lbl}')
-        canvas.drawRightString(A4[0] - margin_x, 16.0 if is_compact else 22.0, f'Trang {pnum}')
-        canvas.restoreState()
+    doc.build(story, canvasmaker=_make_numbered_canvas_factory(m['running_header'], reg_font))
+    return out_file
 
-    out = Path(path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    doc = BaseDocTemplate(
-        str(out),
-        pagesize=A4,
-        leftMargin=margin_x,
-        rightMargin=margin_x,
-        topMargin=margin_y,
-        bottomMargin=margin_y,
-        title=m['title'],
-        author='DBSec OWASP Report Engine',
-    )
-    frame = Frame(margin_x, margin_y, width, A4[1] - (2.0 * margin_y), leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0)
-    doc.addPageTemplates([PageTemplate(id='dbsec', frames=[frame], onPage=_draw_page)])
-    doc.build(story)
-    return out
+
+def render_pdf(report: dict, path, profile: str | None = None) -> Path:
+    """Render report PDF:
+    - Default (`profile='compact'`): exact 6-section `Template báo cáo pentest gọn.pdf` layout (2–3 pages).
+    - Secondary (`profile='full'`): full 10-section audit archive (`render_full_audit_pdf`).
+    """
+    out_file = Path(path)
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+    eff_profile = str(
+        profile
+        or ((report.get('report_metadata') or {}).get('report_profile'))
+        or 'compact'
+    ).strip().lower()
+    if eff_profile == 'full':
+        return Path(render_full_audit_pdf(report, out_file, profile='full'))
+    return _render_compact_template_pdf(report, out_file)

@@ -443,9 +443,11 @@ class JobManager:
             else:
                 final_sources = None
             if final_sources:
+                from .compact_pentest_template import render_compact_pentest_markdown
                 self.update(id_, input_sources=final_sources)
                 Path(paths[1]).write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-                (folder / 'output' / 'dbsec_report.md').write_text(render_dbsec_markdown(report), encoding='utf-8')
+                (folder / 'output' / 'dbsec_report.md').write_text(render_dbsec_markdown(report, profile='full'), encoding='utf-8')
+                (folder / 'output' / 'compact_pentest_report.md').write_text(render_compact_pentest_markdown(report), encoding='utf-8')
                 render_pdf(report, Path(paths[2]))
 
             if not Path(paths[2]).is_file():
@@ -497,7 +499,7 @@ class JobManager:
                 'duration_sec': round(max(0.1, _time.monotonic() - t0), 1),
                 'findings_preview': preview,
             }
-            done_stage = 'Đã tạo Báo cáo 10 mục; có phần AI chưa hoàn tất' if partial else 'Báo cáo Kiểm thử Bảo mật CSDL (10 mục) đã sẵn sàng'
+            done_stage = 'Đã tạo Báo cáo Pentest gọn (6 mục); có phần AI chưa hoàn tất' if partial else 'Báo cáo Kiểm thử Bảo mật gọn (6 mục) đã sẵn sàng'
             with self.lock:
                 cur = self.jobs[id_]
                 ev = (cur.get('events', []) + [{'at': now(), 'text': done_stage, 'step': 6, 'percent': 100}])[-80:]
@@ -735,23 +737,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_data(409, {'error': 'Báo cáo chưa sẵn sàng.'})
             out_dir = self.server.manager.directory / match[1] / 'output'
             req_profile = parse_qs(parsed_url.query).get('profile', [''])[0].strip().lower()
-            default_prof = normalize_report_profile(None, job.get('report_metadata')) if 'normalize_report_profile' in globals() else 'compact'
+            from .compact_pentest_template import render_compact_pentest_markdown
             from .dbsec_report import normalize_report_profile
             eff_profile = normalize_report_profile(req_profile or None, job.get('report_metadata'))
             report_json_file = out_dir / 'report.json'
             if kind in {'pdf', 'md'} and report_json_file.is_file():
                 cached_target = out_dir / (
-                    f'report_v7_{eff_profile}.pdf' if kind == 'pdf' else f'dbsec_report_v7_{eff_profile}.md'
+                    f'report_v8_{eff_profile}.pdf' if kind == 'pdf' else f'report_v8_{eff_profile}.md'
                 )
                 if not cached_target.is_file():
                     rep_obj = json.loads(report_json_file.read_text(encoding='utf-8'))
                     if kind == 'pdf':
                         render_pdf(rep_obj, cached_target, profile=eff_profile)
+                    elif eff_profile == 'full':
+                        cached_target.write_text(render_dbsec_markdown(rep_obj, profile='full'), encoding='utf-8')
                     else:
-                        cached_target.write_text(render_dbsec_markdown(rep_obj, profile=eff_profile), encoding='utf-8')
+                        cached_target.write_text(render_compact_pentest_markdown(rep_obj), encoding='utf-8')
                 file = cached_target
             else:
-                fname = {'md': 'dbsec_report.md', 'log': 'sanitized_input.txt'}.get(kind, 'report.' + kind)
+                fname = {'md': 'compact_pentest_report.md', 'log': 'sanitized_input.txt'}.get(kind, 'report.' + kind)
                 file = out_dir / fname
             if not file.is_file():
                 return self.send_data(404, {'error': 'Không tìm thấy file báo cáo.'})

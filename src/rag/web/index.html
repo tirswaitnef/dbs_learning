@@ -127,13 +127,13 @@
             </span>
           </div>
           <h1>Báo cáo kiểm thử bảo mật CSDL &amp; <em>đề xuất remediation theo OWASP</em></h1>
-          <p class="intro">Tải lên <strong>bất kỳ tệp kết quả công cụ nào</strong> (<strong>sqlmap</strong> mọi phiên bản/copy-paste, <strong>Nmap</strong> text/XML, <strong>OWASP ZAP</strong> HTML/JSON/XML, <strong>Burp</strong>, <strong>Nuclei</strong>, <strong>curl</strong>, log CSDL...) hoặc <strong>Báo cáo Pentest (PDF, Markdown, TXT)</strong>. <strong>AI cục bộ (Ollama) trực tiếp đọc hiểu toàn bộ tệp đầu vào</strong> không phụ thuộc khuôn mẫu cứng, kiểm chứng trích dẫn nguyên văn <code>E-01+</code> (không tự bịa số liệu hay mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Báo cáo 10 mục chuẩn</strong>.</p>
+          <p class="intro">Tải lên <strong>bất kỳ tệp kết quả công cụ nào</strong> (<strong>sqlmap</strong> mọi phiên bản/copy-paste, <strong>Nmap</strong> text/XML, <strong>OWASP ZAP</strong> HTML/JSON/XML, <strong>Burp</strong>, <strong>Nuclei</strong>, <strong>curl</strong>, log CSDL...) hoặc <strong>Báo cáo Pentest (PDF, Markdown, TXT)</strong>. <strong>AI cục bộ (Ollama) trực tiếp đọc hiểu toàn bộ tệp đầu vào</strong>, kiểm chứng trích dẫn nguyên văn <code>E-01+</code> (không tự chấm CVSS hay suy diễn mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Mẫu Báo cáo Kiểm thử Gọn 6 mục (2–3 trang)</strong>.</p>
           <div class="steps" aria-label="Quy trình xử lý">
             <div><span>1</span>AI đọc trực tiếp mọi log công cụ &amp; Pentest (<code>I-01+</code>, <code>E-01+</code>)</div>
             <i>→</i>
             <div><span>2</span>Nhận diện CWE &amp; Truy xuất RAG OWASP CSDL</div>
             <i>→</i>
-            <div><span>3</span>Kết xuất Báo cáo 10 mục chuẩn PDF &amp; Markdown</div>
+            <div><span>3</span>Kết xuất Báo cáo Gọn 6 mục chuẩn PDF &amp; Markdown</div>
           </div>
         </div>
 
@@ -215,8 +215,8 @@
                 </label>
                 <label>Chế độ trình bày Báo cáo PDF / Markdown
                   <select id="meta-report_profile">
-                    <option value="compact" selected>Bản Tinh gọn / Trình bày (2–4 trang · Khuyến nghị)</option>
-                    <option value="full">Bản Hồ sơ Kiểm toán Đầy đủ (Full Audit)</option>
+                    <option value="compact" selected>Mẫu Báo cáo Kiểm thử Gọn (6 mục · 2–3 trang · Mặc định)</option>
+                    <option value="full">Bản Hồ sơ Kiểm toán Đầy đủ (10 mục · Full Audit)</option>
                   </select>
                 </label>
                 <label class="debug-only" hidden>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm

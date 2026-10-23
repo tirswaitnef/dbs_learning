@@ -534,15 +534,34 @@ class OllamaIntegrationTests(unittest.TestCase):
                 rendered_paragraphs.append(str(text))
                 return orig_para(text, *args, **kwargs)
 
+            # 1) Default PDF renders the exact 6-section `Template báo cáo pentest gọn.pdf` layout
             with patch("reportlab.platypus.Paragraph", side_effect=spy_paragraph):
                 pdf_file = render_pdf(report_obj, Path(pdf_dir) / "out.pdf")
             self.assertTrue(pdf_file.read_bytes().startswith(b"%PDF-"))
+            compact_pdf_text = __import__("html").unescape("\n".join(rendered_paragraphs))
+            self.assertIn("8.1", compact_pdf_text)
+            self.assertIn("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", compact_pdf_text)
+            for forbidden in ("AUDITNOTE", "AuditNote", "audit trail", "scanner_alert", "[K1]", "[C1]", "[F1]", "Quy tắc điền"):
+                self.assertNotIn(forbidden, compact_pdf_text)
+            for expected_compact_sec in (
+                "Báo cáo kiểm thử bảo mật —",
+                "1. Tóm tắt",
+                "2. Chi tiết phát hiện",
+                "3. Quan sát (chưa phải lỗ hổng)",
+                "4. Kết quả âm tính",
+                "5. Giới hạn & việc cần xác minh",
+                "6. Phụ lục",
+                "F-01:",
+                "E-01",
+            ):
+                self.assertIn(expected_compact_sec, compact_pdf_text)
+
+            # 2) Full Audit profile (`profile='full'`) preserves all 10 archive sections
+            rendered_paragraphs.clear()
+            with patch("reportlab.platypus.Paragraph", side_effect=spy_paragraph):
+                pdf_full_file = render_pdf(report_obj, Path(pdf_dir) / "out_full.pdf", profile="full")
+            self.assertTrue(pdf_full_file.read_bytes().startswith(b"%PDF-"))
             full_pdf_text = __import__("html").unescape("\n".join(rendered_paragraphs))
-            self.assertIn("8.1", full_pdf_text)
-            self.assertIn("CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:N", full_pdf_text)
-            self.assertNotIn("các công cụ như sqlmap/nmap không xuất điểm CVSS", full_pdf_text)
-            for forbidden in ("AUDITNOTE", "AuditNote", "audit trail", "scanner_alert", "[K1]", "[C1]", "[F1]"):
-                self.assertNotIn(forbidden, full_pdf_text)
             for expected_sec in (
                 "1. Thông tin chung",
                 "2. Đánh giá dữ liệu đầu vào",
@@ -1121,6 +1140,16 @@ class OllamaIntegrationTests(unittest.TestCase):
 
             with patch("reportlab.platypus.Paragraph", side_effect=spy_para):
                 render_pdf(saved, tmp_p / "verified.pdf")
+            joined_compact = __import__("html").unescape("\n".join(rendered_paragraphs))
+            self.assertIn("2. Chi tiết phát hiện", joined_compact)
+            self.assertIn("F-01:", joined_compact)
+            self.assertIn("F-02:", joined_compact)
+            self.assertIn("SQL_Injection_Prevention_Cheat_Sheet.html", joined_compact)
+            self.assertIn("Cross_Site_Scripting_Prevention_Cheat_Sheet.html", joined_compact)
+
+            rendered_paragraphs.clear()
+            with patch("reportlab.platypus.Paragraph", side_effect=spy_para):
+                render_pdf(saved, tmp_p / "verified_full.pdf", profile="full")
             joined_pdf = __import__("html").unescape("\n".join(rendered_paragraphs))
             pdf_sec6 = joined_pdf.split('<a name="sec6"/>6. Phân tích chi tiết phát hiện', 1)[1].split('<a name="sec7"/>7. Đề xuất remediation', 1)[0]
             pdf_sec7 = joined_pdf.split('<a name="sec7"/>7. Đề xuất remediation', 1)[1].split('<a name="sec8"/>8. Giới hạn và độ tin cậy của báo cáo', 1)[0]

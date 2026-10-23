@@ -304,17 +304,40 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                 self.assertEqual(cur["summary"]["tentative_findings"], 1)
                 self.assertEqual(cur["summary"]["insufficient_findings"], 1)
 
+                # Default `/md` serves the 6-section `Template báo cáo pentest gọn.pdf` Markdown
                 with opener.open(urllib.request.Request(f"{base}/api/jobs/{jid}/md", headers={"Cookie": cookie_hdr})) as rmd:
                     disp_md = rmd.headers.get("Content-Disposition", "")
                     md_body = rmd.read().decode("utf-8")
                 self.assertIn(f"bao-cao-bao-mat-csdl-{jid[:8]}.md", disp_md)
-                self.assertIn("| I-01 | `zap_pg.json` |", md_body)
-                self.assertIn("| I-02 | `nmap_pg.xml` |", md_body)
-                self.assertIn("| I-03 | `noev.json` |", md_body)
-                self.assertIn("**Danh mục:** Chưa xác định", md_body)
-                self.assertIn("Chưa đủ dữ liệu", md_body)
-                self.assertIn("Có dấu hiệu", md_body)
-                self.assertIn("Đã xác nhận", md_body)
+                for sec_h in (
+                    "## 1. Tóm tắt",
+                    "## 2. Chi tiết phát hiện",
+                    "## 3. Quan sát (chưa phải lỗ hổng)",
+                    "## 4. Kết quả âm tính",
+                    "## 5. Giới hạn & việc cần xác minh",
+                    "## 6. Phụ lục",
+                ):
+                    self.assertIn(sec_h, md_body)
+                self.assertNotIn("Quy tắc điền", md_body)
+                # Passive Nmap open port goes strictly into Section 3 without CWE; Nmap command recorded in Section 6
+                sec3_md = md_body.split("## 3. Quan sát (chưa phải lỗ hổng)", 1)[1].split("## 4. Kết quả âm tính", 1)[0]
+                self.assertIn("PostgreSQL DB 15.2", sec3_md)
+                self.assertNotIn("CWE-", sec3_md)
+                self.assertIn("nmap -sV -p 5432 203.0.113.20", md_body)
+                self.assertIn("I-01 zap_pg.json", md_body)
+                self.assertIn("I-02 nmap_pg.xml", md_body)
+                self.assertIn("I-03 noev.json", md_body)
+
+                # Secondary `?profile=full` serves the 10-section Full Audit Markdown
+                with opener.open(urllib.request.Request(f"{base}/api/jobs/{jid}/md?profile=full", headers={"Cookie": cookie_hdr})) as rmd_full:
+                    md_full_body = rmd_full.read().decode("utf-8")
+                self.assertIn("| I-01 | `zap_pg.json` |", md_full_body)
+                self.assertIn("| I-02 | `nmap_pg.xml` |", md_full_body)
+                self.assertIn("| I-03 | `noev.json` |", md_full_body)
+                self.assertIn("**Danh mục:** Chưa xác định", md_full_body)
+                self.assertIn("Chưa đủ dữ liệu", md_full_body)
+                self.assertIn("Có dấu hiệu", md_full_body)
+                self.assertIn("Đã xác nhận", md_full_body)
 
                 with opener.open(urllib.request.Request(f"{base}/api/jobs/{jid}/pdf", headers={"Cookie": cookie_hdr})) as rpdf:
                     disp_pdf = rpdf.headers.get("Content-Disposition", "")
@@ -959,6 +982,157 @@ class CourseworkReportAndWebTests(unittest.TestCase):
             self.assertNotIn("ai-extracted", full_pdf_text)
             # General Info table rendered ONCE only (not duplicated between cover page and Section 1)
             self.assertEqual(full_pdf_text.count("Mã báo cáo"), 1)
+
+    def test_compact_pentest_template_all_6_sections_and_all_6_mandatory_rules(self):
+        """Verify 100% fidelity to `Template báo cáo pentest gọn.pdf` (6 sections + all 6 mandatory rules)."""
+        from pypdf import PdfReader
+        from rag.compact_pentest_template import prepare_compact_pentest, render_compact_pentest_markdown
+
+        # Same bug reported across 2 scanner rows with different SQLi techniques + passive Nmap port + negative Submit probe
+        row_sqli_a = {
+            "id": "SCAN-01A",
+            "title": "SQL Injection in GET parameter 'id' (error-based EXTRACTVALUE)",
+            "cwe": "CWE-89",
+            "severity": "high",
+            "tool": "sqlmap",
+            "location": "http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit",
+            "kind": "scanner_alert",
+            "evidence": ["Parameter: id (GET)\n    Type: error-based\n    Payload: id=1' AND EXTRACTVALUE(1,1)-- -"],
+            "details": {
+                "parameter": "id",
+                "method": "GET",
+                "techniques": ["error-based", "boolean-based blind"],
+                "http_messages": [
+                    {
+                        "id": "#239",
+                        "request": "GET /vulnerabilities/sqli/?id=1%27%20AND%20EXTRACTVALUE%281%2C1%29--%20-&Submit=Submit HTTP/1.1\nCookie: PHPSESSID=secret777; security=low\nHost: 198.51.100.79",
+                        "response": "HTTP/1.1 200 OK\nServer: Apache/2.4.25 (Debian)\n<pre>XPATH syntax error: '\\qpxvq1qpjxq'</pre>",
+                    },
+                ],
+                "scan_telemetry": {
+                    "dbms": "MySQL >= 5.1 (MariaDB fork)",
+                    "web_tech": "Apache 2.4.25 (Debian), PHP 7.0.33",
+                    "current_user": "app@localhost",
+                    "current_db": "dvwa",
+                    "is_dba": False,
+                    "databases": ["dvwa", "information_schema"],
+                    "tables_by_db": {"dvwa": ["guestbook", "users"]},
+                    "non_dynamic_parameters": ["Submit"],
+                    "unmatched_http_ids": ["#1008", "#3838"],
+                },
+            },
+            "guidance": [
+                {
+                    "title": "SQL Injection Prevention Cheat Sheet",
+                    "section": "SQL Injection Prevention Cheat Sheet / Defense Option 1: Prepared Statements",
+                    "url": "https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html",
+                    "source_excerpt": "Use prepared statements with parameterized queries:\n```php\n$stmt = $dbh->prepare('SELECT first_name FROM users WHERE user_id = :id');\n$stmt->bindParam(':id', $id, PDO::PARAM_INT);\n```",
+                }
+            ],
+        }
+        row_sqli_b = {
+            "id": "SCAN-01B",
+            "title": "SQL Injection in GET parameter 'id' (UNION query & time-based blind)",
+            "cwe": "CWE-89",
+            "severity": "high",
+            "tool": "sqlmap",
+            "location": "http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit",
+            "kind": "scanner_alert",
+            "evidence": ["Parameter: id (GET)\n    Type: UNION query\n    Type: time-based blind"],
+            "details": {
+                "parameter": "id",
+                "method": "GET",
+                "techniques": ["UNION query", "time-based blind"],
+            },
+            "guidance": [],
+        }
+        row_open_port = {
+            "id": "NMAP-PORT-80",
+            "title": "Service observation: http on 198.51.100.79:80/tcp",
+            "cwe": "unknown",
+            "severity": "unknown",
+            "tool": "Nmap",
+            "location": "198.51.100.79:80/tcp",
+            "kind": "observation",
+            "evidence": ["Open port 80/tcp Apache httpd 2.4.25 ((Debian))"],
+            "details": {
+                "service": {"name": "http", "product": "Apache httpd", "version": "2.4.25", "extrainfo": "(Debian)"},
+                "scan_telemetry": {"cli_hint": "nmap -sV -p 80,3306 198.51.100.79"},
+            },
+            "guidance": [],
+        }
+        row_no_proof = {
+            "id": "MANUAL-NOEV",
+            "title": "Kiểm tra tham số không kèm bằng chứng",
+            "cwe": "CWE-89",
+            "severity": "unknown",
+            "tool": "custom-check",
+            "location": "http://198.51.100.79/profile",
+            "kind": "scanner_alert",
+            "evidence": [],
+            "details": {},
+            "guidance": [],
+        }
+
+        rep = {
+            "schema_version": 1,
+            "generated_at": "2026-10-23T08:00:00+00:00",
+            "input_format": "sqlmap-log",
+            "input_filename": "pentest_bundle.txt",
+            "scan_sha256": "deadbeef" * 8,
+            "findings": [row_sqli_a, row_sqli_b, row_open_port, row_no_proof],
+            "report_metadata": {},
+        }
+
+        m = prepare_compact_pentest(rep)
+        md = render_compact_pentest_markdown(rep)
+
+        # Rule 1: 1 bug = 1 F-xx entry (row_sqli_a + row_sqli_b consolidated into F-01; row_no_proof becomes F-02; row_open_port in Section 3!)
+        self.assertEqual([f["id"] for f in m["findings"]], ["F-01", "F-02"])
+        self.assertIn("4 kỹ thuật", m["findings"][0]["description"])
+
+        # Rule 2: Banner / open port strictly in Section 3 without CWE; finding with empty evidence gets OWASP / CWE = 'Chưa xác định'
+        self.assertTrue(any("Apache" in ob["observation"] for ob in m["observations"]))
+        self.assertEqual(m["findings"][1]["owasp_cwe_short"], "Chưa xác định")
+        sec3 = md.split("## 3. Quan sát (chưa phải lỗ hổng)", 1)[1].split("## 4. Kết quả âm tính", 1)[0]
+        self.assertNotIn("CWE-", sec3)
+
+        # Rule 3: Never invent CVSS; write 'Chưa xác định' when absent
+        self.assertEqual(m["findings"][0]["sev_cvss_display"], "High (CVSS: Chưa xác định)")
+        self.assertEqual(m["findings"][1]["sev_cvss_display"], "Chưa xác định")
+
+        # Rule 4: Max 2 evidence blocks + 1 primary remediation + 1 OWASP Cheat Sheet source URL per finding
+        self.assertLessEqual(len(m["findings"][0]["evidences"]), 2)
+        self.assertIn("SQL_Injection_Prevention_Cheat_Sheet.html", m["findings"][0]["remediation_source_url"])
+        self.assertNotIn("secret777", md)
+
+        # Rule 5: Negative results recorded in Section 4 (`Submit` not injectable)
+        sec4 = md.split("## 4. Kết quả âm tính", 1)[1].split("## 5. Giới hạn & việc cần xác minh", 1)[0]
+        self.assertIn("Submit", sec4)
+        self.assertIn("không injectable", sec4)
+
+        # Rule 6: Limitations once in Section 5, CLI command + SHA-256 in Section 6, 'Quy tắc điền' strictly omitted
+        self.assertNotIn("Quy tắc điền", md)
+        self.assertIn("nmap -sV -p 80,3306 198.51.100.79", md)
+        self.assertIn("deadbeef" * 8, md)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_out = render_pdf(rep, Path(tmp) / "compact_template.pdf")
+            reader = PdfReader(str(pdf_out))
+            self.assertGreaterEqual(len(reader.pages), 2)
+            self.assertLessEqual(len(reader.pages), 3)
+            all_text = "\n".join(pg.extract_text() for pg in reader.pages)
+            self.assertIn(f"Page 1 of {len(reader.pages)}", all_text)
+            self.assertNotIn("Quy tắc điền", all_text)
+            for req_h in (
+                "1. Tóm tắt",
+                "2. Chi tiết phát hiện",
+                "3. Quan sát (chưa phải lỗ hổng)",
+                "4. Kết quả âm tính",
+                "5. Giới hạn & việc cần xác minh",
+                "6. Phụ lục",
+            ):
+                self.assertIn(req_h, all_text)
 
 
 if __name__ == "__main__":

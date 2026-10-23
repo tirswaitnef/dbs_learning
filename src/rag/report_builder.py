@@ -159,6 +159,7 @@ def render_markdown(report):
 
 
 def write_report(report, output):
+    from .compact_pentest_template import render_compact_pentest_markdown
     from .dbsec_report import render_dbsec_markdown
     from .llm import format_ai_trace_text
     from .pentest_polish import prepare_pentest_view, render_pentest_markdown
@@ -185,9 +186,11 @@ def write_report(report, output):
     render_pdf(sanitized_report, pdf_path)
     json_path, md_path = output / "report.json", output / "report.md"
     dbsec_md_path = output / "dbsec_report.md"
+    compact_md_path = output / "compact_pentest_report.md"
     pentest_md_path = output / "pentest_report.md"
     json_path.write_text(json.dumps(sanitized_report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     md_path.write_text(render_markdown(sanitized_report), encoding="utf-8")
     dbsec_md_path.write_text(render_dbsec_markdown(sanitized_report), encoding="utf-8")
+    compact_md_path.write_text(render_compact_pentest_markdown(sanitized_report), encoding="utf-8")
     pentest_md_path.write_text(render_pentest_markdown(sanitized_report), encoding="utf-8")
     return md_path, json_path, pdf_path
