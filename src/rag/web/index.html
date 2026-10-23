@@ -3,41 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DBSec OWASP — Báo cáo Kiểm thử Bảo mật CSDL &amp; Đề xuất Remediation theo OWASP</title>
+  <title>Trợ lý Kiểm thử Bảo mật &amp; OWASP — Chatbot Phân tích &amp; Xuất Báo cáo Gọn</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <div class="app">
-    <aside class="sidebar" id="sidebar" aria-label="Lịch sử báo cáo">
+  <div class="app chat-app">
+    <aside class="sidebar" id="sidebar" aria-label="Danh sách cuộc trò chuyện">
       <div class="sidebar-top">
         <a class="brand" href="#new" id="brand-link">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
-              <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
-              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path>
-              <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <path d="M9 12l2 2 4-4"></path>
             </svg>
           </span>
-          <span>DBSec OWASP</span>
+          <span>DBSec OWASP · Assistant</span>
         </a>
         <button class="icon-button mobile-only" id="close-sidebar" type="button" aria-label="Đóng thanh bên">✕</button>
       </div>
 
       <button class="new-chat" id="new-chat" type="button">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-        <span>Phiên báo cáo mới</span>
+        <span>Cuộc trò chuyện mới</span>
       </button>
 
-      <div class="history-label">Báo cáo đã tạo</div>
+      <div class="history-label">Lịch sử trò chuyện</div>
       <nav class="history" id="history" aria-live="polite"></nav>
 
       <div class="sidebar-footer">
-        <div class="status-pill" id="mode-pill">Đang kiểm tra cấu hình</div>
+        <div class="status-pill" id="mode-pill">Đang kết nối trợ lý...</div>
         <div class="user-card">
-          <span class="avatar" aria-hidden="true">DB</span>
+          <span class="avatar" aria-hidden="true">AI</span>
           <div>
-            <strong>DBSec OWASP</strong>
-            <span>Chạy cục bộ · 127.0.0.1</span>
+            <strong>Trợ lý Bảo mật OWASP</strong>
+            <span>Xử lý 100% cục bộ · Riêng tư</span>
           </div>
         </div>
       </div>
@@ -45,11 +44,24 @@
 
     <div class="backdrop" id="backdrop" hidden></div>
 
-    <main class="main" id="main">
+    <main class="main chat-main" id="main">
       <header class="mobile-header">
-        <button class="icon-button" id="open-sidebar" type="button" aria-label="Mở lịch sử">☰</button>
-        <strong>DBSec OWASP</strong>
-        <button class="icon-button" id="mobile-new" type="button" aria-label="Báo cáo mới">＋</button>
+        <button class="icon-button" id="open-sidebar" type="button" aria-label="Mở lịch sử trò chuyện">☰</button>
+        <strong>Trợ lý Bảo mật OWASP</strong>
+        <button class="icon-button" id="mobile-new" type="button" aria-label="Cuộc trò chuyện mới">＋</button>
+      </header>
+
+      <header class="chat-topbar" id="chat-topbar">
+        <div class="chat-topbar-left">
+          <span class="assistant-online-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="chat-thread-title">Trợ lý Kiểm thử Bảo mật &amp; OWASP</strong>
+            <span id="chat-thread-sub">Hỏi đáp kỹ thuật CSDL, phân tích log quét &amp; kết xuất Báo cáo Gọn 6 mục</span>
+          </div>
+        </div>
+        <div class="chat-topbar-right">
+          <button class="topbar-new-btn" id="desktop-new" type="button">＋ Phiên mới</button>
+        </div>
       </header>
 
       <div class="banner" id="banner" role="status" hidden></div>
@@ -61,210 +73,207 @@
         </div>
         <div class="debug-bar-actions">
           <button class="debug-btn" id="debug-run-eval" type="button">Chạy đo lường trực tiếp</button>
-          <a class="debug-exit-link" id="debug-exit-link" href="/">← Giao diện chuẩn (/)</a>
+          <a class="debug-exit-link" id="debug-exit-link" href="/">← Giao diện Trợ lý (/)</a>
         </div>
       </div>
 
-      <section class="workspace" id="workspace">
-        <section class="debug-console" id="debug-console" aria-label="Bảng điều khiển Debug AI và Hybrid RAG" hidden>
-          <div class="debug-tabs" role="tablist">
-            <button class="debug-tab active" data-tab="eval" type="button" role="tab" aria-selected="true">
-              1. Thực nghiệm Định lượng AI &amp; Hybrid RAG
-            </button>
-            <button class="debug-tab" data-tab="playground" type="button" role="tab" aria-selected="false">
-              2. Thử nghiệm Truy xuất Hybrid RRF Trực tiếp
-            </button>
-            <button class="debug-tab" data-tab="comms" type="button" role="tab" aria-selected="false">
-              3. Giao tiếp AI (Prompt &amp; Phản hồi Nguyên văn)
-            </button>
-          </div>
-
-          <div class="debug-tab-body" id="debug-panel-eval">
-            <div class="debug-loading" id="debug-eval-content">Đang nạp số liệu thực nghiệm định lượng AI &amp; Hybrid RAG từ máy chủ...</div>
-          </div>
-
-          <div class="debug-tab-body" id="debug-panel-playground" hidden>
-            <div class="debug-play-intro">
-              Nhập câu truy vấn kỹ thuật bảo mật CSDL (hoặc chọn kịch bản mẫu) để kiểm tra trực tiếp cách <strong>Hybrid Search (Dense E5 + Heading BM25 + RRF + Query Expansion)</strong> hợp nhất thứ hạng trên <strong>25 tài liệu OWASP Cheat Sheet Series CSDL</strong>:
+      <div class="chat-scroll" id="chat-scroll">
+        <section class="workspace chat-workspace" id="workspace">
+          <section class="debug-console" id="debug-console" aria-label="Bảng điều khiển Debug AI và Hybrid RAG" hidden>
+            <div class="debug-tabs" role="tablist">
+              <button class="debug-tab active" data-tab="eval" type="button" role="tab" aria-selected="true">
+                1. Thực nghiệm Định lượng AI &amp; Hybrid RAG
+              </button>
+              <button class="debug-tab" data-tab="playground" type="button" role="tab" aria-selected="false">
+                2. Thử nghiệm Truy xuất Hybrid RRF Trực tiếp
+              </button>
+              <button class="debug-tab" data-tab="comms" type="button" role="tab" aria-selected="false">
+                3. Giao tiếp AI (Prompt &amp; Phản hồi Nguyên văn)
+              </button>
             </div>
-            <div class="debug-presets" id="debug-presets">
-              <button type="button" class="preset-chip" data-q="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" data-cwe="CWE-89" data-stack="PHP / MySQL">CWE-89 · PHP PDO MySQL</button>
-              <button type="button" class="preset-chip" data-q="MySQL root empty default password authentication hardening" data-cwe="CWE-1393" data-stack="MySQL 8.0">CWE-1393 · MySQL Root Rỗng</button>
-              <button type="button" class="preset-chip" data-q="database connection cleartext TLS encryption in transit" data-cwe="CWE-319" data-stack="PostgreSQL / MySQL">CWE-319 · Mã hóa TLS CSDL</button>
-              <button type="button" class="preset-chip" data-q="stored procedure dynamic SQL EXECUTE sp_executesql parameterization" data-cwe="CWE-89" data-stack="SQL Server">CWE-89 · Stored Procedure</button>
-            </div>
-            <form class="debug-query-form" id="debug-query-form">
-              <input id="debug-q-input" type="text" maxlength="300" value="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" placeholder="Nhập từ khóa kỹ thuật / API / cấu hình CSDL...">
-              <input id="debug-cwe-input" type="text" maxlength="30" value="CWE-89" placeholder="Mã CWE (VD: CWE-89)">
-              <input id="debug-stack-input" type="text" maxlength="60" value="PHP / MySQL" placeholder="Ngăn xếp (VD: PHP / MySQL)">
-              <button class="debug-btn primary" type="submit">Truy xuất thử</button>
-            </form>
-            <div id="debug-query-results" class="debug-query-results"></div>
-          </div>
 
-          <div class="debug-tab-body" id="debug-panel-comms" hidden>
-            <div class="debug-comms-toolbar">
-              <label for="debug-job-select">Phiên phân tích:</label>
-              <select id="debug-job-select"></select>
-              <button class="debug-btn" id="debug-refresh-trace" type="button">Làm mới nhật ký AI</button>
+            <div class="debug-tab-body" id="debug-panel-eval">
+              <div class="debug-loading" id="debug-eval-content">Đang nạp số liệu thực nghiệm định lượng AI &amp; Hybrid RAG từ máy chủ...</div>
             </div>
-            <div id="debug-comms-body"></div>
-          </div>
-        </section>
 
-        <div class="empty-state" id="empty-state">
-          <div class="eyebrow"><span></span>KIỂM THỬ BẢO MẬT CSDL · CHUẨN OWASP TOP 10:2025 &amp; CHEAT SHEET</div>
-          <div class="hero-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <ellipse cx="12" cy="5" rx="8" ry="3"></ellipse>
-              <path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"></path>
-              <path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"></path>
-            </svg>
-            <span>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"></polyline>
+            <div class="debug-tab-body" id="debug-panel-playground" hidden>
+              <div class="debug-play-intro">
+                Nhập câu truy vấn kỹ thuật bảo mật CSDL (hoặc chọn kịch bản mẫu) để kiểm tra trực tiếp cách <strong>Hybrid Search (Dense E5 + Heading BM25 + RRF + Query Expansion)</strong> hợp nhất thứ hạng trên <strong>25 tài liệu OWASP Cheat Sheet Series CSDL</strong>:
+              </div>
+              <div class="debug-presets" id="debug-presets">
+                <button type="button" class="preset-chip" data-q="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" data-cwe="CWE-89" data-stack="PHP / MySQL">CWE-89 · PHP PDO MySQL</button>
+                <button type="button" class="preset-chip" data-q="MySQL root empty default password authentication hardening" data-cwe="CWE-1393" data-stack="MySQL 8.0">CWE-1393 · MySQL Root Rỗng</button>
+                <button type="button" class="preset-chip" data-q="database connection cleartext TLS encryption in transit" data-cwe="CWE-319" data-stack="PostgreSQL / MySQL">CWE-319 · Mã hóa TLS CSDL</button>
+                <button type="button" class="preset-chip" data-q="stored procedure dynamic SQL EXECUTE sp_executesql parameterization" data-cwe="CWE-89" data-stack="SQL Server">CWE-89 · Stored Procedure</button>
+              </div>
+              <form class="debug-query-form" id="debug-query-form">
+                <input id="debug-q-input" type="text" maxlength="300" value="PDO prepare ATTR_EMULATE_PREPARES false SQL injection" placeholder="Nhập từ khóa kỹ thuật / API / cấu hình CSDL...">
+                <input id="debug-cwe-input" type="text" maxlength="30" value="CWE-89" placeholder="Mã CWE (VD: CWE-89)">
+                <input id="debug-stack-input" type="text" maxlength="60" value="PHP / MySQL" placeholder="Ngăn xếp (VD: PHP / MySQL)">
+                <button class="debug-btn primary" type="submit">Truy xuất thử</button>
+              </form>
+              <div id="debug-query-results" class="debug-query-results"></div>
+            </div>
+
+            <div class="debug-tab-body" id="debug-panel-comms" hidden>
+              <div class="debug-comms-toolbar">
+                <label for="debug-job-select">Phiên phân tích:</label>
+                <select id="debug-job-select"></select>
+                <button class="debug-btn" id="debug-refresh-trace" type="button">Làm mới nhật ký AI</button>
+              </div>
+              <div id="debug-comms-body"></div>
+            </div>
+          </section>
+
+          <div class="empty-state chat-welcome" id="empty-state">
+            <div class="welcome-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+                <path d="M9 12l2 2 4-4"></path>
               </svg>
-            </span>
-          </div>
-          <h1>Báo cáo kiểm thử bảo mật CSDL &amp; <em>đề xuất remediation theo OWASP</em></h1>
-          <p class="intro">Tải lên <strong>bất kỳ tệp kết quả công cụ nào</strong> (<strong>sqlmap</strong> mọi phiên bản/copy-paste, <strong>Nmap</strong> text/XML, <strong>OWASP ZAP</strong> HTML/JSON/XML, <strong>Burp</strong>, <strong>Nuclei</strong>, <strong>curl</strong>, log CSDL...) hoặc <strong>Báo cáo Pentest (PDF, Markdown, TXT)</strong>. <strong>AI cục bộ (Ollama) trực tiếp đọc hiểu toàn bộ tệp đầu vào</strong>, kiểm chứng trích dẫn nguyên văn <code>E-01+</code> (không tự chấm CVSS hay suy diễn mức độ nghiêm trọng) và đối chiếu <strong>OWASP Top 10:2025</strong> cùng <strong>OWASP Cheat Sheet Series</strong> để xuất <strong>Mẫu Báo cáo Kiểm thử Gọn 6 mục (2–3 trang)</strong>.</p>
-          <div class="steps" aria-label="Quy trình xử lý">
-            <div><span>1</span>AI đọc trực tiếp mọi log công cụ &amp; Pentest (<code>I-01+</code>, <code>E-01+</code>)</div>
-            <i>→</i>
-            <div><span>2</span>Nhận diện CWE &amp; Truy xuất RAG OWASP CSDL</div>
-            <i>→</i>
-            <div><span>3</span>Kết xuất Báo cáo Gọn 6 mục chuẩn PDF &amp; Markdown</div>
-          </div>
-        </div>
+            </div>
+            <h1>Xin chào! Mình có thể hỗ trợ gì cho <em>phiên kiểm thử hôm nay?</em></h1>
+            <p class="intro">
+              Trò chuyện trực tiếp về lỗ hổng CSDL, cách viết code phòng thủ chuẩn <strong>OWASP Cheat Sheet Series</strong>, quy trình <strong>Retest</strong> — hoặc <strong>đính kèm tệp (📎) / dán thẳng log <code>sqlmap</code>, <code>Nmap</code>, <code>ZAP</code> vào ô chat</strong> để tự động tạo <strong>Báo cáo Kiểm thử Bảo mật Gọn (6 mục · PDF &amp; Markdown)</strong>.
+            </p>
 
-        <div class="messages" id="messages" hidden></div>
+            <div class="starter-grid" id="starter-grid" aria-label="Gợi ý bắt đầu trò chuyện">
+              <button type="button" class="starter-card" data-action="sample-scan">
+                <span class="starter-tag">Thử nghiệm ngay · 1 chạm</span>
+                <strong>Phân tích mẫu log sqlmap DVWA &amp; xuất Báo cáo Gọn 6 mục</strong>
+                <small>Gửi trực tiếp log mẫu kèm gói tin HTTP #239 để xem trợ lý phân tích và hỏi đáp tiếp theo</small>
+              </button>
+              <button type="button" class="starter-card" data-prompt="Cách phòng chống SQL Injection triệt để bằng Prepared Statements trong PHP PDO và Python? Cho ví dụ code cụ thể.">
+                <span class="starter-tag">Khắc phục OWASP</span>
+                <strong>Cách vá SQL Injection bằng Prepared Statements (PHP PDO &amp; Python)?</strong>
+                <small>Đối chiếu trực tiếp OWASP Query Parameterization Cheat Sheet kèm đoạn mã an toàn</small>
+              </button>
+              <button type="button" class="starter-card" data-prompt="Giải thích rõ quy tắc khi nào gán mã CWE ở Mục 2 và khi nào chỉ đưa banner/port mở vào Mục 3 Quan sát?">
+                <span class="starter-tag">Chuẩn báo cáo 6 mục</span>
+                <strong>Khi nào gán CWE ở Mục 2 và khi nào đưa vào Quan sát Mục 3?</strong>
+                <small>Tránh gán sai lỗ hổng cho cổng mở thụ động và giữ tính trung thực dữ liệu</small>
+              </button>
+              <button type="button" class="starter-card" data-prompt="Hướng dẫn quy trình kiểm thử lại (Retest) an toàn cho lỗ hổng SQL Injection mà không dùng --dump dữ liệu thật.">
+                <span class="starter-tag">Quy trình Retest</span>
+                <strong>Quy trình Retest xác nhận lỗ hổng SQLi an toàn không dùng --dump?</strong>
+                <small>Các bước kiểm chứng sau vá lỗi cho đội phát triển và kiểm thử viên</small>
+              </button>
+            </div>
+          </div>
 
-        <form class="compose-zone" id="upload-form" novalidate>
-          <div class="composer" id="dropzone">
+          <div class="messages chat-thread" id="messages" hidden></div>
+        </section>
+      </div>
+
+      <div class="chat-dock">
+        <form class="compose-zone chat-compose-form" id="upload-form" novalidate>
+          <p class="form-error" id="form-error" role="alert" hidden></p>
+
+          <div class="composer chat-composer" id="dropzone">
             <input id="file-input" name="file" type="file" accept=".pdf,.md,.markdown,.html,.txt,.log,.json,.jsonl,.xml,.nessus" multiple hidden>
 
             <div class="file-list-wrap" id="file-list-wrap" hidden>
               <div class="file-list-header">
-                <span id="file-count-label">1 nguồn dữ liệu đầu vào</span>
-                <button class="clear-files" id="clear-file" type="button">Xóa tất cả</button>
+                <span id="file-count-label">1 tệp đính kèm</span>
+                <button class="clear-files" id="clear-file" type="button">Bỏ tất cả</button>
               </div>
               <div class="file-chips" id="file-chips"></div>
             </div>
 
-            <textarea id="note" name="note" rows="2" maxlength="1000" placeholder="Ghi chú phạm vi kiểm thử được phép (Mục 1 — ví dụ: Môi trường Lab cô lập, chỉ kiểm thử trên tham số id, không chạy --dump)..."></textarea>
+            <textarea
+              id="note"
+              name="note"
+              rows="1"
+              maxlength="250000"
+              placeholder="Nhập câu hỏi bảo mật, dán trực tiếp log sqlmap / Nmap / ZAP, hoặc đính kèm tệp (Enter để gửi, Shift+Enter xuống dòng)..."
+            ></textarea>
 
-            <div class="composer-actions">
+            <div class="composer-actions chat-composer-bar">
               <div class="attach-group">
-                <button class="attach" id="pick-file" type="button">
+                <button class="attach" id="pick-file" type="button" title="Đính kèm tệp quét hoặc báo cáo Pentest">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
                   </svg>
-                  <span>Chọn báo cáo Pentest / tệp quét</span>
+                  <span>Đính kèm tệp</span>
                 </button>
-                <span class="divider" aria-hidden="true"></span>
-                <label for="format">Định dạng đầu vào</label>
-                <select id="format" name="format">
-                  <option value="auto">Tự động nhận diện (Mọi công cụ &amp; Báo cáo Pentest)</option>
-                  <option value="pentest-report">Báo cáo Pentest · PDF / MD / TXT (AI đọc trực tiếp)</option>
-                  <option value="sqlmap-log">sqlmap · log (.txt/.log)</option>
-                  <option value="nmap">Nmap · XML (-oX)</option>
-                  <option value="zap">OWASP ZAP · JSON/XML</option>
-                  <option value="burp">Burp Suite · XML</option>
-                  <option value="nuclei">Nuclei · JSONL/JSON</option>
-                  <option value="nessus">Nessus · .nessus XML</option>
-                  <option value="normalized">JSON chuẩn hóa</option>
-                </select>
+                <button class="opts-toggle-btn" id="toggle-options-btn" type="button">⚙ Tùy chọn báo cáo</button>
               </div>
-              <button class="send" id="submit-btn" type="submit">
-                <span>Phân tích &amp; Xuất Báo cáo</span>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                  <polyline points="12 5 19 12 12 19"></polyline>
+
+              <button class="send chat-send-btn" id="submit-btn" type="submit" aria-label="Gửi tin nhắn">
+                <span id="submit-btn-label">Gửi</span>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="12" y1="19" x2="12" y2="5"></line>
+                  <polyline points="5 12 12 5 19 12"></polyline>
                 </svg>
               </button>
             </div>
 
             <details class="report-options" id="report-options">
-              <summary>Thông tin khung Báo cáo 10 mục (Mục 1 &amp; Mục 7.5 — để trống hệ thống tự trích từ dữ liệu)</summary>
+              <summary>Thông tin khung Báo cáo Kiểm thử Gọn (tùy chọn — để trống hệ thống tự trích từ dữ liệu)</summary>
               <div class="report-fields">
-                <label>Mã báo cáo (Mục 1)
-                  <input id="meta-report_id" maxlength="120" placeholder="Để trống tự sinh (VD: RPT-DBSEC-20261022-...)">
-                </label>
-                <label>Tên dự án / Đề tài (Mục 1)
-                  <input id="meta-project_name" maxlength="180" placeholder="VD: Đề tài Kiểm thử Bảo mật CSDL &amp; OWASP Remediation">
-                </label>
-                <label>Đối tượng kiểm thử (Mục 1)
-                  <input id="meta-target_object" maxlength="240" placeholder="Để trống tự trích URL / IP / Cổng từ dữ liệu quét">
-                </label>
-                <label>Hệ quản trị CSDL (Mục 1)
-                  <input id="meta-dbms_override" maxlength="180" placeholder="Để trống tự nhận diện DBMS &amp; phiên bản từ log">
-                </label>
-                <label>Thời gian kiểm thử (Mục 1)
-                  <input id="meta-assessment_period" maxlength="180" placeholder="Để trống tự trích mốc thời gian từ tệp đầu vào">
-                </label>
-                <label>Kết quả kiểm tra lại sau khắc phục (Mục 7.5)
-                  <select id="meta-retest_status">
-                    <option value="" selected>Chưa thực hiện (Mặc định chuẩn khi chưa retest)</option>
-                    <option value="Chưa đủ dữ liệu">Chưa đủ dữ liệu</option>
-                    <option value="Đạt">Đạt (Đã có kết quả kiểm tra lại xác nhận)</option>
-                    <option value="Chưa đạt">Chưa đạt (Lỗ hổng vẫn tái hiện khi kiểm tra lại)</option>
+                <label>Định dạng tệp đầu vào
+                  <select id="format" name="format">
+                    <option value="auto">Tự động nhận diện (Mọi công cụ &amp; Báo cáo)</option>
+                    <option value="pentest-report">Tài liệu Pentest · PDF / MD / TXT</option>
+                    <option value="sqlmap-log">sqlmap · log (.txt/.log)</option>
+                    <option value="nmap">Nmap · XML (-oX)</option>
+                    <option value="zap">OWASP ZAP · JSON/XML</option>
+                    <option value="burp">Burp Suite · XML</option>
+                    <option value="nuclei">Nuclei · JSONL/JSON</option>
+                    <option value="nessus">Nessus · .nessus XML</option>
+                    <option value="normalized">JSON chuẩn hóa</option>
                   </select>
                 </label>
-                <label>Bằng chứng kiểm tra lại (Mục 7.5 &amp; 10.4)
-                  <input id="meta-retest_evidence" maxlength="500" placeholder="Để trống nếu chưa thực hiện kiểm tra lại">
-                </label>
-                <label>Chế độ trình bày Báo cáo PDF / Markdown
+                <label>Chế độ xuất PDF / Markdown
                   <select id="meta-report_profile">
-                    <option value="compact" selected>Mẫu Báo cáo Kiểm thử Gọn (6 mục · 2–3 trang · Mặc định)</option>
-                    <option value="full">Bản Hồ sơ Kiểm toán Đầy đủ (10 mục · Full Audit)</option>
+                    <option value="compact" selected>Mẫu Báo cáo Kiểm thử Gọn (6 mục · 2–3 trang)</option>
+                    <option value="full">Bản Hồ sơ Kiểm toán Đầy đủ (10 mục · Audit)</option>
                   </select>
                 </label>
-                <label class="debug-only" hidden>Chế độ gọi AI cục bộ (Ollama) &amp; Bộ nhớ đệm
+                <label>Mã báo cáo
+                  <input id="meta-report_id" maxlength="120" placeholder="Tự sinh (VD: RPT-20261023-...)">
+                </label>
+                <label>Tên hệ thống / Mục tiêu
+                  <input id="meta-project_name" maxlength="180" placeholder="Tự trích từ log (VD: DVWA Lab)">
+                </label>
+                <label>URL / IP mục tiêu
+                  <input id="meta-target_object" maxlength="240" placeholder="Tự trích URL / IP từ dữ liệu quét">
+                </label>
+                <label>Hệ quản trị CSDL
+                  <input id="meta-dbms_override" maxlength="180" placeholder="Tự nhận diện DBMS &amp; phiên bản">
+                </label>
+                <label>Thời gian kiểm thử
+                  <input id="meta-assessment_period" maxlength="180" placeholder="Tự trích mốc thời gian từ log">
+                </label>
+                <label>Trạng thái Retest
+                  <select id="meta-retest_status">
+                    <option value="" selected>Chưa thực hiện (Mặc định)</option>
+                    <option value="Chưa đủ dữ liệu">Chưa đủ dữ liệu</option>
+                    <option value="Đạt">Đạt (Đã xác nhận vá lỗi)</option>
+                    <option value="Chưa đạt">Chưa đạt (Còn tái hiện lỗi)</option>
+                  </select>
+                </label>
+                <label>Ghi chú bằng chứng Retest
+                  <input id="meta-retest_evidence" maxlength="500" placeholder="Để trống nếu chưa retest">
+                </label>
+                <label class="debug-only" hidden>Chế độ Cache AI (Ollama)
                   <select id="meta-force_fresh_ai">
-                    <option value="" selected>Dùng lại Cache SHA-256 nếu trùng tệp (Nhanh)</option>
-                    <option value="1">Luôn gọi trực tiếp Ollama mới (Xem mọi lệnh gửi AI)</option>
+                    <option value="" selected>Dùng Cache SHA-256 nếu trùng tệp (Nhanh)</option>
+                    <option value="1">Luôn gọi trực tiếp Ollama mới</option>
                   </select>
                 </label>
               </div>
             </details>
 
-            <div class="drop-label" aria-hidden="true">Thả một hoặc nhiều tệp kết quả kiểm thử (Nmap, sqlmap, ZAP, Burp, Nuclei, Nessus...)</div>
+            <div class="drop-label" aria-hidden="true">Thả tệp quét vào đây để đính kèm vào cuộc trò chuyện</div>
           </div>
 
-          <p class="form-error" id="form-error" role="alert" hidden></p>
-          <p class="input-help">Hỗ trợ gộp nhiều tệp thành <code>I-01, I-02...</code> (ví dụ: <code>nmap.xml</code> + <code>sqlmap.txt</code> + <code>zap.json</code>). Giữ nguyên mức độ gốc (<code>Chưa xác định</code> khi công cụ không xuất điểm) · Tối đa 10 MB.</p>
-
-          <div class="info-cards" id="info-cards">
-            <div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-                <polyline points="9 12 11 14 15 10"></polyline>
-              </svg>
-              <div>
-                <strong>Trung thực dữ liệu · Chuẩn khung 10 mục</strong>
-                <p>Tách biệt rõ <em>Đã xác nhận</em>, <em>Có dấu hiệu</em>, <em>Chưa đủ dữ liệu</em>; liên kết chặt chẽ <code>I-xx → F-xx → E-xx → OWASP</code>, không tự suy diễn mức độ nghiêm trọng hay khẳng định hệ thống đã an toàn.</p>
-              </div>
-            </div>
-            <div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-                <line x1="8" y1="21" x2="16" y2="21"></line>
-                <line x1="12" y1="17" x2="12" y2="21"></line>
-              </svg>
-              <div>
-                <strong>Ollama Local Tiếng Việt &amp; Kho OWASP CSDL</strong>
-                <p>Xử lý 100% cục bộ với 25 tài liệu <em>OWASP Cheat Sheet Series</em> chuyên biệt CSDL &amp; <em>OWASP Top 10:2025</em>, tự động che khóa phiên nhạy cảm <code>[REDACTED]</code>.</p>
-              </div>
-            </div>
-          </div>
-
-          <p class="privacy" id="privacy-note">Mọi dữ liệu đầu vào chỉ được xử lý cục bộ trên máy này và không gửi lên đám mây bên ngoài.</p>
+          <div class="info-cards" id="info-cards" hidden></div>
+          <p class="privacy chat-disclaimer" id="privacy-note">
+            Trợ lý AI chạy cục bộ · Không tự chấm điểm CVSS · Tự động che khóa phiên nhạy cảm <code>[REDACTED]</code>.
+          </p>
         </form>
-      </section>
-
-      <footer>
-        DBSec OWASP <span>·</span> Báo cáo Kiểm thử Bảo mật CSDL &amp; Đề xuất Remediation theo OWASP (Mục 1–10).
-      </footer>
+      </div>
     </main>
   </div>
 

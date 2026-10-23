@@ -1134,6 +1134,98 @@ class CourseworkReportAndWebTests(unittest.TestCase):
             ):
                 self.assertIn(req_h, all_text)
 
+    def test_assistant_chatbot_multiturn_qa_pasted_scan_and_report_followup(self):
+        """End-to-end test for `/api/chat` & `/api/threads`: standalone Q&A -> pasted scan -> grounded F-01 follow-up."""
+        import http.cookiejar
+        import threading
+        import time
+        import urllib.request
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = JobManager(Path(tmp) / "jobs", demo=True)
+            srv = LocalServer(("127.0.0.1", 0), mgr)
+            port = srv.server_address[1]
+            t = threading.Thread(target=srv.serve_forever, daemon=True)
+            t.start()
+            try:
+                cj = http.cookiejar.CookieJar()
+                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+                base = f"http://127.0.0.1:{port}"
+
+                with opener.open(f"{base}/") as r_home:
+                    home_html = r_home.read().decode("utf-8")
+                self.assertIn("chat-app", home_html)
+                self.assertIn("starter-grid", home_html)
+
+                with opener.open(f"{base}/api/config") as r_cfg:
+                    cfg = json.loads(r_cfg.read().decode("utf-8"))
+                tok = cfg["token"]
+                headers = {"X-App-Token": tok, "Content-Type": "application/json; charset=utf-8"}
+
+                # Turn 1: Standalone security question without any file uploaded
+                req1 = urllib.request.Request(
+                    f"{base}/api/chat",
+                    data=json.dumps({"message": "Cách phòng chống SQL Injection bằng PHP PDO Prepared Statements?"}).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with opener.open(req1) as resp1:
+                    c1 = json.loads(resp1.read().decode("utf-8"))
+                tid = c1["thread"]["id"]
+                self.assertIn("PDO::ATTR_EMULATE_PREPARES", c1["reply"]["text"])
+                self.assertGreaterEqual(len(c1["reply"]["suggestions"]), 2)
+
+                # Turn 2: Paste raw sqlmap log directly into the exact same chat thread
+                pasted_log = (
+                    "Target URL: http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit\n"
+                    "[11:22:01] [WARNING] GET parameter 'Submit' does not seem to be dynamic\n"
+                    "---\n"
+                    "Parameter: id (GET)\n"
+                    "    Type: error-based\n"
+                    "    Title: MySQL >= 5.1 AND error-based\n"
+                    "    Payload: id=1' AND EXTRACTVALUE(1,1)-- -\n"
+                    "---\n"
+                    "back-end DBMS: MySQL >= 5.1 (MariaDB fork)\n"
+                    "current user: 'app@localhost'\n"
+                    "current database: 'dvwa'\n"
+                )
+                req2 = urllib.request.Request(
+                    f"{base}/api/chat",
+                    data=json.dumps({"thread_id": tid, "message": pasted_log}).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with opener.open(req2) as resp2:
+                    c2 = json.loads(resp2.read().decode("utf-8"))
+                auto_jid = c2["auto_job"]["id"]
+                for _ in range(80):
+                    with opener.open(urllib.request.Request(f"{base}/api/jobs/{auto_jid}", headers={"X-App-Token": tok})) as rj:
+                        st = json.loads(rj.read().decode("utf-8"))
+                    if st["status"] in {"completed", "partial", "failed"}:
+                        break
+                    time.sleep(0.05)
+                self.assertEqual(st["status"], "completed")
+
+                # Turn 3: Follow-up question grounded directly on the newly analyzed report (`F-01`)
+                req3 = urllib.request.Request(
+                    f"{base}/api/chat",
+                    data=json.dumps({"thread_id": tid, "message": "Giải thích chi tiết lỗ hổng F-01 trong báo cáo vừa phân tích"}).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with opener.open(req3) as resp3:
+                    c3 = json.loads(resp3.read().decode("utf-8"))
+                self.assertIn("F-01", c3["reply"]["text"])
+                self.assertIn("app@localhost", c3["reply"]["text"])
+
+                with opener.open(urllib.request.Request(f"{base}/api/threads", headers={"X-App-Token": tok})) as rt:
+                    threads = json.loads(rt.read().decode("utf-8"))
+                self.assertTrue(any(th["id"] == tid and len(th["messages"]) >= 5 for th in threads))
+            finally:
+                srv.shutdown()
+                srv.server_close()
+                mgr.close()
+
 
 if __name__ == "__main__":
     unittest.main()

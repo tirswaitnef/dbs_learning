@@ -131,6 +131,156 @@ class JobManager:
                 self.jobs[job['id']] = job
             except (OSError, ValueError):
                 continue
+        self.threads = {}
+        threads_file = self.directory / 'threads.json'
+        if threads_file.is_file():
+            try:
+                raw_threads = json.loads(threads_file.read_text(encoding='utf-8'))
+                if isinstance(raw_threads, dict):
+                    self.threads = raw_threads
+            except (OSError, ValueError):
+                self.threads = {}
+
+    def _save_threads(self):
+        tmp = self.directory / 'threads.tmp'
+        tmp.write_text(json.dumps(self.threads, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.replace(tmp, self.directory / 'threads.json')
+
+    def ensure_thread_for_job(self, job, thread_id='', user_text=''):
+        with self.lock:
+            tid = thread_id if (thread_id and thread_id in self.threads) else ''
+            if not tid:
+                # Reuse existing thread already bound to this job if any
+                for cand in self.threads.values():
+                    if job['id'] in cand.get('job_ids', []):
+                        tid = cand['id']
+                        break
+            if not tid:
+                tid = secrets.token_hex(12)
+                self.threads[tid] = {
+                    'id': tid,
+                    'title': job.get('filename') or 'Phân tích bảo mật',
+                    'created_at': job.get('created_at') or now(),
+                    'updated_at': now(),
+                    'active_job_id': job['id'],
+                    'job_ids': [],
+                    'messages': [],
+                }
+            th = self.threads[tid]
+            th['active_job_id'] = job['id']
+            if job['id'] not in th['job_ids']:
+                th['job_ids'].append(job['id'])
+            th['messages'].append({
+                'id': secrets.token_hex(8),
+                'role': 'job',
+                'job_id': job['id'],
+                'text': (user_text or job.get('note') or '').strip(),
+                'at': now(),
+            })
+            th['updated_at'] = now()
+            self._save_threads()
+            return copy.deepcopy(th)
+
+    def list_threads(self):
+        with self.lock:
+            # Ensure standalone legacy jobs also surface seamlessly as threads
+            bound_jobs = {jid for th in self.threads.values() for jid in th.get('job_ids', [])}
+            for j in sorted(self.jobs.values(), key=lambda x: x['created_at']):
+                if j['id'] not in bound_jobs:
+                    tid = j['id'][:24]
+                    self.threads[tid] = {
+                        'id': tid,
+                        'title': j.get('filename') or 'Phân tích bảo mật',
+                        'created_at': j.get('created_at') or now(),
+                        'updated_at': j.get('updated_at') or now(),
+                        'active_job_id': j['id'],
+                        'job_ids': [j['id']],
+                        'messages': [{
+                            'id': j['id'][:16],
+                            'role': 'job',
+                            'job_id': j['id'],
+                            'text': (j.get('note') or '').strip(),
+                            'at': j.get('created_at') or now(),
+                        }],
+                    }
+            return [
+                copy.deepcopy(t)
+                for t in sorted(self.threads.values(), key=lambda x: x.get('updated_at', ''), reverse=True)[:100]
+            ]
+
+    def get_thread(self, tid: str):
+        self.list_threads()
+        with self.lock:
+            if tid not in self.threads:
+                raise KeyError(tid)
+            return copy.deepcopy(self.threads[tid])
+
+    def chat(self, message: str, *, thread_id: str = '', job_id: str = '', metadata: dict | None = None):
+        from .assistant_chat import answer_assistant_message, looks_like_raw_scan_paste
+        clean_msg = (message or '').strip()
+        if not clean_msg:
+            raise ValueError('Vui lòng nhập nội dung tin nhắn hoặc đính kèm tệp kiểm thử.')
+        if len(clean_msg) > 250000:
+            raise ValueError('Tin nhắn quá dài (tối đa 250 KB). Hãy đính kèm dưới dạng tệp.')
+
+        # Auto-detect raw scan output pasted directly into chat!
+        if looks_like_raw_scan_paste(clean_msg):
+            job = self.submit(clean_msg.encode('utf-8'), 'du-lieu-dan-truc-tiep.txt', 'auto', '', metadata or {})
+            th = self.ensure_thread_for_job(job, thread_id=thread_id, user_text='Đã dán trực tiếp log công cụ kiểm thử để phân tích')
+            return {'thread': th, 'auto_job': job}
+
+        with self.lock:
+            tid = thread_id if (thread_id and thread_id in self.threads) else ''
+            if not tid:
+                short_title = re.sub(r'\s+', ' ', clean_msg)[:52]
+                tid = secrets.token_hex(12)
+                self.threads[tid] = {
+                    'id': tid,
+                    'title': short_title + ('…' if len(clean_msg) > 52 else ''),
+                    'created_at': now(),
+                    'updated_at': now(),
+                    'active_job_id': job_id if job_id in self.jobs else '',
+                    'job_ids': [job_id] if job_id in self.jobs else [],
+                    'messages': [],
+                }
+            th = self.threads[tid]
+            if job_id and job_id in self.jobs:
+                th['active_job_id'] = job_id
+                if job_id not in th['job_ids']:
+                    th['job_ids'].append(job_id)
+            active_jid = th.get('active_job_id') or ''
+            prior_history = [m for m in th['messages'] if m.get('role') in {'user', 'assistant'}][-6:]
+            user_entry = {
+                'id': secrets.token_hex(8),
+                'role': 'user',
+                'text': clean_msg,
+                'at': now(),
+            }
+            th['messages'].append(user_entry)
+            th['updated_at'] = now()
+            self._save_threads()
+
+        rep_path = (self.directory / active_jid / 'output' / 'report.json') if active_jid else None
+        ans = answer_assistant_message(
+            clean_msg,
+            history=prior_history,
+            report_path=rep_path,
+            demo=self.demo,
+        )
+        bot_entry = {
+            'id': secrets.token_hex(8),
+            'role': 'assistant',
+            'text': ans['reply'],
+            'citations': ans.get('citations') or [],
+            'suggestions': ans.get('suggestions') or [],
+            'at': now(),
+        }
+        with self.lock:
+            th = self.threads[tid]
+            th['messages'].append(bot_entry)
+            th['updated_at'] = now()
+            self._save_threads()
+            return {'thread': copy.deepcopy(th), 'reply': bot_entry}
 
     def _save(self, job):
         folder = self.directory / job['id']
@@ -707,6 +857,14 @@ class Handler(BaseHTTPRequestHandler):
             })
         if path == '/api/jobs':
             return self.send_data(200, self.server.manager.list())
+        if path == '/api/threads':
+            return self.send_data(200, self.server.manager.list_threads())
+        t_match = re.fullmatch(r'/api/threads/([a-f0-9]{16,32})', path)
+        if t_match:
+            try:
+                return self.send_data(200, self.server.manager.get_thread(t_match[1]))
+            except KeyError:
+                return self.send_data(404, {'error': 'Không tìm thấy cuộc trò chuyện.'})
         match = re.fullmatch(r'/api/jobs/([a-f0-9]{32})(?:/(pdf|json|md|log|trace|trace-txt))?', path)
         if match:
             try:
@@ -806,6 +964,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_data(400, {'error': str(exc)})
             except Exception as exc:
                 return self.send_data(500, {'error': f'Lỗi chạy truy xuất thử: {exc}'})
+        if query.path == '/api/chat':
+            if self.headers.get('Transfer-Encoding'):
+                return self.send_data(400, {'error': 'Không hỗ trợ kiểu truyền dữ liệu này.'})
+            try:
+                length = int(self.headers.get('Content-Length', '0'))
+            except ValueError:
+                return self.send_data(400, {'error': 'Kích thước dữ liệu không hợp lệ.'})
+            if not 0 < length <= 524288:
+                return self.send_data(413, {'error': 'Tin nhắn rỗng hoặc vượt quá giới hạn cho phép.'})
+            try:
+                payload = json.loads(self.rfile.read(length).decode('utf-8'))
+                result = self.server.manager.chat(
+                    str(payload.get('message') or ''),
+                    thread_id=str(payload.get('thread_id') or ''),
+                    job_id=str(payload.get('job_id') or ''),
+                    metadata=payload.get('metadata') if isinstance(payload.get('metadata'), dict) else {},
+                )
+                return self.send_data(200, result)
+            except ValueError as exc:
+                return self.send_data(400, {'error': str(exc)})
+            except Exception as exc:
+                return self.send_data(500, {'error': f'Trợ lý chưa phản hồi được: {exc}'})
         if query.path != '/api/jobs':
             return self.send_data(404, {'error': 'Không tìm thấy đường dẫn.'})
         if self.headers.get('Transfer-Encoding'):
@@ -822,6 +1002,7 @@ class Handler(BaseHTTPRequestHandler):
         filename = params.get('filename', ['kiem-thu'])[0]
         fmt = params.get('format', ['auto'])[0]
         note = params.get('note', [''])[0]
+        thread_id = params.get('thread_id', [''])[0]
         try:
             body = self.rfile.read(length)
             if len(body) != length:
@@ -831,6 +1012,8 @@ class Handler(BaseHTTPRequestHandler):
                 job = self.server.manager.submit_bundle(json.loads(body.decode('utf-8')), note, meta)
             else:
                 job = self.server.manager.submit(body, filename, fmt, note, meta)
+            th = self.server.manager.ensure_thread_for_job(job, thread_id=thread_id, user_text=note)
+            job['thread_id'] = th['id']
         except ValueError as exc:
             return self.send_data(400, {'error': str(exc)})
         except Exception:
