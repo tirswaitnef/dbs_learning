@@ -529,6 +529,48 @@ class HybridRetrievalAndEvaluationTests(unittest.TestCase):
             self.assertEqual(len(extract_calls), 1)
             self.assertTrue(all(r["options"]["num_ctx"] == 8192 for r in st["requests"]))
 
+        # Proof of 100% format-agnostic generality on a NEVER-SEEN custom scanner format (3,500 lines / >280 KB)
+        # where the ONLY anomaly sits at line 3,491 near EOF, plus a raw browser .har JSON with error at char 28,000!
+        custom_unknown_log = "\n".join([
+            "=== CustomInternalScanner v9.4 (Proprietary Format) ===",
+            *[
+                f"2026-10-23T09:15:{i % 60:02d}Z :: CHECK_SEQ={i:04d} :: ENDPOINT=/v3/items?ref=SKU{i} :: STATUS=200 :: BYTES=4912"
+                for i in range(1, 3491)
+            ],
+            '2026-10-23T09:59:58Z :: ANOMALY_RECORD :: ENDPOINT=/v3/orders?sort=price\' :: DB_DRIVER=PostgreSQL_16 :: ERR_MSG="syntax error at or near \'order\'"',
+            "=== END OF PROPRIETARY RUN ===",
+        ])
+        self.assertGreater(len(custom_unknown_log), 280_000)
+        custom_compacted = compact_input_for_ai(custom_unknown_log)
+        self.assertLess(len(custom_compacted), 2500)
+        self.assertIn("ANOMALY_RECORD :: ENDPOINT=/v3/orders?sort=price'", custom_compacted)
+        self.assertIn("syntax error at or near 'order'", custom_compacted)
+        for ln in custom_compacted.splitlines():
+            if ln.strip():
+                self.assertIsNotNone(_resolve_quote(ln.strip(), custom_unknown_log))
+
+        har_export = json.dumps({
+            "log": {
+                "version": "1.2",
+                "entries": [{
+                    "request": {"method": "GET", "url": "http://198.51.100.90/report?id=5'"},
+                    "response": {
+                        "status": 500,
+                        "content": {
+                            "mimeType": "text/html",
+                            "text": ("<html><body>" + ("<p>layout block</p>" * 1600)
+                                     + "<div>Fatal PDOException: SQLSTATE[42000]: Syntax error in MariaDB server</div>"
+                                     + ("<p>footer block</p>" * 900) + "</body></html>"),
+                        },
+                    },
+                }],
+            }
+        })
+        self.assertGreater(len(har_export), 45_000)
+        har_compacted = compact_input_for_ai(har_export)
+        self.assertLess(len(har_compacted), 2500)
+        self.assertIn("SQLSTATE[42000]: Syntax error in MariaDB server", har_compacted)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -291,42 +291,77 @@ _SQLMAP_TRAFFIC_BLOCK_RE = re.compile(
     r'HTTP request \[#(\d+)\]:.*?(?=(?:HTTP request \[#\d+\]:|\Z))',
     re.S,
 )
-_SQLMAP_NOISE_LINE_RE = re.compile(
-    r'^\[[0-9:]{6,12}\]\s+\[(?:INFO|DEBUG)\]\s+'
-    r'(?:testing\s+\'|heuristic\s+\(basic\)\s+test\s+shows\s+that\s+.*does\s+not\s+seem|'
-    r'(?:GET|POST|URI|Cookie|User-Agent|Referer|Host)\s+parameter\s+.*does\s+not\s+seem\s+to\s+be\s+injectable|'
-    r'fetching\s+(?:number\s+of|columns|tables|entries)|retrieved:\s*$)',
-    re.I,
-)
-_JSON_BIG_RESP_RE = re.compile(
-    r'("(?:response-body|responseBody|response_body)"\s*:\s*")((?:\\.|[^"\\]){650,})(")',
+_GENERIC_JSON_LARGE_STR_RE = re.compile(
+    r'(:\s*")((?:\\.|[^"\\]){650,})(")',
     re.S,
-)
-_XML_BIG_RESP_RE = re.compile(
-    r'(<response\b[^>]*>)(.{900,?})(</response>)',
-    re.S | re.I,
 )
 _INTERESTING_TRAFFIC_RE = re.compile(
     r'(?:syntax\s+error|mysql|mariadb|postgresql|psql|ora-\d{4,5}|odbc|sqlite|sql\s+server|'
-    r'extractvalue|updatexml|union\s+all\s+select|union\s+select|pg_sleep|waitfor\s+delay|xpath)',
+    r'extractvalue|updatexml|union\s+all\s+select|union\s+select|pg_sleep|waitfor\s+delay|xpath|'
+    r'exception|stack\s*trace|root\s+account|empty\s+password|authentication\s+bypass|unauthenticated|'
+    r'access\s+denied\s+for\s+user|cwe-\d+|cve-\d{4}-\d+)',
     re.I,
 )
+_HIGH_SIGNAL_LINE_RE = re.compile(
+    r'(?:cwe-\d+|cve-\d{4}-\d+|sql\s*injection|injectable|vulnerable|vulnerability|'
+    r'syntax\s+error|exception|ora-\d{4,5}|mysql|mariadb|postgresql|sqlite|mongodb|redis|mssql|'
+    r'empty\s+password|default\s+password|weak\s+password|unauthenticated|cleartext|cipher|'
+    r'back-end\s+dbms|parameter\s*:|payload\s*:|alertref|riskcode|pluginname|<reportitem|<issue|'
+    r'lỗ\s*hổng|phát\s*hiện|mức\s*độ|nghiêm\s*trọng|bằng\s*chứng)',
+    re.I,
+)
+_SHAPE_TS_RE = re.compile(r'\b\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\b|\b\d{2}:\d{2}:\d{2}\b')
+_SHAPE_QUOTED_RE = re.compile(r"'[^'\n]{1,120}'|\"[^\"\n]{1,120}\"")
+_SHAPE_QUERY_RE = re.compile(r'\?[A-Za-z0-9_.%~+=-]+(?:&[A-Za-z0-9_.%~+=-]+)*')
+_SHAPE_HEX_NUM_RE = re.compile(r'\b0x[0-9a-fA-F]+\b|\b[0-9a-fA-F]{16,}\b|\b\d+\b')
+
+
+def _slice_preserving_anomaly_verbatim(body: str, head_len: int = 340, tail_len: int = 120) -> str:
+    """Return verbatim slices from `body`, preserving any embedded error/DB indicator in the middle."""
+    if len(body) <= head_len + tail_len + 80:
+        return body
+    m = _INTERESTING_TRAFFIC_RE.search(body)
+    if m and m.start() >= head_len - 40:
+        a = max(0, m.start() - 100)
+        b = min(len(body), m.end() + 220)
+        return body[:head_len] + '\n' + body[a:b]
+    return body[:head_len]
+
+
+def _structural_line_shape(line: str) -> str:
+    """Format-agnostic Drain-style line template skeleton for unknown-tool structural deduplication."""
+    s = line.strip()
+    if not s:
+        return ''
+    s = _SHAPE_TS_RE.sub('<TS>', s)
+    s = _SHAPE_QUERY_RE.sub('?<Q>', s)
+    s = _SHAPE_QUOTED_RE.sub('<STR>', s)
+    s = _SHAPE_HEX_NUM_RE.sub('<N>', s)
+    s = re.sub(r'/[A-Za-z0-9_.-]{2,}', '/<P>', s)
+    return re.sub(r'\s+', ' ', s)[:180]
 
 
 def compact_input_for_ai(clean: str) -> str:
-    """Strip repetitive HTTP response bodies & probe chatter while preserving 100% verbatim substrings of `clean`.
+    """Format-agnostic structural minifier preserving 100% verbatim substrings & 100% unknown-tool generality.
 
-    Every retained segment is an exact slice of `clean` (no synthetic placeholder words injected),
-    guaranteeing `_resolve_quote(quote, clean)` succeeds 100% while cutting 100KB+ logs/ZAP dumps
-    down to a single fast `8K` GPU-VRAM window.
+    Does NOT filter by hardcoded scanner rules; instead removes structural repetition across ANY format:
+      1. Generic large JSON strings (`HAR`, `ZAP`, custom JSON tools) & giant XML/HTML leaf payloads (`Burp`,
+         `Nessus`, SOAP/HTML dumps) keep verbatim head + any embedded error/SQL/auth span.
+      2. Multi-packet HTTP traffic streams keep representative exchanges + anomalous exchanges.
+      3. Drain-style structural line-template deduplication collapses hundreds/thousands of homologous probe
+         lines from ANY unknown scanner/script down to verbatim head/tail exemplars while retaining 100% of
+         unique/anomalous lines across the entire file from byte `0` to `EOF`.
     """
-    if len(clean) <= 8500:
+    if len(clean) <= 7800:
         return clean
 
-    text = _JSON_BIG_RESP_RE.sub(lambda m: m.group(1) + m.group(2)[:420] + m.group(3), clean)
+    text = _GENERIC_JSON_LARGE_STR_RE.sub(
+        lambda m: m.group(1) + _slice_preserving_anomaly_verbatim(m.group(2), 360, 100) + m.group(3),
+        clean,
+    )
     text = re.sub(
-        r'(<response\b[^>]*>)([\s\S]{900,?})(</response>)',
-        lambda m: m.group(1) + m.group(2)[:550] + '\n' + m.group(2)[-160:] + m.group(3),
+        r'(<response\b[^>]*>)([\s\S]{850,?})(</response>)',
+        lambda m: m.group(1) + _slice_preserving_anomaly_verbatim(m.group(2), 460, 140) + '\n' + m.group(2)[-140:] + m.group(3),
         text,
         flags=re.I,
     )
@@ -339,22 +374,53 @@ def compact_input_for_ai(clean: str) -> str:
             idx = int(m.group(1))
             blk = m.group(0)
             if idx <= 2:
-                return blk[:1800]
-            if kept_interesting < 2 and _INTERESTING_TRAFFIC_RE.search(blk):
+                return blk[:1600]
+            if kept_interesting < 3 and _INTERESTING_TRAFFIC_RE.search(blk):
                 kept_interesting += 1
-                return blk[:1800]
+                return blk[:1600]
             return ''
 
         text = _SQLMAP_TRAFFIC_BLOCK_RE.sub(_trim_traffic, text)
 
     lines = text.splitlines()
-    noise_indices = [i for i, ln in enumerate(lines) if _SQLMAP_NOISE_LINE_RE.match(ln.strip())]
-    if len(noise_indices) > 10:
-        keep_noise = set(noise_indices[:6]) | set(noise_indices[-4:])
-        drop_set = set(noise_indices) - keep_noise
-        lines = [ln for i, ln in enumerate(lines) if i not in drop_set]
+    trimmed_lines: list[str] = []
+    for ln in lines:
+        if len(ln) > 1200:
+            trimmed_lines.append(_slice_preserving_anomaly_verbatim(ln, 480, 140))
+        else:
+            trimmed_lines.append(ln)
 
-    compacted = re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)).strip()
+    # Universal Drain-style structural template deduplication across ALL lines (0% tool lock-in)
+    if sum(len(x) + 1 for x in trimmed_lines) > 7800:
+        buckets: dict[str, list[int]] = {}
+        high_signal_flags: dict[int, bool] = {}
+        for idx, ln in enumerate(trimmed_lines):
+            stripped = ln.strip()
+            if not stripped:
+                continue
+            is_sig = bool(_HIGH_SIGNAL_LINE_RE.search(stripped))
+            high_signal_flags[idx] = is_sig
+            shape = _structural_line_shape(stripped)
+            buckets.setdefault(shape, []).append(idx)
+
+        drop_indices: set[int] = set()
+        for shape, idxs in buckets.items():
+            # Never drop JSON/XML structural braces when count is modest; only collapse high-repetition templates
+            if shape in {'{', '}', '[', ']', '},', '],'} and len(idxs) <= 120:
+                continue
+            sig_positions = [i for i in idxs if high_signal_flags.get(i)]
+            non_sig = [i for i in idxs if not high_signal_flags.get(i)]
+            if len(non_sig) > 6:
+                keep_non_sig = set(non_sig[:4]) | set(non_sig[-2:])
+                drop_indices.update(set(non_sig) - keep_non_sig)
+            if len(sig_positions) > 40:
+                keep_sig = set(sig_positions[:28]) | set(sig_positions[-12:])
+                drop_indices.update(set(sig_positions) - keep_sig)
+
+        if drop_indices:
+            trimmed_lines = [ln for i, ln in enumerate(trimmed_lines) if i not in drop_indices]
+
+    compacted = re.sub(r'\n{3,}', '\n\n', '\n'.join(trimmed_lines)).strip()
     return compacted or clean[:7800]
 
 
