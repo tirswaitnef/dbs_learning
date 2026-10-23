@@ -172,8 +172,9 @@ Extract ONLY facts explicitly supported by the supplied text:
 1. metadata:
    - Copy tool_name, project_name, target_object (exact URL / IP / host:port), dbms_override (exact DBMS & version if shown), assessment_period (timestamps if shown), allowed_scope, databases (schema/database names listed), and db_user if explicitly present; otherwise use "" or [].
 2. findings:
-   - Extract every distinct vulnerability, security misconfiguration, credential weakness, cryptographic flaw, heuristic warning, or clean negative test result present in the text.
-   - Do NOT emit benign open web/SSH port banners unless a security weakness or warning is reported on them.
+   - Extract ONLY distinct security findings supported by actual scanner/test output body. Return an empty array `[]` if the input shows only benign open ports, service banners, negative checks, or script execution errors without confirmed/heuristic weaknesses.
+   - CRITICAL: Command-line invocation flags (such as `nmap ... --script ...`, `sqlmap -u ...`) describe what check was attempted, NEVER proof that a vulnerability exists! Never treat a script name in CLI args as a confirmed finding unless the output body itself prints positive proof, and never report an open port with `unauthorized` banner as an empty/default password vulnerability.
+   - Do NOT emit benign open web/SSH/DB port banners unless a security weakness or warning is reported on them.
    - title: write a concise, specific technical title grounded in the exact vulnerability & endpoint/service in this input (never generic boilerplate).
    - severity: MUST strictly match an explicit severity/risk level written in the input ("critical", "high", "medium", "low", "informational"). Whenever the tool output does NOT explicitly print a severity rating (such as sqlmap logs, Nmap scripts, curl transcripts, or raw CLI outputs), set severity="unknown". NEVER invent or estimate severity or CVSS!
    - state:
@@ -427,6 +428,7 @@ def compact_input_for_ai(clean: str) -> str:
 def _split_input_windows(clean: str, *, window_size: int = 7800, overlap: int = 650, max_windows: int = 6) -> list[str]:
     if len(clean) <= window_size:
         return [clean]
+    header_ctx = clean[:600].strip()
     windows: list[str] = []
     pos = 0
     step = max(3000, window_size - overlap)
@@ -436,7 +438,10 @@ def _split_input_windows(clean: str, *, window_size: int = 7800, overlap: int = 
             nl = clean.rfind('\n', pos + step // 2, end)
             if nl > pos:
                 end = nl
-        windows.append(clean[pos:end])
+        seg = clean[pos:end]
+        if windows and header_ctx and not seg.startswith(header_ctx[:80]):
+            seg = f"{header_ctx}\n---\n{seg}"
+        windows.append(seg)
         if end >= len(clean):
             break
         pos = max(pos + 1, end - overlap)
@@ -719,7 +724,8 @@ def extract_findings_from_report_with_ai(
                 if not verified_quotes:
                     continue
 
-                dedup_key = (cwe, loc.lower(), param.lower(), state)
+                dedup_loc = _canonical_endpoint_key(loc)
+                dedup_key = (cwe, dedup_loc, param.lower(), state)
                 if dedup_key in seen_keys and cwe != 'unknown':
                     continue
                 seen_keys.add(dedup_key)
@@ -854,6 +860,130 @@ def _enrich_ai_with_structured(ai_findings: list[Finding], structured_findings: 
     return merged
 
 
+def _canonical_endpoint_key(loc: str) -> str:
+    """Normalize URL/location by stripping payload values while keeping scheme, host, path, and query keys."""
+    from urllib.parse import parse_qsl, urlsplit
+    raw_loc = re.sub(r'\s*\(parameter=[^)]*\)\s*$', '', str(loc or '')).strip()
+    if '://' in raw_loc:
+        sp = urlsplit(raw_loc)
+        qkeys = sorted({k.lower() for k, _ in parse_qsl(sp.query, keep_blank_values=True) if k})
+        path_norm = sp.path.rstrip('/') or '/'
+        q_suffix = f"?{','.join(qkeys)}" if qkeys else ''
+        return f"{sp.scheme.lower()}://{sp.netloc.lower()}{path_norm}{q_suffix}"
+    return raw_loc.lower()
+
+
+def _extract_meta_from_structured(findings: list[Finding], raw_doc_text: str) -> dict:
+    """Derive clean, non-hallucinated metadata directly from structured findings and explicit header comments."""
+    meta: dict = {}
+    targets: list[str] = []
+    dbms_list: list[str] = []
+    periods: list[str] = []
+    scopes: list[str] = []
+
+    proj_m = re.search(r'(?im)^\s*#?\s*(?:Project|Dự\s+án)\s*:\s*(.+?)\s*$', raw_doc_text[:1000])
+    if proj_m:
+        meta['project_name'] = proj_m.group(1).strip()[:160]
+
+    for f in findings:
+        det = f.details if isinstance(f.details, dict) else {}
+        tel = det.get('scan_telemetry') if isinstance(det.get('scan_telemetry'), dict) else {}
+        t_site = str(tel.get('target_site') or '').strip()
+        loc_base = re.sub(r'\s*\(parameter=[^)]*\)\s*$', '', str(f.location or '')).strip()
+        cand_t = t_site or loc_base
+        if cand_t and cand_t != 'unknown' and cand_t not in targets:
+            targets.append(cand_t)
+        db_v = str(det.get('dbms') or tel.get('dbms') or '').strip()
+        if db_v and db_v not in dbms_list:
+            dbms_list.append(db_v)
+        st = str(tel.get('scan_start') or '').strip()
+        en = str(tel.get('scan_end') or '').strip()
+        p_str = f'{st} -> {en}' if (st and en and st != en) else (st or en)
+        if p_str and p_str not in periods:
+            periods.append(p_str)
+        sc = str(tel.get('scope_rule') or '').strip()
+        if sc and sc not in scopes:
+            scopes.append(sc)
+
+    if targets:
+        meta['target_object'] = '; '.join(targets[:4])[:240]
+    if dbms_list:
+        meta['dbms_override'] = '; '.join(dbms_list[:2])[:200]
+    if periods:
+        meta['assessment_period'] = periods[0][:140]
+    if scopes:
+        meta['allowed_scope'] = '; '.join(scopes[:2])[:240]
+    return meta
+
+
+def _consolidate_structured_findings(findings: list[Finding]) -> list[Finding]:
+    """Consolidate multi-instance scanner records (e.g. ZAP site-wide header/cookie alerts across N URLs)
+    into distinct root-cause findings while keeping per-port Nmap observations and distinct vulnerable endpoints intact."""
+    from urllib.parse import urlsplit
+    if len(findings) <= 1:
+        return findings
+
+    merged: list[Finding] = []
+    idx_by_key: dict[tuple, int] = {}
+
+    for f in findings:
+        det = dict(f.details or {})
+        # Keep passive per-port Nmap observations untouched so Section 3 lists every open port cleanly
+        if f.kind == 'observation' and f.title.startswith('Service observation:'):
+            merged.append(f)
+            continue
+
+        param = str(det.get('parameter') or det.get('param') or '').strip()
+        rule_id = str(det.get('rule_id') or '').strip()
+        title_l = f.title.strip().lower()
+        cwe_u = f.cwe.strip().upper()
+        raw_loc = re.sub(r'\s*\(parameter=[^)]*\)\s*$', '', str(f.location or '')).strip()
+        sp = urlsplit(raw_loc) if '://' in raw_loc else None
+        host_key = sp.netloc.lower() if (sp and sp.netloc) else raw_loc.lower()
+        endpoint_path_key = f"{sp.scheme.lower()}://{sp.netloc.lower()}{sp.path.rstrip('/') or '/'}" if (sp and sp.netloc) else raw_loc.lower()
+
+        is_cookie_or_header_rule = (
+            not param
+            or 'cookie' in title_l
+            or 'header' in title_l
+            or cwe_u in {'CWE-16', 'CWE-200', 'CWE-525', 'CWE-614', 'CWE-693', 'CWE-1004', 'CWE-1021', 'CWE-1275'}
+        )
+        if is_cookie_or_header_rule:
+            key = ('site_rule', f.tool.lower(), host_key, rule_id or title_l, cwe_u, param.lower())
+        else:
+            key = ('endpoint_param', f.tool.lower(), endpoint_path_key, param.lower(), cwe_u, rule_id or title_l)
+
+        if key in idx_by_key:
+            prev_i = idx_by_key[key]
+            prev = merged[prev_i]
+            pdet = dict(prev.details or {})
+            aff = list(pdet.get('affected_urls') or ([prev.location] if prev.location else []))
+            if f.location and f.location not in aff:
+                aff.append(f.location)
+            pdet['affected_urls'] = aff[:25]
+            pdet['instance_count'] = int(pdet.get('instance_count') or 1) + 1
+            ev_list = list(prev.evidence)
+            for ev in f.evidence:
+                if ev and ev not in ev_list and len(ev_list) < 5:
+                    ev_list.append(ev)
+            if det.get('http_messages'):
+                cur_msgs = list(pdet.get('http_messages') or [])
+                for m in det['http_messages']:
+                    if m not in cur_msgs and len(cur_msgs) < 4:
+                        cur_msgs.append(m)
+                pdet['http_messages'] = cur_msgs
+            if det.get('techniques'):
+                pdet['techniques'] = list(dict.fromkeys([*(pdet.get('techniques') or []), *det['techniques']]))
+            if det.get('dbms') and not pdet.get('dbms'):
+                pdet['dbms'] = det['dbms']
+            merged[prev_i] = replace(prev, evidence=tuple(ev_list), details=pdet)
+            continue
+
+        idx_by_key[key] = len(merged)
+        merged.append(f)
+    return merged
+
+
 def read_input_with_ai(
     scan_path: Path,
     display_name: str,
@@ -864,7 +994,8 @@ def read_input_with_ai(
     progress=None,
     id_prefix: str = 'AI',
 ) -> tuple[list[Finding], dict]:
-    """Universal AI-first reader for ANY single file (tool output OR pentest report)."""
+    """Universal reader: structured adapter fast-path when recognized + AI classification for unknown records,
+    falling back seamlessly to full AI extraction on arbitrary/free-text reports and custom tool outputs."""
     from .parsers import load_findings
 
     raw_doc_text = extract_pentest_text(scan_path)
@@ -876,6 +1007,14 @@ def read_input_with_ai(
         except Exception:
             structured_findings = []
 
+    if structured_findings:
+        if progress:
+            progress(f'[step=1|pct=9] Đã trích xuất có cấu trúc {len(structured_findings)} bản ghi từ "{display_name}", đang chuẩn hóa & phân loại AI...')
+        consolidated = _consolidate_structured_findings(structured_findings)
+        extracted_meta = _extract_meta_from_structured(consolidated, raw_doc_text)
+        resolved = resolve_unmapped_findings_with_ai(consolidated, settings, llm=llm, progress=progress)
+        return resolved, extracted_meta
+
     ai_findings, extracted_meta = extract_findings_from_report_with_ai(
         raw_doc_text,
         display_name,
@@ -883,10 +1022,9 @@ def read_input_with_ai(
         llm=llm,
         progress=progress,
         id_prefix=id_prefix,
-        allow_fallback_on_empty=not bool(structured_findings),
+        allow_fallback_on_empty=True,
     )
-    combined = _enrich_ai_with_structured(ai_findings, structured_findings)
-    combined = resolve_unmapped_findings_with_ai(combined, settings, llm=llm, progress=progress)
+    combined = resolve_unmapped_findings_with_ai(ai_findings, settings, llm=llm, progress=progress)
     return combined, extracted_meta
 
 
@@ -1074,13 +1212,19 @@ def resolve_unmapped_findings_with_ai(
             continue
         if f.kind == 'observation' and f.title.startswith('Service observation:'):
             scripts = [s for s in (det.get('scripts') or []) if isinstance(s, dict)]
-            unmatched_scripts = [
-                s for s in scripts
-                if str(s.get('output') or '').strip()
-                and str(s.get('id') or '') not in _NMAP_TELEMETRY_ONLY
-                and not nmap_rule(s.get('id'), str(s.get('output') or ''))
-            ]
-            if not unmatched_scripts:
+            actionable_scripts = []
+            for script in scripts:
+                sid = str(script.get('id') or '').strip()
+                output = str(script.get('output') or '').strip()
+                if not output or output.upper().startswith('ERROR:') or sid in _NMAP_TELEMETRY_ONLY:
+                    continue
+                if re.search(r'(?i)\b(?:unauthorized|access denied|authentication required|not vulnerable|no credentials found|no issue detected)\b', output):
+                    continue
+                if nmap_rule(sid, output):
+                    continue
+                actionable_scripts.append(script)
+            # A passive Nmap port/banner (including error-only NSE scripts) is not a CWE-classification request.
+            if not actionable_scripts:
                 continue
         candidates_idx.append(idx)
 

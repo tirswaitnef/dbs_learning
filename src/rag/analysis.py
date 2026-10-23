@@ -3,12 +3,13 @@
 Neither citations nor a second LLM call prove correctness. Rejected/failed narrative
 is never printed as analysis. Remediation is exclusively the separate OWASP branch.
 """
+import html
 import json
 import re
 from collections import Counter
 from .db_scope import ai_source, attach_db_scope, scope_lines, scope_summary
 from .llm import GeminiLLM, OllamaLLM, trace_step, wrap_llm_for_trace
-from .report_view import cwe_origin, cwe_text
+from .report_view import cwe_origin, cwe_text, is_passive_service_observation
 from .top10 import cwe_label
 
 SECTIONS = ('observations', 'potential_impacts', 'limitations')
@@ -62,8 +63,9 @@ Return four booleans:
    indicators) to the scan log/tool without claiming independent manual retesting, and non-empty potential_impacts
    use conditional phrasing ("nếu", "trong trường hợp", "có thể", "khi").
 4. database_specific=true if the prose stays consistent with K1 and does NOT invent unmentioned database engines
-   (IMPORTANT: when K1 says relevance=unrelated, such as CWE-79 XSS or non-DB port observations, NOT mentioning a
-   database or noting it is outside database scope MUST return database_specific=true).
+   (IMPORTANT: when K1 is absent — such as in executive summaries over TOTAL/D1/F* — or when K1 says
+   relevance=unrelated, such as CWE-79 XSS or non-DB port observations, NOT mentioning a database or noting it
+   is outside database scope MUST return database_specific=true).
 '''
 
 
@@ -92,35 +94,144 @@ def _schema_for(sources):
 
 
 def redact(value):
-    value = str(value).replace('\r\n', '\n').replace('\r', '\n')
+    value = html.unescape(str(value)).replace('\r\n', '\n').replace('\r', '\n')
     value = re.sub(r'(?im)\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key)\s*:[^\r\n]*',r'\1: [REDACTED]',value)
     value = re.sub(r'''(?ix)(["']?(?<!empty-)(?:password|passwd|pwd|api[_-]?key|access[_-]?token|refresh[_-]?token|secret|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)''',r'\1[REDACTED]',value)
     value = re.sub(r'(?i)(https?://)[^\s/@:]+:[^\s/@]+@',r'\1[REDACTED]@',value)
-    value = re.sub(r"(?:[A-Za-z]:\\Users\\[^\\\r\n\"']+(?:\\[^\\\r\n\"']+)*|\[LOCAL_PENTESTER_HOME\](?:\\[^\r\n\"']+)*)",'[REDACTED_LOCAL_PATH]',value)
+    value = re.sub(r"(?:[A-Za-z]:\\+Users\\+[^\\\r\n\"']+(?:\\+[^\\\r\n\"']+)*|/(?:home|Users)/[^\s/\r\n\"']+(?:/[^\s\r\n\"']+)*|\[LOCAL_PENTESTER_HOME\](?:\\+[^\r\n\"']+)*)",'[REDACTED_LOCAL_PATH]',value)
     return value
 
 
+def _html_unescape_with_spans(text, spans):
+    """HTML-unescape text while mapping every decoded character back to its original input range."""
+    source = ''.join(text)
+    out_chars = []
+    out_spans = []
+    i = 0
+    entity_re = re.compile(r'&(?:#[0-9]{1,8}|#x[0-9A-Fa-f]{1,8}|[A-Za-z][A-Za-z0-9]{1,31});?')
+    while i < len(source):
+        m = entity_re.match(source, i) if source[i] == '&' else None
+        if m:
+            decoded = html.unescape(m.group(0))
+            if decoded != m.group(0):
+                start = spans[i][0]
+                end = spans[m.end() - 1][1]
+                out_chars.extend(decoded)
+                out_spans.extend([(start, end)] * len(decoded))
+                i = m.end()
+                continue
+        out_chars.append(source[i])
+        out_spans.append(spans[i])
+        i += 1
+    return out_chars, out_spans
+
+
+def _decode_url_html_with_spans(raw_text):
+    """Decode HTML entities and percent escapes, preserving source offsets for verbatim citations."""
+    raw = str(raw_text or '')
+    chars = list(raw)
+    spans = [(i, i + 1) for i in range(len(raw))]
+    chars, spans = _html_unescape_with_spans(chars, spans)
+
+    out_chars = []
+    out_spans = []
+    i = 0
+    while i < len(chars):
+        if chars[i] == '%' and i + 2 < len(chars) and re.fullmatch(r'[0-9A-Fa-f]{2}', ''.join(chars[i + 1:i + 3])):
+            byte_values = bytearray()
+            start_idx = i
+            while (i + 2 < len(chars) and chars[i] == '%'
+                   and re.fullmatch(r'[0-9A-Fa-f]{2}', ''.join(chars[i + 1:i + 3]))):
+                byte_values.append(int(''.join(chars[i + 1:i + 3]), 16))
+                i += 3
+            decoded = bytes(byte_values).decode('utf-8', errors='replace')
+            start = spans[start_idx][0]
+            end = spans[i - 1][1]
+            out_chars.extend(decoded)
+            out_spans.extend([(start, end)] * len(decoded))
+        else:
+            out_chars.append(chars[i])
+            out_spans.append(spans[i])
+            i += 1
+
+    return _html_unescape_with_spans(out_chars, out_spans)
+
+
+def _collapse_whitespace_with_spans(chars, spans):
+    out_chars = []
+    out_spans = []
+    i = 0
+    while i < len(chars):
+        if chars[i].isspace():
+            j = i + 1
+            while j < len(chars) and chars[j].isspace():
+                j += 1
+            out_chars.append(' ')
+            out_spans.append((spans[i][0], spans[j - 1][1]))
+            i = j
+        else:
+            out_chars.append(chars[i])
+            out_spans.append(spans[i])
+            i += 1
+    return ''.join(out_chars), out_spans
+
+
+def _find_normalized_source_slice(quote_text, source_text, source_spans):
+    q_chars = list(str(quote_text or ''))
+    q_spans = [(i, i + 1) for i in range(len(q_chars))]
+    norm_q, _ = _collapse_whitespace_with_spans(q_chars, q_spans)
+    norm_s, norm_spans = _collapse_whitespace_with_spans(list(source_text), source_spans)
+    norm_q = norm_q.strip()
+    if not norm_q:
+        return None
+    idx = norm_s.casefold().find(norm_q.casefold())
+    if idx < 0:
+        return None
+    start = norm_spans[idx][0]
+    end = norm_spans[idx + len(norm_q) - 1][1]
+    return start, end
+
+
 def _resolve_quote(quote, source_text):
-    if quote in source_text:
+    quote = str(quote or '')
+    source_text = str(source_text or '')
+    if quote and quote in source_text:
         return quote
-    norm_q = re.sub(r'\s+', ' ', quote).strip()
-    norm_s = re.sub(r'\s+', ' ', source_text)
-    if norm_q and norm_q in norm_s:
-        return quote
-    # If the model elided lines with '...' / '…', require every part to exist verbatim in source_text.
+
+    # Whitespace-tolerant matching still returns the exact original source substring.
+    raw_spans = [(i, i + 1) for i in range(len(source_text))]
+    raw_match = _find_normalized_source_slice(quote, source_text, raw_spans)
+    if raw_match:
+        return source_text[raw_match[0]:raw_match[1]][:480]
+
+    # Compare both URL-decoded and HTML-unescaped representations (%27 -> apostrophe, &amp; -> &),
+    # but map the match back to the exact original encoded source substring before accepting it.
+    q_chars, _ = _decode_url_html_with_spans(quote)
+    s_chars, s_spans = _decode_url_html_with_spans(source_text)
+    q_decoded = ''.join(q_chars)
+    s_decoded = ''.join(s_chars)
+    decoded_match = _find_normalized_source_slice(q_decoded, s_decoded, s_spans)
+    if decoded_match:
+        return source_text[decoded_match[0]:decoded_match[1]][:480]
+
+    # If the model elided lines with '...' / '…', require every part to exist in the original source.
     parts = [p.strip() for p in re.split(r'\.{3}|…', quote) if p.strip()]
-    if len(parts) > 1 and all(_resolve_quote(p, source_text) is not None for p in parts):
-        best = max(parts, key=len)
-        return _resolve_quote(best, source_text)
-    # Match exact contiguous word/number token sequence when punctuation/bullets differed across lines.
-    q_tokens = [m.group(0).lower() for m in re.finditer(r'[^\W_]+', quote)]
+    if len(parts) > 1:
+        resolved_parts = [_resolve_quote(p, source_text) for p in parts]
+        if all(resolved_parts):
+            return max(resolved_parts, key=len)
+
+    # Match an exact contiguous word/number-token sequence, mapping decoded offsets to original bytes.
+    q_tokens = [m.group(0).casefold() for m in re.finditer(r'[^\W_]+', q_decoded)]
     if len(q_tokens) >= 2:
-        s_matches = list(re.finditer(r'[^\W_]+', source_text))
-        s_tokens = [m.group(0).lower() for m in s_matches]
+        s_matches = list(re.finditer(r'[^\W_]+', s_decoded))
+        s_tokens = [m.group(0).casefold() for m in s_matches]
         n = len(q_tokens)
         for idx in range(len(s_tokens) - n + 1):
             if s_tokens[idx:idx + n] == q_tokens:
-                return source_text[s_matches[idx].start():s_matches[idx + n - 1].end()]
+                start = s_spans[s_matches[idx].start()][0]
+                end = s_spans[s_matches[idx + n - 1].end() - 1][1]
+                return source_text[start:end][:480]
     return None
 
 
@@ -264,6 +375,8 @@ def generate_analysis(sources,llm,*,task,max_repairs=2,progress=None,item_label=
             with trace_step(f"Kiểm duyệt chéo AI (Reviewer) — {target}"):
                 verdict=json.loads(traced_llm.generate(json.dumps({'sources':sources,'analysis':data},ensure_ascii=False),system=REVIEW_SYSTEM,schema=REVIEW_SCHEMA))
             keys={'supported','no_remediation','appropriately_uncertain','database_specific'}
+            if isinstance(verdict,dict) and ('K1' not in sources or 'mức liên quan=unrelated' in sources.get('K1','')):
+                verdict['database_specific']=True
             if not isinstance(verdict,dict) or set(verdict)!=keys or any(verdict[k] is not True for k in keys):
                 failed=[k for k in sorted(keys) if not isinstance(verdict,dict) or verdict.get(k) is not True]
                 raise ValueError('Analysis review rejected: '+','.join(failed))
@@ -303,6 +416,12 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unveri
     model=llm or (OllamaLLM(settings) if provider=='ollama' else GeminiLLM(settings))
     total_rows=len(rows)
     for index,row in enumerate(rows,1):
+        if is_passive_service_observation(row):
+            row['ai_analysis']={
+                'status':'skipped_observation','claims':{},'sources':{},'calls':0,
+                'reason':'Quan sát dịch vụ/banner thụ động được trình bày tại Mục 3; không cần AI diễn giải như lỗ hổng.',
+            }
+            continue
         if drop_unverified_observations and row.get('kind')=='observation':
             row['ai_analysis']={
                 'status':'skipped_observation','claims':{},'sources':{},'calls':0,
@@ -369,9 +488,20 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unveri
     sum_hints.append('không tự bịa điểm CVSS hay viết hướng dẫn khắc phục.')
     def _sum_progress(msg):
         if progress:progress(f"[step=5|pct=84] {msg}")
-    if progress:progress('[step=5|pct=80] AI summary — Đang tổng hợp Tổng quan điều hành toàn báo cáo...')
-    report['ai_summary']=generate_analysis(summary_sources,model,task='; '.join(sum_hints),progress=_sum_progress if progress else None,item_label='Tổng quan điều hành')
-    report['analysis_calls']+=report['ai_summary']['calls']
+    summary_eligible_rows=[
+        r for r in rows
+        if not is_passive_service_observation(r)
+        and not (drop_unverified_observations and r.get('kind')=='observation')
+    ]
+    if not summary_eligible_rows:
+        report['ai_summary']={
+            'status':'not_requested','claims':{},'sources':summary_sources,'calls':0,
+            'reason':'Chỉ có quan sát dịch vụ thụ động hoặc chỉ báo đã loại bỏ; không yêu cầu AI suy diễn tác động.',
+        }
+    else:
+        if progress:progress('[step=5|pct=80] AI summary — Đang tổng hợp Tổng quan điều hành toàn báo cáo...')
+        report['ai_summary']=generate_analysis(summary_sources,model,task='; '.join(sum_hints),progress=_sum_progress if progress else None,item_label='Tổng quan điều hành')
+        report['analysis_calls']+=report['ai_summary']['calls']
     if progress:
         sum_vi='Đạt kiểm tra nguồn & rà soát AI' if report['ai_summary']['status']=='ai_reviewed' else report['ai_summary']['status']
         progress(f"[step=5|pct=92] Hoàn tất Tổng quan điều hành AI: {sum_vi}")

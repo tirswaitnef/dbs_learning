@@ -325,7 +325,7 @@ class OllamaIntegrationTests(unittest.TestCase):
                     if current["status"] in {"completed", "partial", "failed"}:
                         break
                     time.sleep(0.05)
-                self.assertEqual(current["status"], "completed")
+                self.assertEqual(current["status"], "completed", msg=json.dumps({"error": current.get("error"), "summary": current.get("summary")}, ensure_ascii=False))
                 self.assertEqual(current["percent"], 100)
                 self.assertEqual(current["step"], 6)
                 self.assertGreaterEqual(len(current["events"]), 5)
@@ -899,8 +899,8 @@ class OllamaIntegrationTests(unittest.TestCase):
                     report_metadata={"xss_decision": "drop", "prepared_by": "Sinh viên A"},
                 )
                 first_call_count = len(llm_calls)
-                # 1 AI direct input read + 1 source selection + 2 finding calls + 2 summary calls = 6 calls (0 wasted on dropped observation!)
-                self.assertEqual(first_call_count, 6)
+                # Structured parser fast-path (0 redundant read calls) + 1 source selection + 2 finding calls + 2 summary calls = 5 calls
+                self.assertEqual(first_call_count, 5)
 
                 # Re-exporting the exact same log with new cover metadata & unmasked IP uses SHA-256 AI cache -> ZERO extra LLM calls!
                 out2 = tmp_p / "out2"
@@ -916,8 +916,8 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertIn("8.8.4.4", md2)
                 cached_trace = json.loads((out2 / "ai_trace.json").read_text(encoding="utf-8"))
                 self.assertTrue(cached_trace["from_cache"])
-                self.assertEqual(cached_trace["call_count"], 6)
-                self.assertEqual(len(cached_trace["entries"]), 6)
+                self.assertEqual(cached_trace["call_count"], 5)
+                self.assertEqual(len(cached_trace["entries"]), 5)
                 self.assertIn("SYSTEM PROMPT", (out2 / "ai_trace.txt").read_text(encoding="utf-8"))
 
                 # Forcing fresh AI execution (`force_fresh_ai="true"`) runs live LLM calls again!
@@ -931,7 +931,7 @@ class OllamaIntegrationTests(unittest.TestCase):
                 self.assertEqual(len(llm_calls), first_call_count * 2)
                 live_trace = json.loads((out3 / "ai_trace.json").read_text(encoding="utf-8"))
                 self.assertFalse(live_trace["from_cache"])
-                self.assertEqual(live_trace["call_count"], 6)
+                self.assertEqual(live_trace["call_count"], 5)
 
     def test_web_trace_endpoint_and_multi_tool_flexibility(self):
         from dataclasses import asdict

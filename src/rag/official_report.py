@@ -317,6 +317,8 @@ def guidance_from_source(source, cwe):
 
 
 def build_corpus_report(findings, settings, documents, get_results, *, corpus_sha256, scan_sha256, llm=None, progress=None, drop_unverified_observations=False):
+    from .report_view import is_passive_service_observation
+
     provider=settings.resolved_provider
     prefix='ollama' if provider=='ollama' else 'gemini'
     actor='AI cục bộ (Ollama)' if provider=='ollama' else 'Gemini'
@@ -326,8 +328,12 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
         scope=classify(finding)
         row={**asdict(finding),'owasp_top10':scope,'evidence_assessment':'Presence only; not independently verified',
              'retrieval':[],'guidance':[],'status':'scope_blocked','generation_status':'not_requested'}
+        passive_service=is_passive_service_observation(finding)
         skip_obs=bool(drop_unverified_observations and getattr(finding,'kind','')=='observation')
-        if scope['status']=='in_scope' and finding.evidence and not skip_obs:
+        if passive_service:
+            row['status']='passive_observation'
+            row['guidance_reason']='Quan sát thụ động về dịch vụ/banner; không tra cứu biện pháp OWASP như thể đó là lỗ hổng đã xác nhận.'
+        elif scope['status']=='in_scope' and finding.evidence and not skip_obs:
             pct_start=20+int(20*(idx_f-1)/total_f)
             pct_done=20+int(20*idx_f/total_f)
             if progress:
@@ -366,7 +372,10 @@ def build_corpus_report(findings, settings, documents, get_results, *, corpus_sh
         elif scope['status']=='in_scope':row['status']='missing_evidence'
         row['analysis_vi']=(f"Kiểm thử cung cấp {len(finding.evidence)} mục bằng chứng. "
                             'Giữ nguyên mức độ và phân loại từ đầu vào; chưa xác minh độc lập lỗ hổng. '+scope['reason'])
-        row['guidance_reason']='' if row['guidance'] else guidance_reason(row)
+        if row['guidance']:
+            row['guidance_reason']=''
+        elif not row.get('guidance_reason'):
+            row['guidance_reason']=guidance_reason(row)
         rows.append(row)
     report={'schema_version':1,'generated_at':datetime.now(timezone.utc).isoformat(),
             'mode':f'{prefix}-top10-extractive','model':settings.model_label,'generation_calls':calls,
@@ -457,7 +466,7 @@ def run_corpus_report(scan_path, output, settings, *, raw_directory, store_direc
                 store_probe_sha=''
     cache_dir=Path(store_directory)/'ai_cache'
     cache_key=hashlib.sha256(json.dumps({
-        'v':7,'retrieval':'hybrid-rrf-v1','scan_sha256':scan_sha,'format':format_,
+        'v':8,'retrieval':'hybrid-rrf-v1','scan_sha256':scan_sha,'format':format_,
         'corpus_sha256':store_probe_sha,'model':settings.model_label,
         'xss_decision':xss_dec,'xss_poc':extra_poc,
     },sort_keys=True).encode('utf-8')).hexdigest()

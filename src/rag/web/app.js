@@ -1,9 +1,11 @@
-'use strict';
+/* ============================================================================
+   DBSec OWASP Assistant — Complete Web UI Controller (CSP-Safe, Zero Inline JS)
+   Matches IMG_8610 design with 100% genuine backend-connected features
+   ============================================================================ */
 
+const STORAGE_KEY = 'dbsec_active_thread_v2';
 const TERMINAL = new Set(['completed', 'partial', 'failed']);
-const STORAGE_KEY = 'dbsec-selected-thread';
-const IS_DEBUG = /^\/debug(?:\/|$)/i.test(window.location.pathname || '')
-  || new URLSearchParams(window.location.search || '').get('debug') === '1';
+const IS_DEBUG = window.location.pathname === '/debug' || window.location.pathname.startsWith('/debug/');
 
 const META_KEYS = [
   'report_id',
@@ -13,110 +15,92 @@ const META_KEYS = [
   'assessment_period',
   'retest_status',
   'retest_evidence',
-  'report_profile',
+  'prepared_by',
+  'excluded_areas',
+  'mask_public_ips',
+  'xss_decision',
   'force_fresh_ai',
 ];
 
 const PIPELINE_STEPS = [
-  { num: 1, title: 'Đọc hiểu dữ liệu đầu vào & trích xuất bằng chứng gốc', detail: 'Nhận diện tự động log công cụ / tài liệu Pentest và đối khớp gói tin HTTP chứng minh' },
-  { num: 2, title: 'Nạp kho tri thức OWASP chuyên biệt CSDL', detail: '25 OWASP Cheat Sheets & mô hình nhúng ngữ nghĩa E5' },
-  { num: 3, title: 'Đối chiếu OWASP Top 10:2025 & Truy xuất Hybrid RAG', detail: 'Chọn biện pháp khắc phục chính & đoạn mã an toàn đúng ngăn xếp' },
-  { num: 4, title: 'Gộp lỗi trùng (F-xx), tách Quan sát (Mục 3) & Âm tính (Mục 4)', detail: 'Không tự chấm CVSS; chỉ gán CWE khi có bằng chứng trực tiếp' },
-  { num: 5, title: 'Tách bạch Tác động Đã chứng minh & Giả thuyết', detail: 'Tập trung Giới hạn & việc cần xác minh duy nhất tại Mục 5' },
-  { num: 6, title: 'Kết xuất Báo cáo Kiểm thử Gọn 6 mục (PDF & Markdown)', detail: 'Đánh số trang Page X of Y, che khóa phiên [REDACTED] & lưu Phụ lục SHA-256' },
+  { num: 1, title: 'Đọc & chuẩn hóa đầu vào', detail: 'Tách bản ghi, gộp cảnh báo trùng & che dữ liệu nhạy cảm' },
+  { num: 2, title: 'Phân loại CWE & ngữ cảnh CSDL', detail: 'Đối chiếu mã CWE, trạng thái xác nhận và quan sát thụ động' },
+  { num: 3, title: 'Truy xuất OWASP Hybrid RAG', detail: 'Kết hợp Dense Vector + Heading BM25 RRF trên 25 Cheat Sheets' },
+  { num: 4, title: 'Phân tích & kiểm duyệt chéo AI', detail: 'Sinh mô tả kỹ thuật và xác minh trích dẫn nguyên văn' },
+  { num: 5, title: 'Dựng cấu trúc Báo cáo Gọn 6 mục', detail: 'Phân tách rõ Phát hiện (Mục 2), Quan sát (Mục 3) & Âm tính (Mục 4)' },
+  { num: 6, title: 'Kết xuất PDF, Markdown & SHA-256', detail: 'Đóng gói báo cáo tiếng Việt sẵn sàng xem trực tiếp và tải về' },
 ];
-
-const SAMPLE_SQLMAP_LOG = [
-  'Target URL: http://198.51.100.79/vulnerabilities/sqli/?id=1&Submit=Submit',
-  '[11:21:57] [INFO] testing connection to the target URL',
-  "[11:21:57] [INFO] heuristic (XSS) test shows that GET parameter 'id' might be vulnerable to cross-site scripting (XSS) attacks",
-  "[11:22:01] [WARNING] GET parameter 'Submit' does not seem to be dynamic",
-  '---',
-  'Parameter: id (GET)',
-  '    Type: boolean-based blind',
-  '    Title: OR boolean-based blind - WHERE or HAVING clause (NOT)',
-  "    Payload: id=1' OR NOT 5452=5452-- -&Submit=Submit",
-  '',
-  '    Type: error-based',
-  '    Title: MySQL >= 5.1 AND error-based - WHERE, HAVING, ORDER BY or GROUP BY clause (EXTRACTVALUE)',
-  "    Payload: id=1' AND EXTRACTVALUE(5879,CONCAT(0x5c,0x7170787671,1))-- nWty&Submit=Submit",
-  '',
-  '    Type: UNION query',
-  '    Title: Generic UNION query (NULL) - 2 columns',
-  "    Payload: id=1' UNION ALL SELECT NULL,CONCAT(0x7170787671,schema_name,0x71706a7871) FROM INFORMATION_SCHEMA.SCHEMATA-- -&Submit=Submit",
-  '---',
-  'web application technology: Apache 2.4.25, PHP 7.0.33',
-  'back-end DBMS: MySQL >= 5.1 (MariaDB fork)',
-  "current user: 'app@localhost'",
-  "current database: 'dvwa'",
-  'current user is DBA: False',
-  'available databases [2]:',
-  '[*] dvwa',
-  '[*] information_schema',
-  'Database: dvwa',
-  '[2 tables]',
-  '+-----------+',
-  '| guestbook |',
-  '| users     |',
-  '+-----------+',
-  'HTTP request [#239]:',
-  'GET /vulnerabilities/sqli/?id=1%27%20AND%20EXTRACTVALUE%285879%2C1%29--%20nWty&Submit=Submit HTTP/1.1',
-  'Host: 198.51.100.79',
-  'Cookie: PHPSESSID=demo_session_secret_991; security=low',
-  '',
-  'HTTP response [#239] (200 OK):',
-  'HTTP/1.1 200 OK',
-  'Server: Apache/2.4.25 (Debian)',
-  "<pre>XPATH syntax error: '\\qpxvq1qpjxq'</pre>",
-  '############################################################################',
-].join('\n');
-
-const state = {
-  token: document.querySelector('meta[name="app-token"]')?.content || '',
-  config: null,
-  jobs: [],
-  threads: [],
-  selectedId: null, // selected thread id
-  pendingUserText: '',
-  selectedFiles: [],
-  pollTimer: null,
-  clockTimer: null,
-  toastTimer: null,
-  traceCache: {},
-  submitting: false,
-  lastRenderSig: '',
-  debugTab: 'eval',
-  debugOverview: null,
-  debugJobId: null,
-  debugCommsSig: '',
-};
-
-const el = (id) => document.getElementById(id);
-
-function create(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const ICONS = {
-  file: [['path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }], ['polyline', { points: '14 2 14 8 20 8' }], ['line', { x1: 16, y1: 13, x2: 8, y2: 13 }], ['line', { x1: 16, y1: 17, x2: 8, y2: 17 }]],
   bot: [
-    ['path', { d: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z' }],
-    ['path', { d: 'M9 12l2 2 4-4' }],
+    ['rect', { x: 4, y: 4, width: 16, height: 16, rx: 5 }],
+    ['path', { d: 'M9.5 12.2l1.8 1.8 3.6-3.8' }],
   ],
-  chat: [
-    ['path', { d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }],
+  file: [
+    ['path', { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' }],
+    ['polyline', { points: '14 2 14 8 20 8' }],
   ],
-  download: [['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }], ['polyline', { points: '7 10 12 15 17 10' }], ['line', { x1: 12, y1: 15, x2: 12, y2: 3 }]],
-  eye: [['path', { d: 'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z' }], ['circle', { cx: 12, cy: 12, r: 3 }]],
-  clock: [['circle', { cx: 12, cy: 12, r: 10 }], ['polyline', { points: '12 6 12 12 16 14' }]],
-  link: [['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }], ['polyline', { points: '15 3 21 3 21 9' }], ['line', { x1: 10, y1: 14, x2: 21, y2: 3 }]],
+  download: [
+    ['path', { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' }],
+    ['polyline', { points: '7 10 12 15 17 10' }],
+    ['line', { x1: 12, y1: 15, x2: 12, y2: 3 }],
+  ],
+  eye: [
+    ['path', { d: 'M7 17L17 7' }],
+    ['polyline', { points: '9 7 17 7 17 15' }],
+  ],
+  copy: [
+    ['rect', { x: 9, y: 9, width: 13, height: 13, rx: 2 }],
+    ['path', { d: 'M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1' }],
+  ],
+  clock: [
+    ['circle', { cx: 12, cy: 12, r: 9 }],
+    ['polyline', { points: '12 7 12 12 15 15' }],
+  ],
+  link: [
+    ['path', { d: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71' }],
+    ['path', { d: 'M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71' }],
+  ],
 };
 
-function icon(name, size = 18) {
+const state = {
+  token: '',
+  config: null,
+  jobs: [],
+  threads: [],
+  selectedId: null,
+  checkedThreadIds: new Set(),
+  activeView: 'chat',
+  searchQuery: '',
+  selectedFiles: [],
+  submitting: false,
+  pendingUserText: '',
+  lastRenderSig: '',
+  pollTimer: null,
+  clockTimer: null,
+  toastTimer: null,
+  reportCache: {},
+  mdCache: {},
+  traceCache: {},
+  debugTab: 'eval',
+  debugJobId: null,
+  debugCommsSig: '',
+  debugOverview: null,
+};
+
+function el(id) {
+  return document.getElementById(id);
+}
+
+function create(tag, cls = '', text = '') {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== '' && text !== null && text !== undefined) node.textContent = String(text);
+  return node;
+}
+
+function icon(name, size = 16) {
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('width', String(size));
@@ -174,7 +158,7 @@ function pctText(v) {
 }
 
 function statusText(job) {
-  if (!job) return 'Trò chuyện với trợ lý';
+  if (!job) return 'Trò chuyện bảo mật';
   if (job.status === 'queued') return 'Đang chờ phân tích';
   if (job.status === 'running') return `${job.percent || 10}% · ${job.stage || 'Đang phân tích'}`;
   if (job.status === 'completed') return 'Báo cáo 6 mục sẵn sàng';
@@ -184,14 +168,16 @@ function statusText(job) {
 
 function showToast(text) {
   const box = el('toast');
+  if (!box) return;
   box.textContent = text;
   box.hidden = false;
   clearTimeout(state.toastTimer);
-  state.toastTimer = setTimeout(() => { box.hidden = true; }, 4200);
+  state.toastTimer = setTimeout(() => { box.hidden = true; }, 4000);
 }
 
 function setFormError(text) {
   const box = el('form-error');
+  if (!box) return;
   box.textContent = text || '';
   box.hidden = !text;
 }
@@ -228,9 +214,67 @@ function scrollChatToBottom(smooth = true) {
 }
 
 /* ============================================================================
-   Safe CSP-Clean Markdown DOM Renderer (headings, bold, inline code, links,
-   bullet/numbered lists, and copyable code blocks — zero innerHTML!)
+   CSP-Clean Line-Numbered Syntax Code Block Renderer (IMG_8610 style)
    ============================================================================ */
+function appendHighlightedLine(cell, lineText) {
+  const trimmed = lineText.trimStart();
+  if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('-- ')) {
+    cell.appendChild(create('span', 'tok-cmt', lineText));
+    return;
+  }
+  const tokenRe = /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:const|let|var|function|return|async|await|if|else|new|try|catch|SELECT|FROM|WHERE|AND|OR|UNION|INSERT|UPDATE|DELETE|GRANT|REVOKE|PREPARE|EXECUTE|PDO)\b|\b[A-Za-z_$][A-Za-z0-9_$]*(?=\s*\())/g;
+  let last = 0;
+  let m;
+  while ((m = tokenRe.exec(lineText)) !== null) {
+    if (m.index > last) cell.appendChild(document.createTextNode(lineText.slice(last, m.index)));
+    const tok = m[0];
+    if (tok.startsWith('"') || tok.startsWith('\'')) {
+      cell.appendChild(create('span', 'tok-str', tok));
+    } else if (/^(const|let|var|function|return|async|await|if|else|new|try|catch|SELECT|FROM|WHERE|AND|OR|UNION|INSERT|UPDATE|DELETE|GRANT|REVOKE|PREPARE|EXECUTE|PDO)$/.test(tok)) {
+      cell.appendChild(create('span', 'tok-kw', tok));
+    } else {
+      cell.appendChild(create('span', 'tok-fn', tok));
+    }
+    last = m.index + tok.length;
+  }
+  if (last < lineText.length) cell.appendChild(document.createTextNode(lineText.slice(last)));
+}
+
+function buildLinedCodeSurface(codeText) {
+  const surface = create('div', 'code-window-surface');
+  const table = create('table', 'lined-code-table');
+  const tbody = create('tbody');
+  const lines = String(codeText || '').replace(/\r\n/g, '\n').split('\n');
+  lines.forEach((ln, idx) => {
+    const tr = create('tr');
+    tr.appendChild(create('td', 'ln-col', String(idx + 1)));
+    const srcTd = create('td', 'src-col');
+    appendHighlightedLine(srcTd, ln);
+    tr.appendChild(srcTd);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  surface.appendChild(table);
+  return surface;
+}
+
+function buildCopyButton(getTextFn, label = 'Sao chép') {
+  const btn = create('button', 'code-copy-btn');
+  btn.type = 'button';
+  const txtSpan = create('span', '', label);
+  btn.append(icon('copy', 14), txtSpan);
+  btn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(getTextFn());
+      txtSpan.textContent = 'Đã chép ✓';
+      setTimeout(() => { txtSpan.textContent = label; }, 1700);
+    } catch (_) {
+      txtSpan.textContent = 'Không chép được';
+    }
+  });
+  return btn;
+}
+
 function appendInlineFormatted(parent, rawText) {
   const text = String(rawText || '');
   const tokenRe = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
@@ -273,25 +317,14 @@ function renderMarkdownSafe(markdownText) {
     if (!seg) continue;
     const fenceMatch = seg.match(/^```([A-Za-z0-9_+#.-]*)\n([\s\S]*?)```$/);
     if (fenceMatch) {
-      const lang = fenceMatch[1] || 'code';
+      const lang = (fenceMatch[1] || 'CODE').toUpperCase();
       const codeBody = fenceMatch[2].replace(/\n$/, '');
       const wrap = create('div', 'md-code-wrap');
-      const bar = create('div', 'md-code-bar');
-      bar.appendChild(create('span', '', lang));
-      const copyBtn = create('button', 'md-copy-btn', 'Sao chép');
-      copyBtn.type = 'button';
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(codeBody);
-          copyBtn.textContent = 'Đã chép ✓';
-          setTimeout(() => { copyBtn.textContent = 'Sao chép'; }, 1800);
-        } catch (_) {
-          copyBtn.textContent = 'Không chép được';
-        }
-      });
-      bar.appendChild(copyBtn);
-      const pre = create('pre', '', codeBody);
-      wrap.append(bar, pre);
+      const topBar = create('div', 'code-window-topbar');
+      const tabs = create('div', 'card-tab-list');
+      tabs.appendChild(create('span', 'card-tab-btn active', lang));
+      topBar.append(tabs, buildCopyButton(() => codeBody, 'Sao chép mã'));
+      wrap.append(topBar, buildLinedCodeSurface(codeBody));
       container.appendChild(wrap);
       continue;
     }
@@ -308,8 +341,7 @@ function renderMarkdownSafe(markdownText) {
     };
 
     for (const rawLine of lines) {
-      const line = rawLine.trimEnd();
-      const trimmed = line.trim();
+      const trimmed = rawLine.trim();
       if (!trimmed) {
         flushList();
         continue;
@@ -357,6 +389,182 @@ function renderMarkdownSafe(markdownText) {
   return container;
 }
 
+/* ============================================================================
+   View Navigation (Chat, Templates, Live OWASP Lookup, Session Stats, Settings)
+   ============================================================================ */
+function switchMainView(viewName) {
+  state.activeView = viewName;
+  document.querySelectorAll('.rail-item').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.view === viewName);
+  });
+
+  const isChat = viewName === 'chat';
+  el('composer-wrap').hidden = !isChat;
+  el('view-templates').hidden = viewName !== 'templates';
+  el('view-owasp').hidden = viewName !== 'owasp';
+  el('view-stats').hidden = viewName !== 'stats';
+  el('view-settings').hidden = viewName !== 'settings';
+
+  if (!isChat) {
+    el('empty-state').hidden = true;
+    el('messages').hidden = true;
+    const titles = {
+      templates: ['Kịch bản Mẫu Kiểm thử', 'Chọn nhanh câu hỏi kỹ thuật có thể gửi trực tiếp cho Trợ lý AI'],
+      owasp: ['Tra cứu Kho OWASP CSDL', 'Hybrid Search (Dense E5 + Heading BM25 + RRF) trên 25 Cheat Sheets cục bộ'],
+      stats: ['Thống kê Phiên Phân tích', 'Tổng hợp trực tiếp từ các tệp kiểm thử và hội thoại đã thực hiện'],
+      settings: ['Cấu hình Báo cáo & Phiên', 'Thiết lập tùy chọn đầu trang cho PDF & Markdown'],
+    };
+    const [t, s] = titles[viewName] || titles.settings;
+    el('chat-thread-title').textContent = t;
+    el('chat-thread-sub').textContent = s;
+    if (viewName === 'owasp' && !el('owasp-results-list').children.length) runLiveOwaspLookup();
+    if (viewName === 'stats') renderLiveStatistics();
+  } else {
+    renderWorkspace(false);
+  }
+  closeSidebar();
+}
+
+async function runLiveOwaspLookup(event) {
+  if (event) event.preventDefault();
+  const host = el('owasp-results-list');
+  if (!host) return;
+  const query = (el('owasp-q')?.value || '').trim();
+  const cwe = (el('owasp-cwe')?.value || '').trim();
+  if (!query) return;
+  host.replaceChildren(create('div', 'event-panel', 'Đang truy xuất kho OWASP Cheat Sheet Series cục bộ...'));
+  try {
+    const res = await api('/api/debug/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, cwe, stack_hint: '', top_k: 6 }),
+    });
+    host.replaceChildren();
+    const hits = res.results || [];
+    if (!hits.length) {
+      host.appendChild(create('div', 'history-empty', 'Không tìm thấy đoạn hướng dẫn khớp trực tiếp. Hãy thử từ khóa khác.'));
+      return;
+    }
+    for (const h of hits) {
+      const card = create('article', 'owasp-hit-card');
+      const head = create('div', 'owasp-hit-head');
+      const titleLink = create('a', 'json-link', `#${h.rank} · ${h.source}`);
+      titleLink.href = h.url;
+      titleLink.target = '_blank';
+      titleLink.rel = 'noopener';
+      head.append(titleLink, create('span', 'tag-mini ok', `Hybrid RRF ${h.hybrid_score}`));
+      card.appendChild(head);
+      if (h.section) card.appendChild(create('div', 'preview-title', h.section));
+      card.appendChild(renderMarkdownSafe(h.snippet || ''));
+      const askBtn = create('button', 'followup-chip', 'Hỏi Trợ lý áp dụng hướng dẫn này →');
+      askBtn.type = 'button';
+      askBtn.addEventListener('click', () => {
+        switchMainView('chat');
+        sendTextPrompt(`Dựa trên tài liệu ${h.source} (${h.section || 'OWASP'}), hãy hướng dẫn chi tiết cách triển khai thực tế kèm code mẫu.`);
+      });
+      card.appendChild(askBtn);
+      host.appendChild(card);
+    }
+  } catch (err) {
+    host.replaceChildren(create('p', 'failure', err.message || 'Không thực hiện được tra cứu OWASP.'));
+  }
+}
+
+function renderLiveStatistics() {
+  const host = el('stats-live-body');
+  if (!host) return;
+  host.replaceChildren();
+
+  const totalJobs = state.jobs.length;
+  const completedJobs = state.jobs.filter((j) => j.status === 'completed' || j.status === 'partial');
+  let confirmedTotal = 0;
+  let tentativeTotal = 0;
+  let guidanceTotal = 0;
+  const sevCounts = {};
+
+  for (const j of completedJobs) {
+    const s = j.summary || {};
+    confirmedTotal += Number(s.confirmed_findings ?? 0);
+    tentativeTotal += Number(s.tentative_findings ?? 0) + Number(s.insufficient_findings ?? 0);
+    guidanceTotal += Number(s.with_guidance ?? 0);
+    for (const f of (s.findings_preview || [])) {
+      const k = f.severity_label || f.severity || 'Chưa xác định';
+      sevCounts[k] = (sevCounts[k] || 0) + 1;
+    }
+  }
+
+  const metrics = create('div', 'metrics');
+  for (const [val, label] of [
+    [String(state.threads.length), 'Cuộc trò chuyện lưu trữ'],
+    [String(totalJobs), 'Tệp kiểm thử đã phân tích'],
+    [String(confirmedTotal), 'Lỗ hổng Đã xác nhận'],
+    [String(guidanceTotal), 'Khuyến nghị OWASP đối chiếu'],
+  ]) {
+    const m = create('div', 'metric');
+    m.append(create('strong', '', val), create('span', '', label));
+    metrics.appendChild(m);
+  }
+  host.appendChild(metrics);
+
+  const detailCard = create('div', 'settings-card');
+  detailCard.appendChild(create('div', 'preview-title', 'Phân bố Mức độ Nghiêm trọng trên các Báo cáo Hiện có'));
+  const entries = Object.entries(sevCounts);
+  if (!entries.length) {
+    detailCard.appendChild(create('p', '', `Chưa có phát hiện lỗ hổng nào được ghi nhận (${tentativeTotal} mục cần xác minh). Hãy đính kèm tệp quét ở mục Trợ lý AI để thống kê.`));
+  } else {
+    for (const [sevLabel, cnt] of entries) {
+      const row = create('div', 'preview-row');
+      row.append(create('strong', '', sevLabel), create('span', 'tag-mini ok', `${cnt} phát hiện`));
+      detailCard.appendChild(row);
+    }
+  }
+  host.appendChild(detailCard);
+}
+
+/* ============================================================================
+   PDF Modal Viewer + Lazy Job Markdown / Evidence Fetcher
+   ============================================================================ */
+function openPdfModal(job) {
+  const tokSuffix = state.token ? `&token=${encodeURIComponent(state.token)}` : '';
+  const inlineUrl = `/api/jobs/${job.id}/pdf?inline=1&profile=compact${tokSuffix}`;
+  const dlUrl = `/api/jobs/${job.id}/pdf?profile=compact${tokSuffix}`;
+  el('pdf-modal-title').textContent = `Báo cáo Kiểm thử Bảo mật — ${job.filename}`;
+  el('pdf-modal-frame').src = inlineUrl;
+  el('pdf-modal-download').href = dlUrl;
+  el('pdf-modal-download').download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.pdf`;
+  el('pdf-modal-newtab').href = inlineUrl;
+  el('pdf-modal').hidden = false;
+}
+
+function closePdfModal() {
+  const modal = el('pdf-modal');
+  if (!modal) return;
+  modal.hidden = true;
+  el('pdf-modal-frame').src = 'about:blank';
+}
+
+async function ensureJobMarkdownLoaded(jobId) {
+  if (state.mdCache[jobId]) return state.mdCache[jobId];
+  const tokSuffix = state.token ? `&token=${encodeURIComponent(state.token)}` : '';
+  const text = await api(`/api/jobs/${jobId}/md?profile=compact${tokSuffix}`);
+  state.mdCache[jobId] = String(text || '');
+  return state.mdCache[jobId];
+}
+
+function extractEvidenceSnippetFromMarkdown(mdText) {
+  const blocks = [];
+  const rx = /```[A-Za-z0-9_+#.-]*\n([\s\S]*?)```/g;
+  let m;
+  while ((m = rx.exec(mdText)) !== null) {
+    if (m[1] && m[1].trim()) blocks.push(m[1].trim());
+  }
+  if (blocks.length) return blocks.join('\n\n// ─────────────────────────────────────────\n\n');
+  return mdText;
+}
+
+/* ============================================================================
+   File Selection, History Sidebar (Checkboxes + Real Delete), & Completed Card
+   ============================================================================ */
 function guessFormatByName(name) {
   const lower = (name || '').toLowerCase();
   if (lower.endsWith('.nessus')) return 'nessus';
@@ -391,7 +599,7 @@ function updateSelectedFiles(incoming, append = true) {
 
   state.selectedFiles.forEach((f, idx) => {
     const chip = create('div', 'single-chip');
-    chip.appendChild(icon('file', 15));
+    chip.appendChild(icon('file', 14));
     chip.appendChild(create('strong', '', f.name));
     chip.appendChild(create('span', '', formatBytes(f.size)));
     const rm = create('button', '', '×');
@@ -409,24 +617,26 @@ function updateSelectedFiles(incoming, append = true) {
 function renderBanner() {
   const banner = el('banner');
   const pill = el('mode-pill');
+  const dot = document.querySelector('.engine-dot');
+  if (!banner || !pill || !state.config) return;
   banner.className = 'banner';
-  if (!state.config) {
-    banner.hidden = true;
-    return;
-  }
   if (state.config.demo) {
-    pill.textContent = 'Trợ lý Demo · OWASP RAG Sẵn sàng';
+    pill.textContent = 'Chế độ Demo · OWASP RAG';
+    if (dot) dot.classList.remove('offline');
     banner.hidden = true;
     return;
   }
   if (!state.config.configured) {
-    pill.textContent = 'Chế độ RAG cục bộ (Chờ Ollama)';
-    banner.textContent = 'Ollama chưa bật — trợ lý vẫn trả lời hỏi đáp từ kho OWASP Cheat Sheet & phân tích tệp quét cục bộ.';
+    pill.textContent = 'RAG Cục bộ (Chờ Ollama)';
+    if (dot) dot.classList.add('offline');
+    banner.textContent = 'Mô hình Ollama chưa sẵn sàng — chế độ phân tích AI chưa khả dụng.';
     banner.hidden = false;
     return;
   }
-  const label = state.config.provider === 'ollama' ? `Ollama · ${state.config.model}` : `AI · ${state.config.model}`;
-  pill.textContent = label;
+  if (dot) dot.classList.remove('offline');
+  pill.textContent = state.config.provider === 'ollama'
+    ? `Ollama · ${state.config.model}`
+    : `AI · ${state.config.model}`;
   banner.hidden = true;
 }
 
@@ -434,34 +644,107 @@ function findJob(jobId) {
   return state.jobs.find((j) => j.id === jobId) || null;
 }
 
+function updateClearHistoryLabel() {
+  const lbl = el('clear-history-label');
+  if (!lbl) return;
+  const cnt = state.checkedThreadIds.size;
+  lbl.textContent = cnt > 0 ? `Xóa đã chọn (${cnt})` : 'Xóa lịch sử';
+}
+
 function renderHistory() {
   const nav = el('history');
+  const badge = el('history-count-badge');
+  if (!nav) return;
   nav.replaceChildren();
-  if (!state.threads.length) {
-    nav.appendChild(create('div', 'history-empty', 'Chưa có cuộc trò chuyện nào. Hãy đặt câu hỏi hoặc đính kèm tệp quét để bắt đầu.'));
+
+  const q = state.searchQuery.trim().toLowerCase();
+  const visibleThreads = q
+    ? state.threads.filter((th) => {
+      const hay = `${th.title || ''} ${(th.messages || []).map((m) => m.text || '').join(' ')}`.toLowerCase();
+      return hay.includes(q);
+    })
+    : state.threads;
+
+  if (badge) {
+    badge.textContent = q
+      ? `${visibleThreads.length}/${state.threads.length}`
+      : `${state.threads.length}`;
+  }
+
+  for (const checkedId of Array.from(state.checkedThreadIds)) {
+    if (!state.threads.some((t) => t.id === checkedId)) state.checkedThreadIds.delete(checkedId);
+  }
+  updateClearHistoryLabel();
+
+  if (!visibleThreads.length) {
+    nav.appendChild(create(
+      'div',
+      'history-empty',
+      q
+        ? 'Không có cuộc trò chuyện nào khớp từ khóa tìm kiếm.'
+        : 'Chưa có lịch sử trò chuyện. Hãy đặt câu hỏi hoặc gửi tệp quét để bắt đầu.'
+    ));
     return;
   }
-  for (const th of state.threads) {
+
+  for (const th of visibleThreads) {
     const activeJob = th.active_job_id ? findJob(th.active_job_id) : null;
-    const item = create('button', 'history-item' + (th.id === state.selectedId ? ' active' : ''));
-    item.type = 'button';
-    const dotCls = activeJob ? `status-dot ${activeJob.status}` : 'status-dot completed';
-    const dot = create('span', dotCls);
-    const body = create('div', 'history-body');
-    body.appendChild(create('strong', '', th.title || 'Cuộc trò chuyện bảo mật'));
-    const sub = activeJob
+    const card = create('div', 'history-card' + (th.id === state.selectedId ? ' active' : ''));
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'history-check';
+    chk.checked = state.checkedThreadIds.has(th.id);
+    chk.setAttribute('aria-label', `Chọn ${th.title || 'cuộc trò chuyện'}`);
+    chk.addEventListener('click', (e) => e.stopPropagation());
+    chk.addEventListener('change', () => {
+      if (chk.checked) state.checkedThreadIds.add(th.id);
+      else state.checkedThreadIds.delete(th.id);
+      updateClearHistoryLabel();
+    });
+
+    const body = create('div', 'history-card-body');
+    body.appendChild(create('strong', '', th.title || 'Phiên kiểm thử bảo mật'));
+    const lastMsg = [...(th.messages || [])].reverse().find((m) => m.text && m.text.trim());
+    const previewTxt = activeJob
       ? `${statusText(activeJob)} · ${formatTime(th.updated_at)}`
-      : `${(th.messages || []).length} tin nhắn · ${formatTime(th.updated_at)}`;
-    body.appendChild(create('span', '', sub));
-    item.append(dot, body);
-    item.addEventListener('click', () => selectThread(th.id));
-    nav.appendChild(item);
+      : (lastMsg ? lastMsg.text.trim().slice(0, 96) : `${(th.messages || []).length} tin nhắn`);
+    body.appendChild(create('p', '', previewTxt));
+
+    card.append(chk, body);
+    card.addEventListener('click', () => {
+      if (state.activeView !== 'chat') switchMainView('chat');
+      selectThread(th.id);
+    });
+    nav.appendChild(card);
+  }
+}
+
+async function handleClearHistory() {
+  if (!state.threads.length) {
+    showToast('Lịch sử hiện đang trống.');
+    return;
+  }
+  const selectedIds = Array.from(state.checkedThreadIds);
+  const query = selectedIds.length ? `?ids=${encodeURIComponent(selectedIds.join(','))}` : '';
+  try {
+    const res = await api(`/api/threads${query}`, { method: 'DELETE' });
+    state.checkedThreadIds.clear();
+    if (!selectedIds.length || selectedIds.includes(state.selectedId)) {
+      state.selectedId = null;
+      localStorage.removeItem(STORAGE_KEY);
+    }
+    state.lastRenderSig = '';
+    await refreshState();
+    showToast(`Đã xóa ${res.deleted_threads || 0} cuộc trò chuyện khỏi lịch sử.`);
+  } catch (err) {
+    showToast(err.message || 'Không xóa được lịch sử.');
   }
 }
 
 function assistantAvatar() {
   const wrap = create('div', 'message-avatar');
-  wrap.appendChild(icon('bot', 18));
+  wrap.appendChild(icon('bot', 17));
   return wrap;
 }
 
@@ -510,43 +793,28 @@ function buildTracePanel(job, opts = {}) {
 
   const wrap = create('div', 'trace-body');
   const qTok = state.token ? `?token=${encodeURIComponent(state.token)}` : '';
-  const topBar = create('div', 'trace-topbar');
-  topBar.appendChild(create('span', 'trace-mode-info',
-    fromCache
-      ? 'Phiên này tái sử dụng kết quả AI đã lưu theo SHA-256.'
-      : (job.demo ? 'Chế độ Demo cục bộ không gửi câu lệnh sang LLM.' : 'Ghi nhận đầy đủ System Prompt, User Payload và phản hồi nguyên văn.')));
-
-  const dlTrace = create('a', 'json-link trace-dl', 'Tải bản ghi lệnh AI (.txt)');
+  const dlTrace = create('a', 'json-link', 'Tải bản ghi lệnh AI (.txt)');
   dlTrace.href = `/api/jobs/${job.id}/trace-txt${qTok}`;
   dlTrace.download = `lenh-gui-ai-${job.id.slice(0, 8)}.txt`;
-  topBar.appendChild(dlTrace);
-  wrap.appendChild(topBar);
+  wrap.appendChild(dlTrace);
 
   if (!cached) {
     details.addEventListener('toggle', () => {
       if (details.open) fetchJobTrace(job.id);
     }, { once: true });
-    wrap.appendChild(create('p', 'trace-empty', 'Mở mục này để tải danh sách câu lệnh đã gửi cho AI.'));
+    wrap.appendChild(create('p', '', 'Mở mục này để tải danh sách câu lệnh đã gửi cho AI.'));
   } else if (cached.loading && !entries.length) {
-    wrap.appendChild(create('p', 'trace-empty', 'Đang tải nhật ký câu lệnh AI...'));
+    wrap.appendChild(create('p', '', 'Đang tải nhật ký câu lệnh AI...'));
   } else if (!entries.length) {
-    wrap.appendChild(create('p', 'trace-empty', 'Chưa ghi nhận lượt gọi LLM nào.'));
+    wrap.appendChild(create('p', '', 'Chưa ghi nhận lượt gọi LLM nào.'));
   } else {
     entries.forEach((item, idx) => {
-      const box = create('details', 'trace-item');
+      const box = create('details', 'event-panel');
       if (idx === entries.length - 1) box.open = true;
-      const head = `${idx + 1}. [${formatEventTime(item.at)}] Mô hình ${item.model || 'AI'} · ${item.duration_sec ?? 0}s · Prompt ${(item.prompt || '').length} ký tự`;
-      box.appendChild(create('summary', '', head));
-      const inner = create('div', 'trace-pre-group');
-      if (item.system) {
-        inner.appendChild(create('div', 'trace-label', '1. Chỉ dẫn hệ thống (System Prompt):'));
-        inner.appendChild(create('pre', 'trace-pre', item.system));
-      }
-      inner.appendChild(create('div', 'trace-label', '2. Dữ liệu & Câu lệnh gửi AI (User Prompt):'));
-      inner.appendChild(create('pre', 'trace-pre', item.prompt || ''));
-      inner.appendChild(create('div', 'trace-label', '3. Phản hồi nguyên văn từ AI:'));
-      inner.appendChild(create('pre', 'trace-pre', item.response || ''));
-      box.appendChild(inner);
+      box.appendChild(create('summary', '', `${idx + 1}. [${formatEventTime(item.at)}] ${item.model || 'AI'} · ${item.duration_sec ?? 0}s`));
+      if (item.system) box.appendChild(create('pre', 'trace-pre', item.system));
+      box.appendChild(create('pre', 'trace-pre', item.prompt || ''));
+      box.appendChild(create('pre', 'trace-pre', item.response || ''));
       wrap.appendChild(box);
     });
   }
@@ -562,7 +830,7 @@ function buildLiveProgressCard(job) {
   const top = create('div', 'process-top');
   const titleWrap = create('div', 'process-stage-wrap');
   titleWrap.appendChild(create('span', 'live-pulse'));
-  titleWrap.appendChild(create('strong', 'process-stage-title', job.stage || 'Đang phân tích dữ liệu...'));
+  titleWrap.appendChild(create('strong', 'process-stage-title', job.stage || 'Đang phân tích dữ liệu kiểm thử...'));
 
   const rightMeta = create('div', 'process-meta-right');
   const timerPill = create('span', 'timer-pill');
@@ -597,48 +865,49 @@ function buildLiveProgressCard(job) {
   return process;
 }
 
+/* Signature IMG_8610 Tabbed Halo Card for Completed Scan Reports */
 function buildCompletedCard(job) {
   const s = job.summary || {};
-  const card = create('div', 'download-card');
+  const card = create('div', 'assistant-halo-card');
 
-  const head = create('div', 'report-head');
-  const left = create('div', 'report-head-left');
-  const badge = create('div', 'pdf-icon');
-  badge.appendChild(icon('file', 22));
-  const titleInfo = create('div');
-  titleInfo.appendChild(create('strong', '', 'Báo cáo Kiểm thử Bảo mật Gọn (Mục 1 → Mục 6)'));
-  const formatName = (state.config && state.config.formats && state.config.formats[job.format]) || job.format;
-  titleInfo.appendChild(create('p', '',
-    `Nguồn: ${formatName} · Chuẩn Template Gọn 6 mục (2–3 trang) · Hoàn tất lúc ${formatTime(job.updated_at)}`));
-  left.append(badge, titleInfo);
-  head.appendChild(left);
+  let activeCopyText = '';
+  const topBar = create('div', 'code-window-topbar');
+  const tabBar = create('div', 'card-tab-list');
+  const btnOverview = create('button', 'card-tab-btn active', 'Báo cáo gọn');
+  btnOverview.type = 'button';
+  const btnEvidence = create('button', 'card-tab-btn', 'Bằng chứng & Mã vá');
+  btnEvidence.type = 'button';
+  const btnMarkdown = create('button', 'card-tab-btn', 'Markdown 6 mục');
+  btnMarkdown.type = 'button';
+  tabBar.append(btnOverview, btnEvidence, btnMarkdown);
 
-  if (job.input_sha256) {
-    head.appendChild(create('span', 'sha-tag', `SHA-256: ${job.input_sha256.slice(0, 12)}…`));
-  }
-  card.appendChild(head);
+  const copyBtn = buildCopyButton(() => activeCopyText, 'Sao chép');
+  topBar.append(tabBar, copyBtn);
+  card.appendChild(topBar);
 
-  const metrics = create('div', 'metrics');
+  // Panel 1: Summary & Findings Overview
+  const overviewPanel = create('div', 'report-tab-panel');
   const confirmedNum = s.confirmed_findings !== undefined ? s.confirmed_findings : (s.findings ?? job.count ?? 0);
   const unconfirmedNum = (s.tentative_findings ?? 0) + (s.insufficient_findings ?? 0);
-  const metricItems = [
+
+  const metrics = create('div', 'metrics');
+  for (const [val, label] of [
     [String(confirmedNum), 'Lỗ hổng Đã xác nhận (Mục 1–2)'],
-    [String(unconfirmedNum), 'Có dấu hiệu / Cần xác minh (Mục 5)'],
-    [String(s.with_guidance ?? 0), 'Khuyến nghị OWASP Cheat Sheet'],
+    [String(unconfirmedNum), 'Cần xác minh (Mục 5)'],
+    [String(s.with_guidance ?? 0), 'Khuyến nghị OWASP'],
     [formatDurationHuman(s.duration_sec || 0), 'Thời gian xử lý'],
-  ];
-  for (const [val, label] of metricItems) {
+  ]) {
     const m = create('div', 'metric');
-    m.appendChild(create('strong', '', val));
-    m.appendChild(create('span', '', label));
+    m.append(create('strong', '', val), create('span', '', label));
     metrics.appendChild(m);
   }
-  card.appendChild(metrics);
+  overviewPanel.appendChild(metrics);
 
   const preview = s.findings_preview || [];
+  const summaryLines = [`Báo cáo Kiểm thử Bảo mật — ${job.filename}`];
   if (preview.length) {
     const wrap = create('div', 'preview-wrap');
-    wrap.appendChild(create('div', 'preview-title', `Mục 1 & Mục 2 — Tóm tắt phát hiện (${preview.length} mục)`));
+    wrap.appendChild(create('div', 'preview-title', `Phát hiện ghi nhận (${preview.length} mục)`));
     for (const f of preview) {
       const row = create('div', 'preview-row');
       const main = create('div', 'preview-main');
@@ -649,84 +918,129 @@ function buildCompletedCard(job) {
 
       const tags = create('div', 'preview-tags');
       if (f.state) {
-        const stCls = f.state === 'Đã xác nhận' ? 'tag-mini ok' : 'tag-mini warn';
-        tags.appendChild(create('span', stCls, f.state));
+        tags.appendChild(create('span', f.state === 'Đã xác nhận' ? 'tag-mini ok' : 'tag-mini warn', f.state));
       }
       if (f.owasp) tags.appendChild(create('span', 'tag-mini', f.owasp));
       row.append(main, tags);
       wrap.appendChild(row);
+      summaryLines.push(`- ${f.id}: ${f.title} [${sevLabel} | ${f.state || ''}]`);
     }
-    card.appendChild(wrap);
+    overviewPanel.appendChild(wrap);
+  } else {
+    overviewPanel.appendChild(create('p', '', 'Không có lỗ hổng xác nhận ở Mục 2 — các dịch vụ/cổng mở và phép thử âm tính được trình bày sạch tại Mục 3, Mục 4 và Mục 5 trong bản PDF.'));
   }
+  activeCopyText = summaryLines.join('\n');
 
-  const actions = create('div', 'download-actions');
+  // Panel 2: Line-Numbered Evidence & Remediation Code (IMG_8610 signature pane)
+  const evidencePanel = create('div', 'code-window-surface');
+  evidencePanel.hidden = true;
+
+  // Panel 3: Full 6-Section Markdown with Line Numbers
+  const mdPanel = create('div', 'code-window-surface');
+  mdPanel.hidden = true;
+
+  const setTab = async (tabKey) => {
+    btnOverview.classList.toggle('active', tabKey === 'overview');
+    btnEvidence.classList.toggle('active', tabKey === 'evidence');
+    btnMarkdown.classList.toggle('active', tabKey === 'md');
+    overviewPanel.hidden = tabKey !== 'overview';
+    evidencePanel.hidden = tabKey !== 'evidence';
+    mdPanel.hidden = tabKey !== 'md';
+
+    if (tabKey === 'overview') {
+      activeCopyText = summaryLines.join('\n');
+      return;
+    }
+    const targetBox = tabKey === 'evidence' ? evidencePanel : mdPanel;
+    targetBox.replaceChildren(create('p', '', 'Đang tải nội dung từ báo cáo...'));
+    try {
+      const mdText = await ensureJobMarkdownLoaded(job.id);
+      const codeStr = tabKey === 'evidence' ? extractEvidenceSnippetFromMarkdown(mdText) : mdText;
+      activeCopyText = codeStr;
+      targetBox.replaceChildren(buildLinedCodeSurface(codeStr).firstChild);
+    } catch (err) {
+      targetBox.replaceChildren(create('p', 'failure', err.message || 'Không tải được dữ liệu.'));
+    }
+  };
+
+  btnOverview.addEventListener('click', () => setTab('overview'));
+  btnEvidence.addEventListener('click', () => setTab('evidence'));
+  btnMarkdown.addEventListener('click', () => setTab('md'));
+
+  card.append(overviewPanel, evidencePanel, mdPanel);
+
+  // Bottom White Project Bar + View / Download Buttons (matching IMG_8610 bottom bar)
   const tokSuffix = state.token ? `&token=${encodeURIComponent(state.token)}` : '';
-
-  const dl = create('a', 'download');
-  dl.href = `/api/jobs/${job.id}/pdf?profile=compact${tokSuffix}`;
-  dl.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.pdf`;
-  dl.append(icon('download', 15), create('span', '', 'Tải PDF Gọn (6 mục)'));
-
-  const viewBtn = create('a', 'download secondary');
-  viewBtn.href = `/api/jobs/${job.id}/pdf?inline=1&profile=compact${tokSuffix}`;
-  viewBtn.target = '_blank';
-  viewBtn.rel = 'noopener';
-  viewBtn.append(icon('eye', 15), create('span', '', 'Mở xem PDF trực tiếp'));
-
-  const mdLink = create('a', 'json-link', 'Tải Markdown (.md)');
-  mdLink.href = `/api/jobs/${job.id}/md?profile=compact${tokSuffix}`;
-  mdLink.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.md`;
-
-  const fullPdfLink = create('a', 'json-link', 'PDF Đầy đủ (10 mục)');
-  fullPdfLink.href = `/api/jobs/${job.id}/pdf?profile=full${tokSuffix}`;
-  fullPdfLink.download = `bao-cao-bao-mat-csdl-day-du-${job.id.slice(0, 8)}.pdf`;
-
   const qTok = state.token ? `?token=${encodeURIComponent(state.token)}` : '';
-  const jsonLink = create('a', 'json-link', 'Tải JSON');
-  jsonLink.href = `/api/jobs/${job.id}/json${qTok}`;
-  jsonLink.download = `du-lieu-bao-cao-${job.id.slice(0, 8)}.json`;
+  const projectBar = create('div', 'card-project-bar');
+  projectBar.appendChild(create(
+    'div',
+    'card-project-label',
+    `Đã xuất Báo cáo Gọn 6 mục · ${job.filename}`
+  ));
 
-  const syncLogLink = create('a', 'json-link', 'Tải Log đã che nhạy cảm');
-  syncLogLink.href = `/api/jobs/${job.id}/log${qTok}`;
-  syncLogLink.download = `du-lieu-da-lam-sach-${job.id.slice(0, 8)}.txt`;
+  const actionGroup = create('div', 'card-project-actions');
 
-  actions.append(dl, viewBtn, mdLink, fullPdfLink, jsonLink, syncLogLink);
-  card.appendChild(actions);
+  const viewPdfBtn = create('button', 'card-action-btn');
+  viewPdfBtn.type = 'button';
+  viewPdfBtn.append(icon('eye', 14), create('span', '', 'Xem PDF'));
+  viewPdfBtn.addEventListener('click', () => openPdfModal(job));
+
+  const dlPdfLink = create('a', 'card-action-btn primary');
+  dlPdfLink.href = `/api/jobs/${job.id}/pdf?profile=compact${tokSuffix}`;
+  dlPdfLink.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.pdf`;
+  dlPdfLink.append(icon('download', 14), create('span', '', 'Tải PDF'));
+
+  const dlMdLink = create('a', 'card-action-btn');
+  dlMdLink.href = `/api/jobs/${job.id}/md?profile=compact${tokSuffix}`;
+  dlMdLink.download = `bao-cao-bao-mat-csdl-${job.id.slice(0, 8)}.md`;
+  dlMdLink.textContent = 'Markdown';
+
+  const dlFullLink = create('a', 'card-action-btn');
+  dlFullLink.href = `/api/jobs/${job.id}/pdf?profile=full${tokSuffix}`;
+  dlFullLink.download = `bao-cao-bao-mat-csdl-day-du-${job.id.slice(0, 8)}.pdf`;
+  dlFullLink.textContent = 'PDF Đầy đủ';
+
+  const dlJsonLink = create('a', 'card-action-btn');
+  dlJsonLink.href = `/api/jobs/${job.id}/json${qTok}`;
+  dlJsonLink.download = `du-lieu-bao-cao-${job.id.slice(0, 8)}.json`;
+  dlJsonLink.textContent = 'JSON';
+
+  actionGroup.append(viewPdfBtn, dlPdfLink, dlMdLink, dlFullLink, dlJsonLink);
+  projectBar.appendChild(actionGroup);
+  card.appendChild(projectBar);
+
   return card;
 }
 
 function renderJobExchangeNode(job, userNote) {
   const frag = document.createDocumentFragment();
 
-  // User attachment bubble
   const uRow = create('div', 'chat-row is-user');
   const uStack = create('div', 'chat-user-stack');
   const fileCard = create('div', 'upload-card');
   const formatName = (state.config && state.config.formats && state.config.formats[job.format]) || job.format;
-  fileCard.appendChild(icon('file', 20));
+  fileCard.appendChild(icon('file', 19));
   const meta = create('div');
   meta.appendChild(create('strong', '', job.filename));
   meta.appendChild(create('span', '', `${formatName} · ${formatBytes(job.size)} · ${job.count} bản ghi`));
   fileCard.appendChild(meta);
   uStack.appendChild(fileCard);
   const noteTxt = (userNote || job.note || '').trim();
-  if (noteTxt) {
-    uStack.appendChild(create('div', 'chat-bubble-user', noteTxt));
-  }
+  if (noteTxt) uStack.appendChild(create('div', 'chat-bubble-user', noteTxt));
   uRow.appendChild(uStack);
   frag.appendChild(uRow);
 
-  // Assistant report bubble
   const bRow = create('div', 'chat-row is-assistant');
   bRow.appendChild(assistantAvatar());
   const body = create('div', 'chat-assistant-col');
   const head = create('div', 'chat-msg-head');
-  head.appendChild(create('span', 'chat-msg-author', 'Trợ lý Bảo mật OWASP'));
+  head.appendChild(create('span', 'chat-msg-author', 'DBSec OWASP Assistant'));
   head.appendChild(create('span', 'chat-msg-time', formatTime(job.updated_at || job.created_at)));
   body.appendChild(head);
 
   if (!TERMINAL.has(job.status)) {
-    body.appendChild(create('p', '', 'Mình đang phân tích dữ liệu kiểm thử, gộp lỗi trùng, lọc quan sát thụ động vào Mục 3 và kết xuất Báo cáo Gọn 6 mục:'));
+    body.appendChild(create('p', '', 'Đang phân tích dữ liệu kiểm thử, gộp cảnh báo cùng nguyên nhân gốc và kết xuất Báo cáo Gọn 6 mục:'));
     body.appendChild(buildLiveProgressCard(job));
   } else if (job.status === 'failed') {
     body.appendChild(create('p', 'failure', job.error || 'Chưa tạo được báo cáo từ dữ liệu này.'));
@@ -739,15 +1053,15 @@ function renderJobExchangeNode(job, userNote) {
     }
     if (IS_DEBUG) body.appendChild(buildTracePanel(job));
   } else {
+    body.appendChild(buildCompletedCard(job));
     const s = job.summary || {};
     body.appendChild(renderMarkdownSafe(
-      `Mình đã hoàn tất phân tích **${job.filename}** và kết xuất **Báo cáo Kiểm thử Bảo mật Gọn (Mục 1–6)** với **${s.findings ?? job.count} mục phát hiện**. Bạn có thể mở xem trực tiếp PDF bên dưới hoặc hỏi tiếp bất kỳ câu hỏi nào về cách vá lỗi, ý nghĩa bằng chứng và quy trình Retest ngay tại đây!`
+      `Ghi chú: Báo cáo **${job.filename}** tuân thủ nghiêm ngặt quy tắc không tự bịa điểm CVSS/mức độ nghiêm trọng, tách riêng quan sát thụ động sang **Mục 3** và phép thử âm tính sang **Mục 4**. Bạn có thể nhấn **Xem PDF**, chuyển sang tab **Bằng chứng & Mã vá**, hoặc hỏi tiếp bên dưới.`
     ));
     if (job.status === 'partial') {
       body.appendChild(create('p', 'result-warning',
-        `Một số đoạn diễn giải AI chưa hoàn tất (${s.ai_reviewed ?? 0}/${s.findings ?? 0}), nhưng toàn bộ bảng thống kê, bằng chứng gốc và khuyến nghị OWASP đều đầy đủ.`));
+        `Một số đoạn diễn giải AI chưa hoàn tất (${s.ai_reviewed ?? 0}/${s.findings ?? 0}), nhưng toàn bộ bảng tổng hợp, bằng chứng gốc và khuyến nghị OWASP đều đầy đủ.`));
     }
-    body.appendChild(buildCompletedCard(job));
     if ((job.events || []).length) {
       const details = create('details', 'event-panel');
       details.appendChild(create('summary', '', `Xem nhật ký xử lý (${job.events.length} bước)`));
@@ -775,7 +1089,12 @@ function buildFollowupRow(prompts) {
 
 function renderThreadMessages(thread) {
   const frag = document.createDocumentFragment();
-  const entries = thread.messages || [];
+  const q = state.searchQuery.trim().toLowerCase();
+  const entries = (thread.messages || []).filter((m) => {
+    if (!q || m.role === 'job') return true;
+    return String(m.text || '').toLowerCase().includes(q);
+  });
+
   let latestSuggestions = [];
   let lastFinishedJob = null;
 
@@ -799,7 +1118,7 @@ function renderThreadMessages(thread) {
       bRow.appendChild(assistantAvatar());
       const bCol = create('div', 'chat-assistant-col');
       const head = create('div', 'chat-msg-head');
-      head.appendChild(create('span', 'chat-msg-author', 'Trợ lý Bảo mật OWASP'));
+      head.appendChild(create('span', 'chat-msg-author', 'DBSec OWASP Assistant'));
       head.appendChild(create('span', 'chat-msg-time', formatTime(m.at)));
       bCol.appendChild(head);
       bCol.appendChild(renderMarkdownSafe(m.text || ''));
@@ -817,13 +1136,30 @@ function renderThreadMessages(thread) {
         }
         bCol.appendChild(citeRow);
       }
+
+      const utilRow = create('div', 'msg-utility-row');
+      const copyReplyBtn = create('button', 'msg-util-btn');
+      copyReplyBtn.type = 'button';
+      const lbl = create('span', '', 'Sao chép phản hồi');
+      copyReplyBtn.append(icon('copy', 13), lbl);
+      copyReplyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(m.text || '');
+          lbl.textContent = 'Đã chép ✓';
+          setTimeout(() => { lbl.textContent = 'Sao chép phản hồi'; }, 1600);
+        } catch (_) {
+          lbl.textContent = 'Không chép được';
+        }
+      });
+      utilRow.appendChild(copyReplyBtn);
+      bCol.appendChild(utilRow);
+
       bRow.appendChild(bCol);
       frag.appendChild(bRow);
       if ((m.suggestions || []).length) latestSuggestions = m.suggestions;
     }
   }
 
-  // Optimistic pending user message + animated typing indicator
   if (state.pendingUserText) {
     const uRow = create('div', 'chat-row is-user');
     uRow.appendChild(create('div', 'chat-bubble-user', state.pendingUserText));
@@ -841,7 +1177,7 @@ function renderThreadMessages(thread) {
     const prompts = latestSuggestions.length
       ? latestSuggestions
       : (lastFinishedJob ? [
-        'Giải thích chi tiết lỗ hổng F-01 và viết code vá an toàn',
+        'Giải thích chi tiết lỗ hổng chính và viết code vá an toàn',
         'Hướng dẫn từng bước kiểm thử lại (Retest) không dùng --dump',
         'Phân tích ý nghĩa các dịch vụ ở Mục 3 và kết quả âm tính ở Mục 4',
       ] : []);
@@ -861,6 +1197,13 @@ function syncElapsedClock() {
 }
 
 function renderWorkspace(forceScroll = false) {
+  renderHistory();
+  if (IS_DEBUG) renderDebugComms(false);
+  if (state.activeView !== 'chat') {
+    if (state.activeView === 'stats') renderLiveStatistics();
+    return;
+  }
+
   const thread = state.threads.find((t) => t.id === state.selectedId) || null;
   const showChat = Boolean(thread || state.pendingUserText);
 
@@ -872,19 +1215,20 @@ function renderWorkspace(forceScroll = false) {
   const subEl = el('chat-thread-sub');
   if (thread) {
     const activeJob = thread.active_job_id ? findJob(thread.active_job_id) : null;
-    if (titleEl) titleEl.textContent = thread.title || 'Cuộc trò chuyện bảo mật';
+    if (titleEl) titleEl.textContent = thread.title || 'Trợ lý AI Kiểm thử Bảo mật';
     if (subEl) {
       subEl.textContent = activeJob
-        ? `${statusText(activeJob)} · Có thể hỏi đáp trực tiếp trên dữ liệu báo cáo này`
-        : 'Đang trò chuyện cùng Trợ lý Bảo mật & Kho tri thức OWASP CSDL';
+        ? `${statusText(activeJob)} · Hỏi đáp trực tiếp trên dữ liệu báo cáo này`
+        : 'Đang trò chuyện cùng Trợ lý AI & Kho tri thức OWASP CSDL';
     }
   } else {
-    if (titleEl) titleEl.textContent = 'Trợ lý Kiểm thử Bảo mật & OWASP';
-    if (subEl) subEl.textContent = 'Hỏi đáp kỹ thuật CSDL, phân tích log quét & kết xuất Báo cáo Gọn 6 mục';
+    if (titleEl) titleEl.textContent = 'Trợ lý AI Kiểm thử Bảo mật';
+    if (subEl) subEl.textContent = 'Hỏi đáp kỹ thuật CSDL, phân tích tệp quét & xuất Báo cáo Gọn 6 mục';
   }
 
   const sig = JSON.stringify({
     tid: state.selectedId,
+    q: state.searchQuery,
     pending: state.pendingUserText,
     msgs: thread ? (thread.messages || []).length : 0,
     jobs: state.jobs.map((j) => `${j.id}:${j.status}:${j.percent}:${(j.events || []).length}`),
@@ -896,15 +1240,13 @@ function renderWorkspace(forceScroll = false) {
     else if (state.pendingUserText) messagesEl.appendChild(renderThreadMessages({ messages: [] }));
     scrollChatToBottom(true);
   }
-
-  renderHistory();
-  if (IS_DEBUG) renderDebugComms(false);
 }
 
 function startNewThread() {
   state.selectedId = null;
   state.lastRenderSig = '';
   localStorage.removeItem(STORAGE_KEY);
+  if (state.activeView !== 'chat') switchMainView('chat');
   closeSidebar();
   renderWorkspace(true);
   el('note')?.focus();
@@ -926,7 +1268,6 @@ async function refreshState() {
     state.jobs = jobs;
     state.threads = threads;
     if (state.selectedId && !state.threads.some((t) => t.id === state.selectedId)) {
-      // Check if saved key was a legacy job id
       const matching = state.threads.find((t) => (t.job_ids || []).includes(state.selectedId));
       state.selectedId = matching ? matching.id : null;
     }
@@ -976,6 +1317,7 @@ function fileToBase64(file) {
 }
 
 async function sendTextPrompt(text) {
+  if (state.activeView !== 'chat') switchMainView('chat');
   el('note').value = text;
   autoResizeTextarea();
   await handleComposerSubmit(new Event('submit'));
@@ -989,7 +1331,7 @@ async function handleComposerSubmit(event) {
   const msgText = (el('note').value || '').trim();
 
   if (!files.length && !msgText) {
-    setFormError('Hãy nhập câu hỏi bảo mật, dán log kiểm thử, hoặc đính kèm tệp quét.');
+    setFormError('Hãy nhập câu hỏi bảo mật, dán kết quả kiểm thử, hoặc đính kèm tệp quét.');
     return;
   }
 
@@ -1042,7 +1384,7 @@ async function handleComposerSubmit(event) {
       }
       await refreshState();
       scrollChatToBottom(true);
-      showToast('Đã tiếp nhận tệp · Trợ lý đang phân tích & kết xuất Báo cáo Gọn 6 mục...');
+      showToast('Đã tiếp nhận tệp · Đang phân tích & xuất Báo cáo Gọn 6 mục...');
     } else {
       const currentThread = state.threads.find((t) => t.id === state.selectedId);
       const activeJobId = (currentThread && currentThread.active_job_id) || '';
@@ -1083,6 +1425,7 @@ async function handleComposerSubmit(event) {
   } finally {
     state.submitting = false;
     el('submit-btn').disabled = false;
+    renderWorkspace(false);
     el('note')?.focus();
   }
 }
@@ -1148,23 +1491,20 @@ function renderDebugEvaluation(payload) {
 
   const rtLabel = el('debug-runtime-label');
   if (rtLabel) {
-    const llmDesc = rt.demo ? 'Chế độ Demo cục bộ' : `${rt.provider || 'ollama'} · ${rt.model || 'qwen2.5'}`;
+    const llmDesc = rt.demo ? 'Chế độ Demo cục bộ' : `${rt.provider || 'ollama'} · ${rt.model || 'qwen3.5'}`;
     rtLabel.textContent = `LLM: ${llmDesc} · Vector: ${pruned.encoder || rt.embed_model || 'E5'} · Kho OWASP CSDL: ${pruned.document_count || 25} tệp (${pruned.chunk_count || 0} chunks)`;
   }
 
   const kpis = create('div', 'debug-kpi-grid');
   const mrrGain = ((Number(hyb.doc_mrr || 0) - Number(den.doc_mrr || 0)) * 100).toFixed(2);
-  const kpiItems = [
+  for (const [val, title, sub] of [
     [pctText(hyb.doc_hit_at_1), `Hybrid Doc Hit@1 (MRR ${Number(hyb.doc_mrr || 0).toFixed(4)})`, `Tăng +${mrrGain} điểm % MRR so với Dense thuần`],
     [comp ? `-${Number(comp.sheet_reduction_pct || 0).toFixed(1)}%` : '25 tệp', 'Thu gọn nhiễu Kho OWASP CSDL', `${pruned.chunk_count || 0} chunks chuyên biệt`],
     [pctText(guard.f1), 'F1-Score Trích xuất & Ánh xạ CWE', `Precision ${pctText(guard.precision)} · Recall ${pctText(guard.recall)}`],
     [`${guard.hallucinations_blocked || 0}/${guard.hallucinations_injected || 0}`, 'Chặn Ảo giác Đối kháng AI', 'Tự động giữ Chưa xác định khi thiếu CVSS'],
-  ];
-  for (const [val, title, sub] of kpiItems) {
+  ]) {
     const box = create('div', 'debug-kpi');
-    box.appendChild(create('strong', '', val));
-    box.appendChild(create('span', '', title));
-    box.appendChild(create('small', '', sub));
+    box.append(create('strong', '', val), create('span', '', title), create('small', '', sub));
     kpis.appendChild(box);
   }
   host.appendChild(kpis);
@@ -1210,7 +1550,7 @@ async function runDebugPlaygroundQuery(event) {
       link.target = '_blank';
       link.rel = 'noopener';
       titleCell.appendChild(link);
-      titleCell.appendChild(create('div', 'hit-snippet', r.snippet));
+      titleCell.appendChild(create('div', '', r.snippet));
       return {
         highlight: r.rank === 1,
         cells: [`#${r.rank}`, titleCell, String(r.dense_score), String(r.bm25_score), String(r.hybrid_score)],
@@ -1266,7 +1606,7 @@ function setDebugTab(tabName) {
 
 function initDebugMode() {
   if (!IS_DEBUG) return;
-  document.title = '[DEBUG] Trợ lý Bảo mật OWASP — Thực nghiệm AI & Hybrid RAG';
+  document.title = '[DEBUG] DBSec OWASP — Thực nghiệm AI & Hybrid RAG';
   el('debug-mode-bar').hidden = false;
   el('debug-console').hidden = false;
   document.querySelectorAll('.debug-only').forEach((node) => { node.hidden = false; });
@@ -1297,6 +1637,56 @@ function initDebugMode() {
 }
 
 function wireEvents() {
+  // Left rail navigation items
+  document.querySelectorAll('.rail-item').forEach((btn) => {
+    btn.addEventListener('click', () => switchMainView(btn.dataset.view));
+  });
+
+  // Collapsible left dark rail
+  el('collapse-rail-btn')?.addEventListener('click', () => {
+    el('app-shell').classList.toggle('rail-collapsed');
+  });
+
+  // Collapsible right history panel + reopen button
+  el('collapse-history-btn')?.addEventListener('click', () => {
+    const collapsed = el('app-shell').classList.toggle('history-collapsed');
+    el('reopen-history-btn').hidden = !collapsed;
+  });
+  el('reopen-history-btn')?.addEventListener('click', () => {
+    el('app-shell').classList.remove('history-collapsed');
+    el('reopen-history-btn').hidden = true;
+  });
+
+  // Live search input
+  el('global-search-input')?.addEventListener('input', (e) => {
+    state.searchQuery = e.target.value || '';
+    state.lastRenderSig = '';
+    renderWorkspace(false);
+  });
+
+  // History clear / bulk delete button
+  el('clear-history-btn')?.addEventListener('click', handleClearHistory);
+
+  // Templates & OWASP Lookup & Settings actions
+  document.querySelectorAll('.tpl-use-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tplPrompt) sendTextPrompt(btn.dataset.tplPrompt);
+    });
+  });
+  el('owasp-live-form')?.addEventListener('submit', runLiveOwaspLookup);
+  document.querySelectorAll('.owasp-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      el('owasp-q').value = chip.dataset.q || '';
+      el('owasp-cwe').value = chip.dataset.cwe || '';
+      runLiveOwaspLookup();
+    });
+  });
+  el('save-settings-back-btn')?.addEventListener('click', () => {
+    switchMainView('chat');
+    showToast('Đã lưu cấu hình thông tin báo cáo cho phiên này.');
+  });
+
+  // File upload controls
   el('pick-file').addEventListener('click', () => el('file-input').click());
   el('file-input').addEventListener('change', (e) => {
     updateSelectedFiles(e.target.files, true);
@@ -1306,11 +1696,8 @@ function wireEvents() {
     el('file-input').value = '';
     updateSelectedFiles([], false);
   });
-  el('toggle-options-btn')?.addEventListener('click', () => {
-    const opts = el('report-options');
-    if (opts) opts.open = !opts.open;
-  });
 
+  // Composer textarea
   const ta = el('note');
   ta.addEventListener('input', autoResizeTextarea);
   ta.addEventListener('keydown', (e) => {
@@ -1339,18 +1726,21 @@ function wireEvents() {
   el('close-sidebar')?.addEventListener('click', closeSidebar);
   el('backdrop')?.addEventListener('click', closeSidebar);
 
+  // PDF Preview Modal close handlers
+  el('pdf-modal-close')?.addEventListener('click', closePdfModal);
+  el('pdf-modal-backdrop')?.addEventListener('click', closePdfModal);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !el('pdf-modal').hidden) closePdfModal();
+  });
+
   // Starter prompt cards on welcome screen
   document.querySelectorAll('.starter-card').forEach((card) => {
     card.addEventListener('click', () => {
-      if (card.dataset.action === 'sample-scan') {
-        sendTextPrompt(SAMPLE_SQLMAP_LOG);
-      } else if (card.dataset.prompt) {
-        sendTextPrompt(card.dataset.prompt);
-      }
+      if (card.dataset.prompt) sendTextPrompt(card.dataset.prompt);
     });
   });
 
-  // Drag & drop anywhere on composer or main chat window
+  // Drag & drop anywhere on main panel
   const dropTarget = el('main');
   const composer = el('dropzone');
   ['dragenter', 'dragover'].forEach((evName) => {

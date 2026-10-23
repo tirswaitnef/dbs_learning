@@ -16,6 +16,13 @@ SEVERITIES=[('critical','Nghiêm trọng'),('high','Cao'),('medium','Trung bình
 STATUS_LABELS={'ai_reviewed':'Có diễn giải AI đã qua kiểm tra tự động','rejected_output':'Diễn giải AI chưa đạt kiểm tra','api_error':'Lỗi gọi AI','not_requested':'Không gọi AI'}
 
 
+def is_passive_service_observation(row):
+    """True for Nmap-like passive service/banner records, not active heuristic/test observations."""
+    kind = row.get('kind') if isinstance(row, dict) else getattr(row, 'kind', '')
+    title = row.get('title') if isinstance(row, dict) else getattr(row, 'title', '')
+    return str(kind or '').strip().lower() == 'observation' and str(title or '').strip().lower().startswith('service observation:')
+
+
 def clean_metadata(value):
     if value is None:return {}
     if not isinstance(value,dict) or set(value)-set(META_FIELDS):raise ValueError('Invalid report metadata fields')

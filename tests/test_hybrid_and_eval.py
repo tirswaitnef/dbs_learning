@@ -526,7 +526,23 @@ class HybridRetrievalAndEvaluationTests(unittest.TestCase):
                 r for r in st["requests"]
                 if "findings" in ((r.get("format") or {}).get("properties") or {})
             ]
-            self.assertEqual(len(extract_calls), 1)
+            # Structured sqlmap-log takes fast deterministic parser path (0 redundant full-text LLM read calls)
+            self.assertEqual(len(extract_calls), 0)
+            self.assertTrue(all(r["options"]["num_ctx"] == 8192 for r in st["requests"]))
+
+            # And on unstructured pentest-report text, 115 KB compacts cleanly into 1 single window at num_ctx == 8192
+            st["requests"].clear()
+            with patch("rag.embeddings.E5Embedding", return_value=_FastEmbedder()):
+                run_corpus_report(
+                    scan_p, p2 / "out_free", cfg,
+                    raw_directory=raw_d, store_directory=store_d,
+                    format_="pentest-report", offline=True,
+                )
+            extract_calls_free = [
+                r for r in st["requests"]
+                if "findings" in ((r.get("format") or {}).get("properties") or {})
+            ]
+            self.assertEqual(len(extract_calls_free), 1)
             self.assertTrue(all(r["options"]["num_ctx"] == 8192 for r in st["requests"]))
 
         # Proof of 100% format-agnostic generality on a NEVER-SEEN custom scanner format (3,500 lines / >280 KB)

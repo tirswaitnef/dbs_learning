@@ -301,7 +301,8 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                     time.sleep(0.1)
                 self.assertEqual(cur["status"], "completed")
                 self.assertEqual(cur["summary"]["confirmed_findings"], 1)
-                self.assertEqual(cur["summary"]["tentative_findings"], 1)
+                # Passive Nmap service/banner observations belong in Section 3, not the finding/triage counters.
+                self.assertEqual(cur["summary"]["tentative_findings"], 0)
                 self.assertEqual(cur["summary"]["insufficient_findings"], 1)
 
                 # Default `/md` serves the 6-section `Template báo cáo pentest gọn.pdf` Markdown
@@ -1221,10 +1222,123 @@ class CourseworkReportAndWebTests(unittest.TestCase):
                 with opener.open(urllib.request.Request(f"{base}/api/threads", headers={"X-App-Token": tok})) as rt:
                     threads = json.loads(rt.read().decode("utf-8"))
                 self.assertTrue(any(th["id"] == tid and len(th["messages"]) >= 5 for th in threads))
+
+                # Real DELETE /api/threads/<id> cleans up the thread and terminal unreferenced job folder
+                del_req = urllib.request.Request(
+                    f"{base}/api/threads/{tid}",
+                    headers={"X-App-Token": tok},
+                    method="DELETE",
+                )
+                with opener.open(del_req) as rdel:
+                    del_res = json.loads(rdel.read().decode("utf-8"))
+                self.assertEqual(del_res["deleted_threads"], 1)
+                with opener.open(urllib.request.Request(f"{base}/api/threads", headers={"X-App-Token": tok})) as rt2:
+                    threads_after = json.loads(rt2.read().decode("utf-8"))
+                self.assertFalse(any(th["id"] == tid for th in threads_after))
             finally:
                 srv.shutdown()
                 srv.server_close()
                 mgr.close()
+
+    def test_pipeline_upgrades_nmap_cli_guard_zap_consolidation_quote_unquote_and_ui_cleanliness(self):
+        from rag.analysis import _resolve_quote, redact
+        from rag.compact_pentest_template import prepare_compact_pentest, render_compact_pentest_markdown
+        from rag.web_server import JobManager, LocalServer
+        import http.cookiejar
+        import threading
+        import urllib.request
+
+        # 1. URL-encoded & HTML-escaped verbatim quote resolution + Windows double-backslash redaction
+        raw_src = "GET /app/search?id=1%27%20UNION%20ALL%20SELECT%20NULL--%20- HTTP/1.1"
+        encoded_match = _resolve_quote("1' UNION ALL SELECT NULL-- -", raw_src)
+        self.assertIsNotNone(encoded_match)
+        self.assertIn(encoded_match, raw_src)
+        self.assertIn("%27", encoded_match)
+        cleaned_cli = redact("nmap &#45;&#45;script=mysql-empty-password -oX C:\\\\Users\\\\DemoUser\\\\Desktop\\\\scan.xml")
+        self.assertIn("--script=mysql-empty-password", cleaned_cli)
+        self.assertNotIn("&#45;", cleaned_cli)
+        self.assertNotIn("DemoUser", cleaned_cli)
+
+        # 2. Nmap XML with --script=mysql-empty-password + unauthorized banner + NSE ERROR output
+        nmap_xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<nmaprun scanner="nmap" args="nmap -sV &#45;&#45;script=mysql-empty-password,mysql-users -p 22,80,3306 -oX C:\\\\Users\\\\DemoUser\\\\out.xml 198.51.100.55" version="7.95">'
+            '<host><address addr="198.51.100.55" addrtype="ipv4"/>'
+            '<ports>'
+            '<port protocol="tcp" portid="22"><state state="open"/><service name="ssh" product="OpenSSH" version="9.2"/></port>'
+            '<port protocol="tcp" portid="80"><state state="open"/><service name="http" product="Apache httpd" version="2.4.58"/></port>'
+            '<port protocol="tcp" portid="3306"><state state="open"/>'
+            '<service name="mysql" product="MariaDB" extrainfo="unauthorized"/>'
+            '<script id="mysql-users" output="ERROR: Script execution failed (use -d to debug)"/>'
+            '</port>'
+            '</ports></host></nmaprun>'
+        ).encode("utf-8")
+
+        # 3. High-instance ZAP JSON (>110 URL instances across site-wide cookie/header rules + SQLi)
+        zap_many = json.dumps({
+            "@version": "2.17.0",
+            "site": [{
+                "@name": "http://198.51.100.55",
+                "alerts": [
+                    {
+                        "pluginid": "10010",
+                        "alert": "Cookie No HttpOnly Flag",
+                        "riskcode": "1",
+                        "cweid": "1004",
+                        "instances": [
+                            {"uri": f"http://198.51.100.55/page{i}.php", "method": "GET", "param": "PHPSESSID", "evidence": "Set-Cookie: PHPSESSID=abc"}
+                            for i in range(65)
+                        ],
+                    },
+                    {
+                        "pluginid": "10021",
+                        "alert": "X-Content-Type-Options Header Missing",
+                        "riskcode": "1",
+                        "cweid": "693",
+                        "instances": [
+                            {"uri": f"http://198.51.100.55/item{i}.php", "method": "GET", "param": "", "evidence": "HTTP/1.1 200 OK"}
+                            for i in range(55)
+                        ],
+                    },
+                ],
+            }],
+        }).encode("utf-8")
+
+        # Verify UI has zero fake SaaS controls while retaining real views & history delete
+        ui_html = (ROOT / "src/rag/web/index.html").read_text(encoding="utf-8")
+        for forbidden_fake in ("Pro Plan", "$19", "Log out"):
+            self.assertNotIn(forbidden_fake, ui_html)
+        for real_feature in ("clear-history-btn", "collapse-history-btn", "view-owasp", "view-stats", "pdf-modal"):
+            self.assertIn(real_feature, ui_html)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mgr = JobManager(Path(tmp) / "jobs", demo=True)
+            j_nmap = mgr.submit(nmap_xml, "nmap_test.xml", "auto")
+            j_zap = mgr.submit(zap_many, "zap_many.json", "auto")
+            for jid in (j_nmap["id"], j_zap["id"]):
+                deadline = time.monotonic() + 60
+                while time.monotonic() < deadline:
+                    cur = mgr.get(jid)
+                    if cur["status"] in {"completed", "partial", "failed"}:
+                        break
+                    time.sleep(0.1)
+                self.assertEqual(mgr.get(jid)["status"], "completed", msg=mgr.get(jid).get("error"))
+
+            nmap_job = mgr.get(j_nmap["id"])
+            self.assertEqual(nmap_job["summary"]["findings"], 0)
+            self.assertEqual(nmap_job["summary"]["findings_preview"], [])
+            nmap_rep = json.loads((Path(tmp) / "jobs" / j_nmap["id"] / "output" / "report.json").read_text(encoding="utf-8"))
+            nmap_model = prepare_compact_pentest(nmap_rep)
+            nmap_md = render_compact_pentest_markdown(nmap_rep)
+            self.assertEqual(len(nmap_model["findings"]), 0)
+            self.assertIn("198.51.100.55", nmap_model["doc_title"])
+            self.assertNotIn(":22", nmap_model["doc_title"])
+            self.assertIn("mysql-empty-password", nmap_md)
+            self.assertIn("mysql-users", nmap_md)
+            self.assertIn("không ghi khối kết quả tương ứng", nmap_md)
+            self.assertNotIn("không chấp nhận tài khoản rỗng", nmap_md)
+            self.assertNotIn("nmap, Nmap", nmap_md)
+            mgr.close()
 
 
 if __name__ == "__main__":

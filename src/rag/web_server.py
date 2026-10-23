@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import threading
 import time
@@ -18,7 +19,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .config import ROOT, load_settings
-from .dbsec_report import prepare_dbsec_report, render_dbsec_markdown
+from .dbsec_report import STATE_CONFIRMED, STATE_INSUFFICIENT, STATE_TENTATIVE, render_dbsec_markdown
 from .llm import check_ollama
 from .parsers import SUPPORTED_FORMATS, decode_text, load_findings
 from .pdf_report import render_pdf
@@ -282,6 +283,47 @@ class JobManager:
             self._save_threads()
             return {'thread': copy.deepcopy(th), 'reply': bot_entry}
 
+    def delete_threads(self, thread_ids=None):
+        """Delete specified thread IDs (or all threads when None) and clean up terminal unreferenced job folders."""
+        with self.lock:
+            target_ids = list(self.threads.keys()) if thread_ids is None else [tid for tid in thread_ids if tid in self.threads]
+            removed_threads = 0
+            candidate_jobs: set[str] = set()
+            for tid in target_ids:
+                th = self.threads.pop(tid, None)
+                if th:
+                    removed_threads += 1
+                    for jid in (th.get('job_ids') or []):
+                        candidate_jobs.add(str(jid))
+                    if th.get('active_job_id'):
+                        candidate_jobs.add(str(th['active_job_id']))
+            if thread_ids is None:
+                for jid, jb in list(self.jobs.items()):
+                    if jb.get('status') in TERMINAL:
+                        candidate_jobs.add(jid)
+            still_referenced = {
+                str(jid)
+                for th in self.threads.values()
+                for jid in ([*(th.get('job_ids') or []), th.get('active_job_id') or ''])
+                if jid
+            }
+            removed_jobs = 0
+            for jid in candidate_jobs:
+                if jid in still_referenced:
+                    continue
+                jb = self.jobs.get(jid)
+                if jb and jb.get('status') not in TERMINAL:
+                    continue
+                self.jobs.pop(jid, None)
+                shutil.rmtree(self.directory / jid, ignore_errors=True)
+                removed_jobs += 1
+            self._save_threads()
+            return {
+                'deleted_threads': removed_threads,
+                'deleted_jobs': removed_jobs,
+                'remaining_threads': len(self.threads),
+            }
+
     def _save(self, job):
         folder = self.directory / job['id']
         folder.mkdir(exist_ok=True)
@@ -353,7 +395,8 @@ class JobManager:
                 fmt = detect_format(path) if format_ == 'auto' else format_
                 extract_pentest_text(path)
                 try:
-                    findings = load_findings(path, fmt)
+                    from .ai_ingest import _consolidate_structured_findings
+                    findings = _consolidate_structured_findings(load_findings(path, fmt))
                 except Exception:
                     if self.demo and format_ != 'auto':
                         raise
@@ -466,6 +509,9 @@ class JobManager:
                         if self.demo and item_fmt != 'auto':
                             raise
                         parsed = load_findings(raw_path, 'pentest-report')
+                    else:
+                        from .ai_ingest import _consolidate_structured_findings
+                        parsed = _consolidate_structured_findings(parsed)
                     f_sha = hashlib.sha256(data_bytes).hexdigest()
                     raw_bundle_files.append({
                         'name': safe_name,
@@ -606,12 +652,20 @@ class JobManager:
             rows = report['findings']
             xss_dec_j = str((report.get('report_metadata') or {}).get('xss_decision') or '').strip().lower()
             eval_rows = [r for r in rows if not (xss_dec_j == 'drop' and r.get('kind') == 'observation')]
-            analyses = [r.get('ai_analysis', {}).get('status') for r in eval_rows]
+            from .report_view import is_passive_service_observation
+            ai_required = [
+                r for r in eval_rows
+                if not is_passive_service_observation(r)
+                and not (xss_dec_j == 'drop' and r.get('kind') == 'observation')
+            ]
+            analyses = [r.get('ai_analysis', {}).get('status') for r in ai_required]
             reviewed_ok = sum(s == 'ai_reviewed' for s in analyses) if not self.demo else len(eval_rows)
             skipped = sum(s != 'ai_reviewed' for s in analyses) if not self.demo else 0
             summary_status = report.get('ai_summary', {}).get('status')
-            selection_failures = sum(r.get('generation_status') in {'api_error', 'rejected_output'} for r in eval_rows)
-            partial = not self.demo and bool(eval_rows) and (skipped or summary_status != 'ai_reviewed' or selection_failures)
+            selection_failures = sum(r.get('generation_status') in {'api_error', 'rejected_output'} for r in ai_required)
+            partial = not self.demo and bool(ai_required) and (
+                skipped or summary_status not in {'ai_reviewed', 'not_requested'} or selection_failures
+            )
 
             from .pentest_polish import sanitize_raw_scan_text
             try:
@@ -622,8 +676,16 @@ class JobManager:
             except Exception:
                 pass
 
-            dbsec = prepare_dbsec_report(report)
-            counts = dbsec['counts']
+            from .compact_pentest_template import prepare_compact_pentest
+            compact_summary = prepare_compact_pentest(report)
+            compact_findings = compact_summary['findings']
+            counts = {
+                'total': len(compact_findings),
+                'confirmed': sum(f['state'] == STATE_CONFIRMED for f in compact_findings),
+                'tentative': sum(f['state'] == STATE_TENTATIVE for f in compact_findings),
+                'insufficient': sum(f['state'] == STATE_INSUFFICIENT for f in compact_findings),
+                'with_guidance': sum(str(f.get('remediation_source_url') or '').startswith('https://') for f in compact_findings),
+            }
             preview = [{
                 'id': f['id'],
                 'title': f['title'][:140],
@@ -631,9 +693,9 @@ class JobManager:
                 'severity': f['severity_key'],
                 'severity_label': f['severity_label'],
                 'state': f['state'],
-                'owasp': f['owasp_category'],
-                'guidance_count': len(f['rem_refs']),
-            } for f in dbsec['findings'][:25]]
+                'owasp': f['owasp_cwe_short'],
+                'guidance_count': int(str(f.get('remediation_source_url') or '').startswith('https://')),
+            } for f in compact_findings[:25]]
 
             summary = {
                 'findings': counts['total'],
@@ -641,7 +703,7 @@ class JobManager:
                 'tentative_findings': counts['tentative'],
                 'insufficient_findings': counts['insufficient'],
                 'with_guidance': counts['with_guidance'],
-                'scope_blocked': sum(r.get('owasp_top10', {}).get('status') != 'in_scope' for r in rows),
+                'scope_blocked': sum(r.get('owasp_top10', {}).get('status') != 'in_scope' for r in ai_required),
                 'ai_reviewed': reviewed_ok,
                 'ai_unavailable': skipped,
                 'selection_failures': selection_failures,
@@ -699,7 +761,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         obj_src = "'self'" if content_type == 'application/pdf' else "'none'"
-        ancestors = '' if self.server.allow_preview else " frame-ancestors 'none';"
+        ancestors = '' if self.server.allow_preview else (" frame-ancestors 'self';" if content_type == 'application/pdf' else " frame-ancestors 'none';")
         self.send_header(
             'Content-Security-Policy',
             f"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src {obj_src};{ancestors} base-uri 'none'; form-action 'self'",
@@ -1019,3 +1081,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return self.send_data(500, {'error': 'Không lưu được file. Kiểm tra quyền ghi hoặc dung lượng ổ đĩa.'})
         self.send_data(202, job)
+
+    def do_DELETE(self):
+        if not self.trusted(auth=True, write=True):
+            return
+        parsed_url = urlsplit(self.path)
+        path = parsed_url.path
+        if path == '/api/threads':
+            ids_raw = parse_qs(parsed_url.query).get('ids', [''])[0].strip()
+            target_ids = [x.strip() for x in ids_raw.split(',') if re.fullmatch(r'[a-f0-9]{16,32}', x.strip())]
+            res = self.server.manager.delete_threads(target_ids if ids_raw else None)
+            return self.send_data(200, res)
+        t_match = re.fullmatch(r'/api/threads/([a-f0-9]{16,32})', path)
+        if t_match:
+            res = self.server.manager.delete_threads([t_match[1]])
+            return self.send_data(200, res)
+        return self.send_data(404, {'error': 'Không tìm thấy đường dẫn.'})
