@@ -162,18 +162,22 @@ def input_sources(row):
         'M4':f"Bằng chứng đầu vào: {len(row['evidence'])} mục. Chưa xác minh độc lập. Phạm vi khắc phục: {row['owasp_top10']['status']}.",
     }
     if technical['description']:
-        sources['D1']=redact('Mô tả do công cụ cung cấp (không phải xác minh độc lập): '+technical['description'])[:2400]
-        sources['M5']=redact(f"Công cụ: {row['tool']}; phương thức HTTP: {technical['method']}; tham số: {technical['parameter']}; confidence từ công cụ: {technical['confidence']}")[:1600]
+        sources['D1']=redact('Mô tả do công cụ cung cấp (không phải xác minh độc lập): '+technical['description'])[:1500]
+        sources['M5']=redact(f"Công cụ: {row['tool']}; phương thức HTTP: {technical['method']}; tham số: {technical['parameter']}; confidence từ công cụ: {technical['confidence']}")[:1000]
     sources['K1']=redact(ai_source(row))[:1200]
-    sources['C1']=redact(context_source_text(row))[:2400]
+    sources['C1']=redact(context_source_text(row))[:1800]
     if technical['requests']:
-        sources['R1']=redact('Request được cung cấp; request đơn lẻ không chứng minh lỗi: '+technical['requests'][0])[:2400]
+        sources['R1']=redact('Request được cung cấp; request đơn lẻ không chứng minh lỗi: '+technical['requests'][0])[:1400]
     truncated=[]
-    for i,e in enumerate(row['evidence'][:8],1):
+    ev_budget=4200
+    for i,e in enumerate(row['evidence'][:6],1):
         clean=redact(e)
-        sources[f'E{i}']=clean[:2400]
-        if len(clean)>2400:truncated.append(f'E{i}')
-    if len(row['evidence'])>8:truncated.append('E9 trở đi không gửi')
+        rem=max(450,ev_budget//max(1,min(6,len(row['evidence']))-i+1))
+        cap=min(1400,rem)
+        sources[f'E{i}']=clean[:cap]
+        ev_budget=max(450,ev_budget-len(sources[f'E{i}']))
+        if len(clean)>cap:truncated.append(f'E{i}')
+    if len(row['evidence'])>6:truncated.append('E7 trở đi không gửi')
     return sources,truncated
 
 
@@ -329,15 +333,16 @@ def enrich_report(report,settings,*,llm=None,progress=None,mode=None,drop_unveri
     from .report_view import MISSING, extract_scan_context, technical_fields
     scan_ctx=extract_scan_context(report)
     summary_sources={}
-    for i,row in enumerate(rows,1):
+    per_row_ev_cap=max(160,min(650,4200//max(1,len(rows))))
+    for i,row in enumerate(rows[:14],1):
         frame=row.get('db_frame') or {}
         frame_text=(f"phạm vi CSDL theo code: {frame.get('relevance','?')}/{frame.get('layer') or 'chưa xác định'}"
                     f"; engine {frame.get('engine') or 'chưa xác định'}"
                     f"; kiểm soát {frame.get('control_label') or 'chưa xác định'}")
         tech_r=technical_fields(row)
         cvss_r=(f"; CVSS từ đầu vào: {tech_r['cvss']}"+(f" ({tech_r['cvss_vector']})" if tech_r['cvss_vector']!=MISSING else '')) if tech_r['cvss']!=MISSING else ''
-        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:200]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}{cvss_r}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:240]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:900]}.")
-    summary_sources['K1']=redact('Khung phạm vi CSDL tổng hợp toàn báo cáo (do code tính): '+(' | '.join(scope_lines(rows)) or str(scope_summary(rows))))[:1600]
+        summary_sources[f'F{i}']=redact(f"ID {row['id']}: {row['title'][:180]}; CWE {cwe_text(row)}; mức độ do kiểm thử cung cấp {row['severity']}{cvss_r}; loại {row.get('kind','scanner_alert')}; {len(row['evidence'])} mục bằng chứng, chưa xác minh độc lập; scope {row['owasp_top10']['status']}; có đoạn OWASP: {bool(row['guidance'])}; {frame_text}; vị trí: {row['location'][:200]}; trích bằng chứng: {' | '.join(row['evidence'][:2])[:per_row_ev_cap]}.")
+    summary_sources['K1']=redact('Khung phạm vi CSDL tổng hợp toàn báo cáo (do code tính): '+(' | '.join(scope_lines(rows)) or str(scope_summary(rows))))[:1200]
     ctx_bits=[]
     if scan_ctx.get('auth_context'):
         ctx_bits.append(f"Ngữ cảnh xác thực đã cung cấp đầy đủ: {scan_ctx['auth_context']} (token phiên được che [REDACTED] có chủ đích để bảo mật báo cáo).")

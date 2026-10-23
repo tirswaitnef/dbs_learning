@@ -428,6 +428,107 @@ class HybridRetrievalAndEvaluationTests(unittest.TestCase):
                 srv.shutdown()
                 srv.server_close()
 
+    def test_compact_input_for_ai_eliminates_bloat_while_preserving_verbatim_quotes(self):
+        from rag.ai_ingest import compact_input_for_ai
+        from rag.analysis import _resolve_quote
+
+        # Simulate a 135 KB sqlmap log + HTTP traffic file with 120 repetitive HTTP blocks & 200 [INFO] testing lines
+        noise_probes = "\n".join(
+            f"[14:20:{i % 60:02d}] [INFO] testing 'AND boolean-based blind - WHERE or HAVING clause #{i}'"
+            for i in range(220)
+        )
+        repeated_http = "\n".join(
+            f"HTTP request [#{i}]:\nGET /items.php?id=1 HTTP/1.1\nHost: 198.51.100.77\n\n"
+            f"HTTP response [#{i}] (200 OK):\n" + ("<html><body>product catalogue item</body></html>" * 18) + "\n" + ("#" * 76)
+            for i in range(1, 95)
+        )
+        tail_finding = (
+            "Parameter: id (GET)\n"
+            "    Type: error-based\n"
+            "    Title: MySQL >= 5.1 AND error-based - WHERE, HAVING, ORDER BY or GROUP BY clause (EXTRACTVALUE)\n"
+            "    Payload: id=1' AND EXTRACTVALUE(9981,CONCAT(0x5c,0x7176))-- xYzA\n"
+            "back-end DBMS: MySQL >= 8.0\n"
+        )
+        big_sqlmap = f"Target URL: http://198.51.100.77/items.php?id=1\n{noise_probes}\n{repeated_http}\n{tail_finding}"
+        self.assertGreater(len(big_sqlmap), 110_000)
+
+        compacted = compact_input_for_ai(big_sqlmap)
+        self.assertLess(len(compacted), 8500)
+        self.assertIn("Payload: id=1' AND EXTRACTVALUE(9981,CONCAT(0x5c,0x7176))-- xYzA", compacted)
+        self.assertIn("back-end DBMS: MySQL >= 8.0", compacted)
+        for line in compacted.splitlines():
+            s = line.strip()
+            if s:
+                self.assertIsNotNone(_resolve_quote(s, big_sqlmap))
+
+        # Simulate a huge ZAP JSON report with repeated 18 KB response-body HTML strings
+        zap_big = json.dumps({
+            "@programName": "ZAP",
+            "site": [{
+                "@name": "http://198.51.100.88:8080",
+                "alerts": [{
+                    "pluginid": "40018",
+                    "name": "SQL Injection - MySQL",
+                    "riskcode": "3",
+                    "cweid": "89",
+                    "instances": [
+                        {
+                            "uri": f"http://198.51.100.88:8080/search?q={k}",
+                            "method": "GET",
+                            "param": "q",
+                            "attack": "1' OR '1'='1",
+                            "evidence": "You have an error in your SQL syntax",
+                            "request-header": "GET /search?q=1 HTTP/1.1\r\nHost: 198.51.100.88:8080\r\n\r\n",
+                            "response-body": "<!DOCTYPE html>" + ("<div class='row'>sample content</div>" * 500),
+                        }
+                        for k in range(8)
+                    ],
+                }],
+            }],
+        }, indent=2)
+        self.assertGreater(len(zap_big), 140_000)
+        zap_compacted = compact_input_for_ai(zap_big)
+        self.assertLess(len(zap_compacted), 8500)
+        self.assertIn("You have an error in your SQL syntax", zap_compacted)
+
+        # End-to-end proof: running full report pipeline on a 115 KB scan log sends ONLY 1 input window
+        # AND keeps EVERY single Ollama call at fast VRAM-resident num_ctx == 8192 (zero 16384 reloads!)
+        from test_ollama import mock_ollama_server
+
+        class _FastEmbedder:
+            def embed_documents(self, texts):
+                return np.ones((len(texts), 8), dtype=np.float32)
+
+            def embed_query(self, text):
+                return np.ones((8,), dtype=np.float32)
+
+        with tempfile.TemporaryDirectory() as tmp2, mock_ollama_server(installed_models=("qwen2.5:7b",)) as (ollama_url, st):
+            p2 = Path(tmp2)
+            raw_d = p2 / "raw"
+            raw_d.mkdir()
+            (raw_d / "SQL_Injection_Prevention_Cheat_Sheet.md").write_text(
+                "# SQL Injection Prevention Cheat Sheet\n\n## Defense Option 1: Prepared Statements\n"
+                "Always use prepared statements and parameterized queries.\n",
+                encoding="utf-8",
+            )
+            store_d = p2 / "store"
+            cfg = Settings(llm_provider="ollama", ollama_base_url=ollama_url, ollama_model="qwen2.5:7b")
+            ingest_documents(raw_d, store_d, cfg, embedder=_FastEmbedder())
+            scan_p = p2 / "big_sqlmap.txt"
+            scan_p.write_text(big_sqlmap, encoding="utf-8")
+            with patch("rag.embeddings.E5Embedding", return_value=_FastEmbedder()):
+                run_corpus_report(
+                    scan_p, p2 / "out", cfg,
+                    raw_directory=raw_d, store_directory=store_d,
+                    format_="sqlmap-log", offline=True,
+                )
+            extract_calls = [
+                r for r in st["requests"]
+                if "findings" in ((r.get("format") or {}).get("properties") or {})
+            ]
+            self.assertEqual(len(extract_calls), 1)
+            self.assertTrue(all(r["options"]["num_ctx"] == 8192 for r in st["requests"]))
+
 
 if __name__ == "__main__":
     unittest.main()

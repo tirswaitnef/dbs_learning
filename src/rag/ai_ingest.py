@@ -287,12 +287,83 @@ def extract_pentest_text(path: Path) -> str:
     return cleaned
 
 
-def _split_input_windows(clean: str, *, window_size: int = 26000, overlap: int = 1500, max_windows: int = 8) -> list[str]:
+_SQLMAP_TRAFFIC_BLOCK_RE = re.compile(
+    r'HTTP request \[#(\d+)\]:.*?(?=(?:HTTP request \[#\d+\]:|\Z))',
+    re.S,
+)
+_SQLMAP_NOISE_LINE_RE = re.compile(
+    r'^\[[0-9:]{6,12}\]\s+\[(?:INFO|DEBUG)\]\s+'
+    r'(?:testing\s+\'|heuristic\s+\(basic\)\s+test\s+shows\s+that\s+.*does\s+not\s+seem|'
+    r'(?:GET|POST|URI|Cookie|User-Agent|Referer|Host)\s+parameter\s+.*does\s+not\s+seem\s+to\s+be\s+injectable|'
+    r'fetching\s+(?:number\s+of|columns|tables|entries)|retrieved:\s*$)',
+    re.I,
+)
+_JSON_BIG_RESP_RE = re.compile(
+    r'("(?:response-body|responseBody|response_body)"\s*:\s*")((?:\\.|[^"\\]){650,})(")',
+    re.S,
+)
+_XML_BIG_RESP_RE = re.compile(
+    r'(<response\b[^>]*>)(.{900,?})(</response>)',
+    re.S | re.I,
+)
+_INTERESTING_TRAFFIC_RE = re.compile(
+    r'(?:syntax\s+error|mysql|mariadb|postgresql|psql|ora-\d{4,5}|odbc|sqlite|sql\s+server|'
+    r'extractvalue|updatexml|union\s+all\s+select|union\s+select|pg_sleep|waitfor\s+delay|xpath)',
+    re.I,
+)
+
+
+def compact_input_for_ai(clean: str) -> str:
+    """Strip repetitive HTTP response bodies & probe chatter while preserving 100% verbatim substrings of `clean`.
+
+    Every retained segment is an exact slice of `clean` (no synthetic placeholder words injected),
+    guaranteeing `_resolve_quote(quote, clean)` succeeds 100% while cutting 100KB+ logs/ZAP dumps
+    down to a single fast `8K` GPU-VRAM window.
+    """
+    if len(clean) <= 8500:
+        return clean
+
+    text = _JSON_BIG_RESP_RE.sub(lambda m: m.group(1) + m.group(2)[:420] + m.group(3), clean)
+    text = re.sub(
+        r'(<response\b[^>]*>)([\s\S]{900,?})(</response>)',
+        lambda m: m.group(1) + m.group(2)[:550] + '\n' + m.group(2)[-160:] + m.group(3),
+        text,
+        flags=re.I,
+    )
+
+    if 'HTTP request [#' in text:
+        kept_interesting = 0
+
+        def _trim_traffic(m: re.Match) -> str:
+            nonlocal kept_interesting
+            idx = int(m.group(1))
+            blk = m.group(0)
+            if idx <= 2:
+                return blk[:1800]
+            if kept_interesting < 2 and _INTERESTING_TRAFFIC_RE.search(blk):
+                kept_interesting += 1
+                return blk[:1800]
+            return ''
+
+        text = _SQLMAP_TRAFFIC_BLOCK_RE.sub(_trim_traffic, text)
+
+    lines = text.splitlines()
+    noise_indices = [i for i, ln in enumerate(lines) if _SQLMAP_NOISE_LINE_RE.match(ln.strip())]
+    if len(noise_indices) > 10:
+        keep_noise = set(noise_indices[:6]) | set(noise_indices[-4:])
+        drop_set = set(noise_indices) - keep_noise
+        lines = [ln for i, ln in enumerate(lines) if i not in drop_set]
+
+    compacted = re.sub(r'\n{3,}', '\n\n', '\n'.join(lines)).strip()
+    return compacted or clean[:7800]
+
+
+def _split_input_windows(clean: str, *, window_size: int = 7800, overlap: int = 650, max_windows: int = 6) -> list[str]:
     if len(clean) <= window_size:
         return [clean]
     windows: list[str] = []
     pos = 0
-    step = max(4000, window_size - overlap)
+    step = max(3000, window_size - overlap)
     while pos < len(clean) and len(windows) < max_windows:
         end = min(len(clean), pos + window_size)
         if end < len(clean):
@@ -434,11 +505,17 @@ def extract_findings_from_report_with_ai(
 ) -> tuple[list[Finding], dict]:
     """Primary AI reader: Ollama reads ANY raw tool output or pentest report directly & verifies verbatim quotes."""
     clean = redact(raw_text).strip()
+    ai_clean = compact_input_for_ai(clean)
     allowed_cwes = sorted(_allowed_top10_cwes())
-    windows = _split_input_windows(clean)
+    windows = _split_input_windows(ai_clean)
     if progress:
         win_hint = f' ({len(windows)} phân đoạn)' if len(windows) > 1 else ''
-        progress(f'[step=1|pct=9] AI (Ollama) đang đọc trực tiếp dữ liệu đầu vào "{source_name}"{win_hint}...')
+        compact_hint = (
+            f' (tinh gọn nhiễu lặp {len(clean):,} → {len(ai_clean):,} ký tự)'
+            if len(ai_clean) + 500 < len(clean)
+            else ''
+        )
+        progress(f'[step=1|pct=9] AI (Ollama) đang đọc dữ liệu đầu vào "{source_name}"{compact_hint}{win_hint}...')
 
     model = wrap_llm_for_trace(
         llm or (OllamaLLM(settings) if settings.resolved_provider == 'ollama' else GeminiLLM(settings)),

@@ -312,6 +312,13 @@ class OllamaLLM:
     def generate(self, prompt, *, system, schema):
         ctx = max(self._active_ctx, 16384 if len(prompt) + len(system) > 12000 else self.num_ctx)
         self._active_ctx = ctx
+        props = (schema or {}).get("properties") if isinstance(schema, dict) else None
+        if isinstance(props, dict) and (set(props) <= {"source_ids"} or set(props) == {"supported", "no_remediation", "appropriately_uncertain", "database_specific"}):
+            max_out_tokens = 192
+        elif isinstance(props, dict) and set(props) == {"observations", "potential_impacts", "limitations"}:
+            max_out_tokens = 1200
+        else:
+            max_out_tokens = 2200
         payload = {
             "model": self.model,
             "messages": [
@@ -325,7 +332,7 @@ class OllamaLLM:
                 "temperature": 0,
                 "repeat_penalty": 1.08,
                 "num_ctx": ctx,
-                "num_predict": 2500,
+                "num_predict": max_out_tokens,
             },
         }
         sess = active_trace_session()

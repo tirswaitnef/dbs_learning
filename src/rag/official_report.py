@@ -209,7 +209,7 @@ def _is_intro_section(section_path: str) -> bool:
     return bool(re.search(r'(?:^|/)\s*(?:\d+(?:\.\d+)*\s+)?introduction\s*$', str(section_path or ''), re.I))
 
 
-def source_candidates(results, documents, preferred, *, finding=None, max_chars=14000):
+def source_candidates(results, documents, preferred, *, finding=None, max_chars=9000):
     by_source={d.source:d for d in documents}
     candidates=[];seen=set()
     preferred=set(preferred)
